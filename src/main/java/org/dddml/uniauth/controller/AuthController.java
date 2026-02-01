@@ -249,7 +249,12 @@ public class AuthController {
         } else if (authentication.getPrincipal() instanceof Jwt) {
             // JWT token登录
             Jwt jwt = (Jwt) authentication.getPrincipal();
-            userInfo.put("name", jwt.getSubject());
+            // 优先从 username claim 获取用户名（新版Token），兼容旧版Token（sub即用户名）
+            String username = jwt.getClaim("username");
+            if (username == null) {
+                username = jwt.getSubject();
+            }
+            userInfo.put("name", username);
             userInfo.put("email", jwt.getClaim("email"));
             userInfo.put("userId", jwt.getClaim("userId"));
             userInfo.put("authorities", jwt.getClaim("authorities"));

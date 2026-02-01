@@ -279,6 +279,7 @@ public class JwtTokenService {
         
         Map<String, Object> claims = new HashMap<>();
         claims.put("userId", userId);
+        claims.put("username", username);  // 添加 username claim
         claims.put("email", email);
         claims.put("authorities", authorities);
         claims.put("type", "access");
@@ -293,7 +294,7 @@ public class JwtTokenService {
 
         return Jwts.builder()
                 .setClaims(claims)
-                .setSubject(username)
+                .setSubject(userId)  // 使用 userId 作为 subject
                 .setIssuedAt(new Date(issuedAtMs))
                 .setExpiration(new Date(issuedAtMs + expiresInMs))
                 .setHeaderParam("kid", token.getKid())  // 用于 JWKS 匹配
@@ -307,6 +308,7 @@ public class JwtTokenService {
     public String generateRefreshToken(String username, String userId) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("userId", userId);
+        claims.put("username", username);  // 添加 username claim
         claims.put("type", "refresh");
         claims.put("jti", UUID.randomUUID().toString());
         
@@ -317,7 +319,7 @@ public class JwtTokenService {
 
         return Jwts.builder()
                 .setClaims(claims)
-                .setSubject(username)
+                .setSubject(userId)  // 使用 userId 作为 subject
                 .setIssuedAt(new Date(issuedAtMs))
                 .setExpiration(new Date(issuedAtMs + expiresInMs))
                 .setHeaderParam("kid", token.getKid())
@@ -350,15 +352,21 @@ public class JwtTokenService {
 
     /**
      * 从 Token 中提取用户名
+     * 优先从 username claim 提取，如果不存在则从 subject 提取（兼容旧版 Token）
      */
     public String extractUsername(String token) {
         try {
-            return Jwts.parserBuilder()
+            var claims = Jwts.parserBuilder()
                     .setSigningKey(publicKey)
                     .build()
                     .parseClaimsJws(token)
-                    .getBody()
-                    .getSubject();
+                    .getBody();
+
+            String username = claims.get("username", String.class);
+            if (username == null) {
+                username = claims.getSubject();
+            }
+            return username;
         } catch (Exception e) {
             throw new RuntimeException("Failed to extract username from token", e);
         }
@@ -366,15 +374,22 @@ public class JwtTokenService {
 
     /**
      * 从 Token 中提取用户 ID
+     * 可以从 userId claim 或 subject (sub) 中提取
      */
     public String getUserIdFromToken(String token) {
         try {
-            return Jwts.parserBuilder()
+            var claims = Jwts.parserBuilder()
                     .setSigningKey(publicKey)
                     .build()
                     .parseClaimsJws(token)
-                    .getBody()
-                    .get("userId", String.class);
+                    .getBody();
+            
+            // 优先从 userId claim 获取，如果不存在则从 subject 获取
+            String userId = claims.get("userId", String.class);
+            if (userId == null) {
+                userId = claims.getSubject();
+            }
+            return userId;
         } catch (Exception e) {
             throw new RuntimeException("Failed to extract user ID from token", e);
         }

@@ -74,6 +74,11 @@ public class ApiAuthController {
         // 处理JWT用户（本地登录或OAuth2登录后的JWT认证）
         else if (principal instanceof org.springframework.security.oauth2.jwt.Jwt jwt) {
             String userId = jwt.getClaim("userId");
+            // 优先从 username claim 获取用户名（新版Token），兼容旧版Token（sub即用户名）
+            String username = jwt.getClaim("username");
+            if (username == null) {
+                username = jwt.getSubject();
+            }
 
             // 从数据库查询用户信息（provider信息已在JWT中）
             UserEntity user = userRepository.findById(userId).orElse(null);
@@ -81,7 +86,7 @@ public class ApiAuthController {
 
             userInfo.put("provider", actualProvider);
             userInfo.put("userId", userId);
-            userInfo.put("userName", jwt.getSubject());
+            userInfo.put("userName", username);
             userInfo.put("userEmail", jwt.getClaim("email"));
             userInfo.put("userAvatar", user != null ? user.getAvatarUrl() : null);
             userInfo.put("providerInfo", new HashMap<>());
