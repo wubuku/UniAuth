@@ -779,9 +779,3 @@ logging:
 
 <div align="center">⁂</div>
 
-[^1]: requirements.txt
-
-[^2]: README.md
-
-[^3]: app.py
-
