@@ -11,13 +11,13 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.example</groupId>
-    <artifactId>google-oauth2-demo</artifactId>
+    <groupId>org.dddml</groupId>
+    <artifactId>uni-auth</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
 
-    <name>Google OAuth2 Demo</name>
-    <description>Demo application for Google OAuth2 login using Spring Boot</description>
+    <name>UniAuth</name>
+    <description>Production-grade universal authentication system with multi-provider OAuth2 support</description>
 
     <properties>
         <java.version>17</java.version>
