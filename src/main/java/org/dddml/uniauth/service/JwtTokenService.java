@@ -7,6 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PostConstruct;
 import java.security.*;
 import java.security.spec.X509EncodedKeySpec;
 import java.security.spec.PKCS8EncodedKeySpec;
@@ -101,44 +102,76 @@ public class JwtTokenService {
     }
 
     public JwtTokenService() {
-        // 初始化配置默认值
-        if (rsa == null) {
-            rsa = new RsaConfig();
-            rsa.setKeyFile("rsa-keys.ser");
-        }
-        if (expires == null) {
-            expires = new ExpiresConfig();
-            expires.setAccessToken(3600000); // 默认1小时
-            expires.setRefreshToken(604800000); // 默认7天
-        }
-        if (token == null) {
-            token = new TokenConfig();
-            token.setIssuer("https://auth.example.com");
-            token.setAudience("resource-server");
-            token.setKid("key-1");
-        }
-
-        String rsaKeyFilePath = rsa.getKeyFile() != null && !rsa.getKeyFile().isEmpty() ? rsa.getKeyFile() : "rsa-keys.ser";
+        // 构造函数中只初始化密钥对，不设置配置默认值
+        // 配置默认值将在 @PostConstruct 方法中设置，确保 Spring 的配置注入已完成
+        String rsaKeyFilePath = "rsa-keys.ser"; // 临时使用默认值
         KeyPair keyPair = loadOrGenerateKeyPair(rsaKeyFilePath);
         this.privateKey = keyPair.getPrivate();
         this.publicKey = keyPair.getPublic();
+    }
+    
+    /**
+     * 在 Spring 完成配置注入后执行初始化
+     * 此时 @ConfigurationProperties 已经注入完成
+     */
+    @PostConstruct
+    public void init() {
+        // 设置配置默认值（如果配置文件中没有提供）
+        if (rsa == null) {
+            rsa = new RsaConfig();
+        }
+        if (rsa.getKeyFile() == null || rsa.getKeyFile().isEmpty()) {
+            rsa.setKeyFile("rsa-keys.ser");
+        }
         
+        if (expires == null) {
+            expires = new ExpiresConfig();
+        }
+        if (expires.getAccessToken() <= 0) {
+            expires.setAccessToken(3600000); // 默认1小时
+        }
+        if (expires.getRefreshToken() <= 0) {
+            expires.setRefreshToken(604800000); // 默认7天
+        }
+        
+        if (token == null) {
+            token = new TokenConfig();
+        }
+        if (token.getIssuer() == null || token.getIssuer().isEmpty()) {
+            token.setIssuer("https://auth.example.com");
+        }
+        if (token.getAudience() == null || token.getAudience().isEmpty()) {
+            token.setAudience("resource-server");
+        }
+        if (token.getKid() == null || token.getKid().isEmpty()) {
+            token.setKid("key-1");
+        }
+        
+        // 打印配置信息（此时配置已经注入完成）
+        System.out.println("\n========================================");
+        System.out.println("📋 JWT Configuration Status");
+        System.out.println("========================================");
         System.out.println("✅ JwtTokenService initialized with RSA-2048 keys");
         System.out.println("   Public Key Algorithm: " + publicKey.getAlgorithm());
         System.out.println("   Key Size: " + RSA_KEY_SIZE);
         System.out.println("   Public Key Format: " + publicKey.getFormat());
-        System.out.println("   Key File Path: " + rsaKeyFilePath);
-        System.out.println("   Access Token Expires In: " + expires.getAccessToken() / 1000 + " seconds");
-        System.out.println("   Refresh Token Expires In: " + expires.getRefreshToken() / 1000 + " seconds");
-        System.out.println("   Token Issuer: " + token.getIssuer());
-        System.out.println("   Token Audience: " + token.getAudience());
-        System.out.println("   Token Kid: " + token.getKid());
+        System.out.println("   Key File Path: " + rsa.getKeyFile());
+        System.out.println("\n⏱️  Token Expiration Configuration:");
+        System.out.println("   Access Token Expires In: " + expires.getAccessToken() / 1000 + " seconds (" + expires.getAccessToken() / 60000 + " minutes)");
+        System.out.println("   Refresh Token Expires In: " + expires.getRefreshToken() / 1000 + " seconds (" + expires.getRefreshToken() / 86400000 + " days)");
+        System.out.println("\n🎫 Token Claims Configuration:");
+        System.out.println("   Token Issuer (iss): " + token.getIssuer());
+        System.out.println("   Token Audience (aud): " + token.getAudience());
+        System.out.println("   Token Key ID (kid): " + token.getKid());
+        System.out.println("========================================\n");
         
         // 打印公钥的Base64编码，用于调试
         if (publicKey instanceof java.security.interfaces.RSAPublicKey) {
             java.security.interfaces.RSAPublicKey rsaPublicKey = (java.security.interfaces.RSAPublicKey) publicKey;
+            System.out.println("🔐 RSA Public Key Details:");
             System.out.println("   RSA Public Key Modulus Length: " + rsaPublicKey.getModulus().bitLength());
             System.out.println("   RSA Public Key Exponent: " + rsaPublicKey.getPublicExponent());
+            System.out.println("========================================\n");
         }
     }
 
