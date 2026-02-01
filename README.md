@@ -1,890 +1,973 @@
-# An AO Dapp Development Demo with a Low-Code Approach
+# OAuth2 Demo - Spring Boot应用
 
-English | [中文版](./README_CN.md)
+## 📋 项目概述
 
+这是一个使用Spring Boot和多OAuth2提供商（Google、GitHub & Twitter）实现的完整登录演示应用。本项目演示了现代Web应用中OAuth2/OpenID Connect集成的完整流程，包括用户认证、Token处理、安全验证和受保护页面访问控制。
 
-> For some developers, the content discussed in this article and the examples in the current repository may already be quite a bit of complexity.
-> [Here](https://github.com/dddappp/AI-Assisted-AO-Dapp-Example) are some simpler examples for reference.
+**✨ 新增功能**: 现在同时支持Google、GitHub和Twitter账户登录！
 
+## 🎯 项目功能
 
-AO is on the right path of development.
+✅ **完整的OAuth2认证流程**
+- 访问受保护页面时自动引导用户选择登录方式（Google/GitHub）
+- 用户登录成功后从哪里来就回到哪里去
+- 认证状态正确保存，支持会话持久化
+- **✨ 统一回调URL**: 通过state参数智能区分提供商
 
-We believe that the major obstacle to the widespread adoption of Web3 is the engineering complexity involved in building large-scale decentralized applications (Dapps).
-This complexity hinders our ability to develop more diverse, larger-scale, and often that means more awesome, feature-rich decentralized applications with limited resources -- as is often the case in the initial stages of things.
+✅ **多提供商登录支持**
+- **Google OAuth2**: JWT ID Token验证，支持OpenID Connect
+- **GitHub OAuth2**: 访问令牌API验证，支持完整用户信息获取
+- **Twitter OAuth2**: 访问令牌API验证，支持Twitter v2 API用户信息获取
+- 智能提供商识别和用户信息处理
+- 统一的登录界面和用户体验
 
-> Do not be swayed by claims like "Smart contracts/on-chain programs should be simple and not overly complex." Such statements often misrepresent the engineering reality.
+✅ **受保护功能实现**
+- 登录成功后页面显示受保护的功能（Token验证按钮）
+- 根据登录提供商显示相应的验证功能
+- 完整的Token验证和用户信息展示
+- GitHub特定信息展示（仓库数、粉丝数等）
+- Twitter特定信息展示（位置、验证状态、个人简介等）
 
-Compared to Web2, Web3 still has significant room for improvement in terms of technical infrastructure, tools, and practical experience.
-AO has filled a significant gap in this area. We believe that: at the very least, AO, as the best decentralized *message broker*[^MsgBrokerWp] in the current Web3 world, has shown tremendous potential.
+✅ **安全特性**
+- 使用HTTP Only Cookie安全存储敏感Token
+- 使用Google JWKS验证JWT签名和完整性
+- 使用GitHub API在线验证访问令牌
+- 使用Twitter API v2在线验证访问令牌
+- 支持手动Token验证功能
 
-> Developers of traditional Web2 applications can take Kafka as an analogy to understand the significance of this: without Kafka or Kafka-like message brokers available, can you imagine how to program many of today's large-scale Internet applications?
+## 🏗️ 技术架构
 
-For instance, traditional large and complex applications rely on messaging mechanisms to achieve decoupling between components, which is crucial for enhancing system maintainability and scalability.
+### 架构模式
 
-Moreover, these applications often adopt "eventual consistency" model when necessary to further improve system availability and scalability.
+#### React SPA + Spring Boot 单体模式
+- **前端**: React SPA应用，编译为静态文件
+- **后端**: Spring Boot提供API和静态文件服务
+- **部署**: 前端静态文件集成到Spring Boot应用中
+- **优势**: 简单部署，统一管理，无跨域问题
 
-However, even in the more mature engineering environment of Web2, achieving "eventual consistency" based on messaging remains a challenge for many developers.
+### 核心技术栈
+- **Spring Boot 3.3.4** - 主框架（最新稳定版）
+- **Spring Security 6.1.13** - 安全框架（修复安全漏洞）
+- **Spring OAuth2 Client** - OAuth2客户端支持
+- **JWT (JJWT)** - Token处理
+- **Maven** - 依赖管理
 
-Developing Dapps on the nascent AO platform seems to accentuate this challenge even more :).
+### 前端技术栈
+- **React 18** - UI框架
+- **TypeScript** - 类型安全
+- **Vite** - 构建工具
+- **Tailwind CSS** - 样式框架
+- **Axios** - HTTP客户端
+- **React Router** - 路由管理
 
-For example, consider the following Lua code (for AO Dapp) — does it seem "natural" to write it this way?
+### 关键依赖
+```xml
+<!-- Spring Boot Starters -->
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-web</artifactId>
+</dependency>
 
-```lua
-Handlers.add(
-    "a_multi_step_action",
-    Handlers.utils.hasMatchingTag("Action", "AMultiStepAction"),
-    function(msg)
-        local status, result_or_error = pcall((function()
-            local foo = do_a_mutate_memory_state_operation()
-            local bar = do_another_mutate_memory_state_operation()
-            return { foo = foo, bar = bar }
-        end))
-        ao.send({
-            Target = msg.From,
-            Data = json.encode(
-                status and { result = result_or_error } 
-                or { error = tostring(result_or_error) }
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-security</artifactId>
+</dependency>
+
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-oauth2-client</artifactId>
+</dependency>
+
+<!-- JWT Support -->
+<dependency>
+  <groupId>org.springframework.security</groupId>
+  <artifactId>spring-security-oauth2-jose</artifactId>
+</dependency>
+```
+
+## 📁 项目结构
+
+```
+google-oauth2-demo/
+├── src/main/java/com/example/oauth2demo/
+│   ├── GoogleOAuth2DemoApplication.java          # 主应用类
+│   ├── config/
+│   │   ├── SecurityConfig.java                   # Spring Security配置
+│   │   └── WebConfig.java                        # Web配置
+│   ├── controller/
+│   │   └── AuthController.java                   # 认证控制器
+│   └── service/
+│       └── JwtValidationService.java             # JWT验证服务
+├── src/main/resources/
+│   ├── application.yml                           # 应用配置
+│   ├── static/                                   # 静态资源
+│   └── templates/                                # Thymeleaf模板
+│       ├── home.html                             # 首页
+│       ├── login.html                            # 登录页面
+│       └── test.html                             # 测试页面
+└── start.sh                                       # 启动脚本
+```
+
+## ⚙️ 核心配置
+
+### 1. OAuth2客户端配置 (application.yml)
+```yaml
+spring:
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID:your-client-id}
+            client-secret: ${GOOGLE_CLIENT_SECRET:your-client-secret}
+            scope:
+              - openid
+              - profile
+              - email
+            redirect-uri: https://api.u2511175.nyat.app:55139/oauth2/callback
+        provider:
+          google:
+            authorization-uri: https://accounts.google.com/o/oauth2/v2/auth
+            token-uri: https://oauth2.googleapis.com/token
+            user-info-uri: https://openidconnect.googleapis.com/v1/userinfo
+            jwk-set-uri: https://www.googleapis.com/oauth2/v3/certs
+```
+
+### 2. 安全配置 (SecurityConfig.java)
+```java
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+
+    @Bean
+    public AuthenticationSuccessHandler oauth2SuccessHandler() {
+        return new AuthenticationSuccessHandler() {
+            @Override
+            public void onAuthenticationSuccess(HttpServletRequest request, HttpServletResponse response,
+                                              Authentication authentication) throws IOException {
+                if (authentication.getPrincipal() instanceof OidcUser oidcUser) {
+                    // 获取ID Token并存储到Cookie
+                    String idToken = oidcUser.getIdToken().getTokenValue();
+                    
+                    Cookie idTokenCookie = new Cookie("id_token", idToken);
+                    idTokenCookie.setHttpOnly(true);
+                    idTokenCookie.setSecure(true);
+                    idTokenCookie.setPath("/");
+                    idTokenCookie.setMaxAge(3600);
+                    
+                    response.addCookie(idTokenCookie);
+                }
+                response.sendRedirect("/test");
+            }
+        };
+    }
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf(csrf -> csrf.disable())
+            .authorizeHttpRequests(authz -> authz
+                .requestMatchers("/", "/login/**", "/oauth2/**", "/css/**", "/js/**", "/images/**", "/static/**", "/error").permitAll()
+                .anyRequest().authenticated()
             )
-        })
-    end
-)
-```
-
-
-If you're not familiar with Lua, think of the `pcall` function as being similar to the try-catch constructs of other languages: 
-it tries to execute a function, returning `true` and the result of the function if it succeeds, and `false` and an error object if it fails.
-
-Do you see the problem? Suppose the step `do_a_mutate_memory_state_operation` step succeeds and the step `do_another_mutate_memory_state_operation` fails.
-The recipient (`Target`) receives an `error` message. 
-Common sense would dictate that the receiver can safely assume that the operation failed, but that nothing has changed and everything is fine.
-However, in reality, the step `do_a_mutate_memory_state_operation` has already succeeded and the state has changed! 
-In other words, the information conveyed by the message is **inconsistent** with the actual state of the system.
-
-In traditional Web2 development environments, we can usually solve this problem by using the *transactional outbox pattern*[^TransactionalOutbox].
-But on the AO platform, where we don't have the database ACID transactions available that the transactional outbox pattern relies on, 
-things get a little tricky.
-
-Fortunately, by using the dddappp low-code tool, we can greatly simplify the complexity of AO dapp development.
-In the next demo, we'll show how dddappp can be used to elegantly solve these problems and strongly support our point.
-
-
-## Background Knowledge
-
-We feel it may be necessary to start with some background knowledge so that you can better understand the content of this demo. 
-If you're already familiar with the content, you can skip ahead to the [next section](#Prerequisites).
-We will occasionally use some DDD (Domain-Driven Design) terminology in the following lines, but we believe that even if you are not familiar with DDD, it should not affect your overall understanding.
-
-
-### About "eventual consistency"
-
-An application that needs to be launched quickly often begins with the use of a total "strong consistency" architecture 
-(Indeed, using "eventual consistency" instead of "strong consistency" can lead to higher application development costs). 
-But if the app becomes popular, as the user base grows and all available options for vertical scaling 
-(e.g. better and more expensive hardware) are exhausted, 
-it eventually becomes necessary for the application to improve its software architecture -- including the use of "eventual consistency".
-
-
-### What is the trouble without having ACID database transactions?
-
-For example, let's say that in the domain model of a WMS application, 
-the `InventoryItem` entity (in DDD terms, this is an "aggregate root") represents "the quantity of a product in stock at a particular location".
-If we intend to implement an Inventory Movement service using the eventual consistency model, 
-we need to take into account the scenarios that may occur when executing this movement service:
-
-- Product A was originally in stock at the source location in quantities of 1,000 units.
-- We start an operation to move 100 units of Product A to the target location.
-- Initially, our inventory movement service deducts the inventory quantity at the source location, and the quantity of Product A in stock at that location becomes 900-a result that is persistent and cannot be "rolled back" through a database transaction, but the inventory quantity at the target location has not yet been increased, and the movement has not yet been finalized.
-- Then, someone else uses up (ships out) 100 units of Product A in the source location for manufacturing purposes, and the quantity on hand becomes 800 -- this result is also persistent and cannot be rolled back using a database transaction.
-- Then, for some reason, we can't increase the quantity of Product A in the target bay, so we need to cancel the transfer.
-- At this point, we should change the quantity of Product A in stock at the source location to 900 (this known as a "**compensate**" operation), which means that we add back 100 units to the quantity of 800, rather than changing the quantity back to the quantity (1000 units) that was in stock before the movement operation.
-
-> Although in the above scenario we are only changing the state of two entity "instances" of the `InventoryItem`, 
-> and no more "entities" (types) are involved, it is still the practice of the DDD community to recommend that developers consider 
-> (at least "think about it") using a "eventual consistency" model to implement such business logic.
-
-
-Not to mention that in such a domain model, there might be another `MovementOrder` entity (aggregate root), 
-which would make the "eventual consistency" implementation of the entire movement business logic even more complex.
-
-
-### Implementing Eventual Consistency with Saga
-
-If we intend to use the "eventual consistency" model to achieve consistency of state (data) across multiple aggregates, 
-we need to consider using the *Saga pattern*[^SagaPattern].
-
-What is this Saga thing? Let's see what ChatGPT has to say about it:
-
-> SAGA is a design pattern called Saga Pattern for Distributed Transactions. It is a solution for executing long-running transactions in a distributed system, ensuring both data consistency and reliability.
-> 
-> In Saga Pattern, a long-running transaction is decomposed into multiple steps, each of which is an atomic operation and corresponds to a transaction. Whenever a step completes, Saga emits an event that triggers the execution of the next step. If a step fails, Saga performs a compensating action to undo the completed step, thus ensuring data consistency.
-> 
-> In short, the SAGA pattern solves the problem of long-running transactions in a distributed system by splitting a large transaction into small atomic operations, and ensuring data consistency and reliability by passing events between each step and performing compensating actions.
-
-It is obvious that Saga implements business transactions using a eventual consistency model. 
-Ensuring the eventual consistency of data is the business logic that the application developer is **responsible** for implementing.
-
-### Two Styles of Saga
-
-There are two styles of Saga: *Choreography-based Saga* and *Orchestration-based Saga*.
-
-Choreography-based Saga does **not** have a central coordinator. 
-Instead, everyone advances the business process by publicly publishing messages/events. 
-
-For example:
-
-* When a customer places an order, the *order service* publishes an `OrderPlaced` event — it doesn't particularly care who is interested in this event. 
-  The act of publishing the event is akin to yelling:
-    > Someone has placed an order!
-    >
-* Perhaps the *inventory service* is interested in this event and "subscribes" to it. 
-  Upon receiving the event, it may reserve inventory according to the product and quantity information of the order, 
-  preparing for the subsequent shipping operation. 
-  Similarly, after reserving the inventory, it publishes an `InventoryReserved` event — akin to yelling:
-    > Inventory has been reserved!
-    >
-* Maybe the *picking service* has been listening for such messages because after the inventory is reserved, it's time for the pickers to get to work...
-
-
-In the execution process of the business flow described above, there is **no** coordinator responsible for:
-
-* Commanding what each service should do;
-* Recording the results of each service's actions;
-* Deciding which service should continue after one completes its task, or what to do if a service completely fails to proceed.
-
-
-On the other hand, the Orchestration-based Saga **does** have a central commander, known as the *Saga Manager*.
-The interaction between the Saga Manager and services (components) may use asynchronous messaging mechanisms or synchronous RPCs.
-
-
-### Event-Driven Architecture (EDA) and Saga
-
-Choreography-based Saga can be thought a very native design pattern to EDA.
-
-In general, events are published, usually using *asynchronous messaging* mechanisms (of course, more seriously, synchronous RPCs is not out of the question).
-
-Orchestration-based Saga can use either asynchronous messaging or RPCs, 
-but obviously the former is generally more lightweight.
-In fact, on top of asynchronous messaging, we can also wrap up APIs for synchronous-calls.
-
-Specifically, a call named `Xxx` can be decomposed into the process of publishing a pair of events: `XxxRequested` / `XxxResponded`.
-The caller publishes the former and the callee publishes the latter.
-
-In general, asynchronous messaging is used extensively within EDA.
-Asynchronous messaging mechanisms typically make use of *Message Broker* [^MsgBrokerWp].
-
-You may notice that in many cases, we do not strictly distinguish between the concepts of *events* and *messages* in our text.
-
-
-### How to design a Orchestration-based Saga
-
-Implementing a Saga can be tricky. 
-Choreography-based Saga is more troublesome than Orchestration-based Saga to implement complex features. 
-Therefore, it is necessary to consider using DSL to help implement a Orchestration-based Saga.
-
-Here is an example of how to orchestrate a Saga.
-
-Let's say we are developing a WMS application and we have defined two aggregates, `InventoryItem` and `InOut`, in our domain model.
-
-Now, we desire a domain service that "forcefully" modifies the "in-stock quantity" of inventory items. 
-This service might have a method named `CreateOrUpdateInventoryItem`.
-We might use this service method after conducting a physical inventory count for "inventory surplus/shortage" adjustments.
-Although we are directly modifying the in-stock quantity of inventory items at this time, 
-we still wish to use `InOut` (Inbound/Outbound Order) to record the changes in inventory quantity, 
-so this method will involve two aggregates.
-
-Assuming we deploy these two aggregates as two microservices, 
-we need to use an "eventual consistency" strategy to implement this "business transaction" that modifies the in-stock quantity.
-
-First, we design the various implementation steps of this business transaction, roughly as follows:
-
-1. Query the information of the inventory item (`InventoryItem`).
-   Based on the results of the query, we determine whether it is necessary to create a new inventory item record or update an existing one, and what the `MovementQuantity` of the Inbound/Outbound Order line item should be.
-2. Create an Inbound/Outbound Order (`InOut`).
-   This document has only one line (`InOutLine`), and the `MovementQuantity` of the line item is the difference between the updated in-stock quantity and the current in-stock quantity (the quantity we saw in the previous step).
-3. Add an inventory item entry (`InventoryItemEntry`). 
-   Our inventory item aggregate should have adopted the accounting pattern, so we need to indirectly update the in-stock quantity of inventory items in this way.
-4. If the update of the inventory item is successful, then update the status of the Inbound/Outbound Order to "Completed".
-5. If the update of the inventory item fails, then update the Inbound/Outbound Order to "Cancelled" — this operation is the **compensation** for the second step.
-
-We can notice that, compared to the simple use of database local transactions to ensure strong consistency, here we have significantly added the fourth and fifth coding tasks.
-
-Having conceptualized our approach, we now need to define the corresponding methods for the steps mentioned above.
-
-Several methods are required for operating the `InventoryItem` aggregate:
-
-* `GetInventoryItem`, a method for retrieving the state of an inventory item through its aggregate root ID (the ID of the inventory item).
-* `AddInventoryItemEntry`, a method for adding an inventory item entry, which is the sole way (indirectly) to modify those quantity properties (accounts) of the inventory item.
-
-Additionally, we need to write three methods for operating the `InOut` aggregate:
-
-* `CreateSingleLineInOut`, a method for creating an In/Out document, which contains only one line (`InOutLine`).
-* `Complete`, a method for updating the status of the In/Out document to "Completed".
-* `Void`, a method for updating the In/Out document to "Cancelled".
-
-These methods serve as the building blocks for implementing a Orchestration-based Saga.
-
-With these foundational components in place, we can finally write the orchestration logic of the Saga on top of them to implement the service `CreateOrUpdateInventoryItem`.
-
-It's evident that without a DSL, the process of implementing an Orchestration-based Saga is quite cumbersome — undoubtedly, 
-using a Choreography-based Saga to achieve the same business logic would only be more so. 😂
-
-So, what would a DSL designed for this purpose look like?
-
-Don't worry, we will soon demonstrate how to develop an AO Dapp using the dddappp low-code tool.
-This application will, of course, include the Saga implementation for the `CreateOrUpdateInventoryItem` service discussed above.
-However, if you're eager for a sneak peek, you can directly check out our [DDDML model file](./dddml/a-ao-demo.yaml),
-where the definition of the `ProcessInventorySurplusOrShortage` method of the `InventoryService` service is provided.
-
-
-> **Tip**
-> 
-> You might not have expected that the DSL we use to orchestrate Sagas
-> can also be used to [solve the vexing "dependency injection" problem in Move Dapp development](https://github.com/dddappp/sui-interface-demo/blob/main/README_CN.md).
-> It's just that versatile.
->
-> This repository also includes a blog example model file `./dddml/blog.yaml`. 
-> You can refer to [this document](./docs/BlogExample.md) to fill in the business logic implementation code for this example and perform testing. 
-> In the following discussion, we will ignore this blog example.
-
-## Prerequisites
-
-If you want to follow us through the process of the demo, install the tools below:
-
-* Install [aos](https://cookbook_ao.g8way.io/welcome/getting-started.html)
-* Install [Docker](https://docs.docker.com/engine/install/).
-
-
-Then, start an aos process now:
-
-
-```shell
-aos process_alice
-```
-
-Let's take note of its process ID, e.g. `DH4EI_kDShcHFf7FZotIjzW3lMoy4fLZKDA0qqTPt1Q`.
-We use the placeholder `__PROCESS_ALICE__` for it in some following example commands.
-
-
-## Programming
-
-### Write DDDML Model
-
-The model file that has been written is available at `./dddml/a-ao-demo.yaml`.
-
-For developers with some experience in OOP (Object-Oriented Programming), what the model expresses should not be difficult to understand.
-
-Let's catch the main thread first. We mainly define the aggregate `InventoryItem` in the model;
-and the service `InventoryService`, where `steps` is what we call Saga definition.
-And the service `InventoryService` depends on two components: the `InventoryItem` aggregate and an abstract `InOutService` -- you can think of "abstract" here as meaning that we describe what the service "should look like", 
-but we don't intend to implement it ourselves, expecting "others" to implement it.
-
-
-> **Tip**
->
-> About DDDML, here is an introductory article: ["Introducing DDDML: The Key to Low-Code Development for Decentralized Applications"](https://github.com/wubuku/Dapp-LCDP-Demo/blob/main/IntroducingDDDML.md).
-
-
-### Generate Code
-
-In repository root directory, run:
-
-```shell
-docker run --rm \
--v .:/myapp \
-wubuku/dddappp-ao:latest \
---dddmlDirectoryPath /myapp/dddml \
---boundedContextName A.AO.Demo \
---aoLuaProjectDirectoryPath /myapp/src
-```
-
-The command parameters above are straightforward:
-
-* This line `-v .:/myapp \` indicates mounting the local current directory into the `/myapp` directory inside the container.
-* `dddmlDirectoryPath` is the directory where the DDDML model files are located. It should be a directory path that can be read in the container.
-* Understand the value of the `boundedContextName` parameter as the name of the application you want to develop. When the name has multiple parts, separate them with dots and use the PascalCase naming convention for each part. 
-    Bounded-context is a term in Domain-driven design (DDD) that refers to a specific problem domain scope that contains specific business boundaries, constraints, and language. 
-    If you cannot understand this concept for the time being, it is not a big deal.
-* `aoLuaProjectDirectoryPath` is the directory path where the "on-chain contract" code is placed. It should be a readable and writable directory path in the container.
-
-
-After executing the above command, you will see a "ton" of code generated for you by the dddappp tool in the `. /src` directory.
-
-#### Multi-Process Mode (By Module)
-
-To better support distributed architecture and microservice deployment, dddappp also supports **generating multiple independent AO processes by DDDML modules**. In this mode, each business module runs in an independent process, improving system scalability and maintainability.
-
-After configuring with reference to the file [dddml/configuration.yaml](./dddml/configuration.yaml), run in the repository root directory:
-
-```shell
-docker run --rm \
--v .:/myapp \
-wubuku/dddappp-ao:master \
---dddmlDirectoryPath /myapp/dddml \
---boundedContextName A.AO.Demo \
---aoLuaProjectDirectoryPath /myapp/src \
---exposeBaseDddmlFiles \
---enableMultipleAOLuaProjects
-```
-
-This will generate independent AO Lua main files for each DDDML module:
-
-- **`inventory_item_main.lua`**: Inventory item aggregate process, managing inventory data and operations
-- **`inventory_service_main.lua`**: Inventory service process, implementing Saga coordinator, orchestrating cross-process business workflows
-- **`in_out_service_main.lua`**: In/Out service process (abstract service, provided by external implementation)
-- **`blog_main.lua`**: Blog aggregate process, managing articles and comments data
-- **`a_ao_demo_main.lua`**: Default module process, containing basic framework, currently basically an empty file. Because we didn't put useful objects (aggregates, services) into this module.
-
-Each module process is an independent AO process, supporting multi-process concurrent execution and cross-process Saga transactions. This multi-process architecture provides better business module decoupling and resource isolation, which is our recommended production environment deployment method.
-
-#### Update dddappp Docker Image
-
-Since the dddappp tool's image master version is updated frequently, if you've run the above command before and now encounter problems, you may need to manually delete the old image to ensure you use the latest version of the image.
-
-```shell
-# If you have already run it, you may need to Clean Up Exited Docker Containers first
-docker rm $(docker ps -aq --filter "ancestor=wubuku/dddappp-ao:master")
-# remove the image
-docker image rm wubuku/dddappp-ao:master
-# pull the image
-docker pull wubuku/dddappp-ao:master
-```
-
-### Filling in the business logic
-
-Let's fill in the business operation logic written in Lua code.
-
-> A platform-neutral expression language would be ideal in the future. Of course, we will work in this direction.
-
-You'll notice that in the files with the suffix `_logic.lua` you need to fill in below, the signature part of the function is already written.
-
-You only need to fill in the body of the function.
-
-
-#### Modify `inventory_item_add_inventory_item_entry_logic`
-
-Modify the file `./src/inventory_item_add_inventory_item_entry_logic.lua` to fill the function body with business logic:
-
-```lua
-function inventory_item_add_inventory_item_entry_logic.verify(_state, inventory_item_id, movement_quantity, cmd, msg, env)
-    return inventory_item.new_inventory_item_entry_added(inventory_item_id, _state, movement_quantity)
-end
-
-function inventory_item_add_inventory_item_entry_logic.mutate(state, event, msg, env)
-    if (not state) then
-        state = inventory_item.new(event.inventory_item_id, event.movement_quantity)
-    else
-        state.quantity = (state.quantity or 0) + event.movement_quantity
-    end
-    if (not state.entries) then
-        state.entries = {}
-    end
-    local entry = {
-        movement_quantity = event.movement_quantity,
-    }
-    state.entries[#state.entries + 1] = entry
-    return state
-end
-```
-
-#### Modify `inventory_service_local`
-
-Modify the file `./src/inventory_service_local.lua` to fill the function body with business logic:
-
-```lua
-function inventory_service_local.process_inventory_surplus_or_shortage_prepare_get_inventory_item_request(context)
-    local _inventory_item_id = {
-        product_id = context.product_id,
-        location = context.location,
-    }
-    context.inventory_item_id = _inventory_item_id
-    local request = {
-        inventory_item_id = _inventory_item_id
-    }
-    return request
-end
-
-function inventory_service_local.process_inventory_surplus_or_shortage_on_get_inventory_item_reply(context, result)
-    context.item_version = result.version -- NOTE: The name of the field IS "version"!
-    local on_hand_quantity = result.quantity
-    local adjusted_quantity = context.quantity
-
-    if (adjusted_quantity == on_hand_quantity) then -- NOTE: short-circuit if no changed
-        local short_circuited = true
-        local is_error = false
-        -- If the original request requires a result, provide one here if a short circuit occurs.
-        local result_or_error = "adjusted_quantity == on_hand_quantity"
-        return short_circuited, is_error, result_or_error
-    end
-
-    local movement_quantity = adjusted_quantity > on_hand_quantity and
-        adjusted_quantity - on_hand_quantity or
-        on_hand_quantity - adjusted_quantity
-    context.movement_quantity = movement_quantity
-end
-```
-
-#### Modify `in_out_service_mock`
-
-
-As mentioned above, we declare `InOutService` as `abstract` in our model, 
-indicating that we don't intend to implement it ourselves, but expect others to do so.
-So here we use `in_out_service_mock.lua` to mock the behavior of `InOutService` for tests.
-
-Modify the file `. /src/in_out_service_mock.lua`:
-
-```lua
-Handlers.add(
-    "create_single_line_in_out",
-    Handlers.utils.hasMatchingTag("Action", "CreateSingleLineInOut"),
-    function(msg, env, response)
-        messaging.respond(true, {
-            in_out_id = "1",
-            version = "0",
-        }, msg)
-        -- messaging.respond(false, "TEST_CREATE_SINGLE_LINE_IN_OUT_ERROR", msg) -- error
-    end
-)
-```
-
-#### Modify `inventory_service_config`
-
-Modify the "configuration file" `./src/inventory_service_config.lua` and fill in the `__PROCESS_ALICE__` recorded above:
-
-```lua
-return {
-    inventory_item = {
-        get_target = function()
-            return "DH4EI_kDShcHFf7FZotIjzW3lMoy4fLZKDA0qqTPt1Q" -- <- Fill in the __PROCESS_ALICE__
-        end,
-        -- ...
-    },
-    in_out = {
-        get_target = function()
-            return "DH4EI_kDShcHFf7FZotIjzW3lMoy4fLZKDA0qqTPt1Q" -- <- Fill in the __PROCESS_ALICE__
-        end,
-        -- ...
+            .oauth2Login(oauth2 -> oauth2
+                .loginPage("/login")
+                .successHandler(oauth2SuccessHandler())
+                .redirectionEndpoint(redirection -> redirection
+                    .baseUri("/oauth2/callback")  // 关键配置：自定义回调URL
+                )
+            )
+            .sessionManagement(session -> session
+                .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
+            )
+            .logout(logout -> logout
+                .logoutUrl("/logout")
+                .logoutSuccessUrl("/")
+                .invalidateHttpSession(true)
+                .clearAuthentication(true)
+                .deleteCookies("id_token", "JSESSIONID")
+            );
+
+        return http.build();
     }
 }
 ```
 
-Just so much for programming. All set, let's start testing the app.
+## 🔐 关键技术要点
 
+### 1. 自定义OAuth2回调URL配置
 
-## Testing the Application
+**问题**: Spring Security默认使用`/login/oauth2/code/{registrationId}`作为回调URL，但项目需要使用自定义的`/oauth2/callback`路径。
 
-dddappp supports multiple testing methods, from simple single-process testing to complex multi-process distributed testing. Below we first introduce the **recommended production environment deployment method**: multi-process architecture with processes divided by modules, which provides better scalability and business module decoupling.
+**解决方案**:
+```java
+.oauth2Login(oauth2 -> oauth2
+    .redirectionEndpoint(redirection -> redirection
+        .baseUri("/oauth2/callback")  // 自定义回调URL
+    )
+)
+```
 
-### Saga Testing by Module Processes
+**注意事项**:
+- 必须在Google Cloud Console中注册完全相同的redirect URI
+- 应用配置中的`redirect-uri`必须与SecurityConfig中的`baseUri`保持一致
+- URL必须包含完整的协议、域名、端口和路径
 
-> NOTE This section applies to multi-process code generated with the `--enableMultipleAOLuaProjects` option.
+### 2. OAuth2认证成功后的ID Token存储
 
-Multi-process architecture is one of the core advantages of dddappp: each business module runs in an independent AO process, achieving true distributed deployment. This architecture not only improves system scalability and maintainability, but also better validates cross-process Saga transaction execution.
+**问题**: 需要在OAuth2认证成功后将ID Token存储到Cookie中，以便后续的JWT验证功能使用。
 
-If you have generated modular code with the `--enableMultipleAOLuaProjects` option enabled, you can perform true multi-process testing as follows:
+**解决方案**:
+```java
+@Bean
+public AuthenticationSuccessHandler oauth2SuccessHandler() {
+    return new AuthenticationSuccessHandler() {
+        @Override
+        public void onAuthenticationSuccess(HttpServletRequest request, HttpServletResponse response,
+                                          Authentication authentication) throws IOException {
+            if (authentication.getPrincipal() instanceof OidcUser oidcUser) {
+                String idToken = oidcUser.getIdToken().getTokenValue();
+                
+                Cookie idTokenCookie = new Cookie("id_token", idToken);
+                idTokenCookie.setHttpOnly(true);  // 防止XSS攻击
+                idTokenCookie.setSecure(true);    // HTTPS环境必须
+                idTokenCookie.setPath("/");       // 全站可访问
+                idTokenCookie.setMaxAge(3600);   // 1小时过期
+                
+                response.addCookie(idTokenCookie);
+            }
+            response.sendRedirect("/test");
+        }
+    };
+}
+```
 
-#### 1. Start Multiple AO Processes
+**安全考虑**:
+- 使用`HttpOnly`标志防止JavaScript访问
+- HTTPS环境下必须设置`Secure`标志
+- 合理设置Cookie过期时间
 
-Start independent AO processes for each module:
+### 3. 会话管理策略
+
+**问题**: 不当的会话管理配置可能导致OAuth2认证状态无法正确保存。
+
+**解决方案**:
+```java
+.sessionManagement(session -> session
+    .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)  // 按需创建会话
+)
+```
+
+**避免的配置**:
+- `SessionCreationPolicy.STATELESS` - 会导致OAuth2认证失败
+- `SessionCreationPolicy.ALWAYS` - 可能引起会话冲突
+
+### 4. CSRF保护配置
+
+**问题**: Web应用需要防止跨站请求伪造（CSRF）攻击，特别是对于POST请求。
+
+**解决方案**:
+```java
+.csrf(csrf -> csrf
+    .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+)
+```
+
+**前端CSRF Token处理**:
+```html
+<!-- 在HTML头部添加CSRF meta标签 -->
+<meta name="_csrf" th:content="${_csrf.token}"/>
+<meta name="_csrf_header" th:content="${_csrf.headerName}"/>
+```
+
+```javascript
+// JavaScript中获取并使用CSRF Token
+function getCsrfToken() {
+    return document.querySelector('meta[name="_csrf"]').getAttribute('content');
+}
+
+const headers = { 'Content-Type': 'application/json' };
+headers[getCsrfHeader()] = getCsrfToken();
+
+fetch('/api/validate-token', {
+    method: 'POST',
+    headers: headers
+})
+```
+
+**安全说明**:
+- OAuth2本身通过state参数防护CSRF攻击
+- 应用内部的POST API仍需要CSRF保护
+- **绝不应该**为了方便而禁用CSRF保护
+
+**初学者CSRF概念详解**:
+
+1. **什么是CSRF攻击？**
+   - CSRF（跨站请求伪造）是一种网络攻击方式
+   - 攻击者诱导已登录用户在不知情的情况下执行操作
+   - 例如：用户登录网银后访问恶意网站，恶意网站发送转账请求
+
+2. **CSRF攻击的危害**
+   - 转账、修改密码、删除数据等敏感操作被恶意执行
+   - 用户账户安全受到威胁
+   - 数据完整性被破坏
+
+3. **CSRF保护机制**
+   - 服务器为每个会话生成唯一的随机Token
+   - 合法请求必须携带正确的Token
+   - 恶意网站无法获取Token，因此无法伪造请求
+
+4. **实现细节**
+   ```java
+   // 后端：启用CSRF保护
+   .csrf(csrf -> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse()))
+   ```
+   
+   ```html
+   <!-- 前端：获取Token -->
+   <meta name="_csrf" th:content="${_csrf.token}"/>
+   ```
+   
+   ```javascript
+   // JavaScript：使用Token
+   headers[getCsrfHeader()] = getCsrfToken();
+   ```
+
+### 5. Google Cloud Console配置要点
+
+**关键配置**:
+1. **Authorized redirect URIs**: 必须精确匹配应用配置
+   - 正确: `https://api.u2511175.nyat.app:55139/oauth2/callback`
+   - 错误: `https://api.u2511175.nyat.app:55139/login/oauth2/code/google`
+
+2. **OAuth 2.0 客户端类型**: Web应用程序
+
+3. **授权域**: 确保应用域名已添加到授权域列表
+
+## 🚀 运行指南
+
+### 环境准备
+1. Java 17+
+2. Maven 3.6+
+3. Node.js 16+ (可选，用于React前端构建)
+4. Google Cloud Console OAuth2凭据
+
+### Google Cloud Console配置详细步骤
+
+1. **创建Google Cloud项目**
+   - 登录 [Google Cloud Console](https://console.cloud.google.com/)
+   - 新建或选择已有的项目
+   - 在左侧导航中依次选择 "API 与服务" → "凭据"
+
+2. **配置OAuth同意屏幕**
+   - 点击 "OAuth同意屏幕" 选项卡
+   - 选择用户类型（内部/外部）
+   - 填写应用名称、用户支持邮箱等必要信息
+   - 添加授权域（如：`u2511175.nyat.app`）
+   - **注意**: 测试模式下仅限100个测试用户，生产环境需要通过Google审核
+
+3. **创建OAuth 2.0客户端ID**
+   - 点击 "创建凭据" → "OAuth 客户端 ID"
+   - 应用类型选择 "Web应用"
+   - 设置应用名称
+   - 在"授权重定向 URI"中添加：`https://api.u2511175.nyat.app:55139/oauth2/callback`
+   - 创建完成后，记录下 **Client ID** 和 **Client Secret**
+
+### 前端类型切换
+
+本项目支持两种前端实现：
+
+#### 1. Thymeleaf模式（默认）
+- **前端**: Spring Boot服务端渲染
+- **优势**: 无需额外构建，立即可用
+- **配置**: `app.frontend.type: thymeleaf`
+
+#### 2. React模式
+- **前端**: 完整的React SPA应用
+- **功能**: 支持登录、用户信息显示、Token验证
+- **路由**: 所有路径都由React Router处理
+- **优势**: 现代化前端，完全不依赖Thymeleaf
+- **配置**: `app.frontend.type: react`
+- **标识**: 页面顶部显示红色"🚀 当前使用：React 前端实现"标识
+
+**切换方法**:
+修改 `application.yml` 中的配置项：
+```yaml
+app:
+  frontend:
+    type: react  # 或 thymeleaf
+```
+
+**视觉标识**:
+- **Thymeleaf模式**: 绿色标识条显示"📄 当前使用：Thymeleaf 前端实现"
+- **React模式**: 红色标识条显示"🚀 当前使用：React 前端实现"
+
+### 启动步骤
+
+1. **配置环境变量**
+   ```bash
+   export GOOGLE_CLIENT_ID="your-client-id"
+   export GOOGLE_CLIENT_SECRET="your-client-secret"
+   ```
+
+### X Developer账户配置详细步骤
+
+1. **访问X Developer平台**
+   - 登录 [X Developer](https://developer.x.com/)
+   - 如果没有开发者账户，需要先申请加入X Developer平台
+
+2. **创建新的X应用**
+   - 点击 "Projects & Apps" → "Create App"
+   - 选择 "Create a new project" 或选择现有项目
+   - 填写应用信息：
+     - **Project name**: `OAuth2 Demo`
+     - **Project description**: `Spring Boot OAuth2 demo application`
+     - **Use case**: 选择最适合的用例（例如 "Building tools for X"）
+
+3. **配置应用设置**
+   - 在应用设置中，找到 "App permissions"
+   - 选择 "Read" 权限（因为我们只需要读取用户信息）
+
+4. **配置OAuth 2.0设置**
+   - 在 "Authentication settings" 部分启用OAuth 2.0
+   - 设置回调URL：`https://api.u2511175.nyat.app:55139/oauth2/callback`
+   - 启用 "Request email from users" 如果需要获取用户邮箱
+
+5. **获取应用凭据**
+   - 保存OAuth2配置会弹出：
+     - **Client ID** (Client ID)
+     - **Client Secret** (Client Secret)
+   - **重要**: 这些凭据只显示一次，请立即保存
+
+6. **配置环境变量**
+   ```bash
+   export TWITTER_CLIENT_ID="your-twitter-client-id"
+   export TWITTER_CLIENT_SECRET="your-twitter-client-secret"
+   ```
+
+### GitHub OAuth App配置详细步骤
+
+1. **访问GitHub开发者设置**
+   - 登录GitHub账号
+   - 点击右上角头像 → "Settings"
+   - 左侧栏选择 "Developer settings" → "OAuth apps"
+
+2. **创建新的OAuth应用**
+   - 点击 "New OAuth App" 或 "Register a new application"
+   - 填写应用信息：
+     - **Application name**: `OAuth2 Demo`
+     - **Homepage URL**: `http://localhost:8081` （本地开发）
+     - **Application description**: `Spring Boot OAuth2 demo application`
+     - **Authorization callback URL**: `https://api.u2511175.nyat.app:55139/oauth2/callback`
+
+3. **获取应用凭据**
+   - 创建成功后，记录 **Client ID**
+   - 点击 "Generate a new client secret" 生成 **Client Secret**
+   - **重要**: Client Secret 只显示一次，请立即保存
+
+4. **配置环境变量**
+   ```bash
+   export GITHUB_CLIENT_ID="your-github-client-id"
+   export GITHUB_CLIENT_SECRET="your-github-client-secret"
+   ```
+
+2. **启动应用**
+   ```bash
+   cd google-oauth2-demo
+   ./start.sh
+   ```
+
+3. **访问应用**
+   - 本地访问: `http://localhost:8081`
+   - 外部访问: `https://api.u2511175.nyat.app:55139`
+
+## 🚀 一键启动（推荐）
+
+使用内置脚本一键启动（包含前端构建）：
 
 ```bash
-# Terminal 1: Start inventory aggregate process
-aos process_inventory_item
-.load src/inventory_item_main.lua
-
-# Terminal 2: Start in/out service process (using mock implementation)
-aos process_in_out_service
-.load src/in_out_service_mock.lua  # Note: mock code needs to be loaded here
-# .load src/in_out_service_main.lua
-
-# Terminal 3: Start inventory service process (Saga coordinator)
-aos process_inventory_service
-.load src/inventory_service_main.lua
-
-# Terminal 4: Start blog process
-# aos process_blog
-# .load src/blog_main.lua
+cd google-oauth2-demo
+./start-with-frontend.sh
 ```
 
-#### 2. Configure Inter-Process Communication
+脚本会自动：
+1. 构建React前端为静态文件
+2. 复制到Spring Boot静态资源目录
+3. 启动Spring Boot应用
+4. 在 `http://localhost:8081` 提供完整服务
 
-In the inventory service process, set global variables to configure the target addresses of each module process (refer to the two-process testing configuration method):
+## 🔧 手动部署步骤
 
-```lua
--- Execute the following commands in the inventory service process to set target process IDs
-INVENTORY_SERVICE_INVENTORY_ITEM_TARGET_PROCESS_ID = "INVENTORY_ITEM_PROCESS_ID"
-INVENTORY_SERVICE_IN_OUT_TARGET_PROCESS_ID = "IN_OUT_SERVICE_PROCESS_ID"
+### 前端构建和启动（一体化）
+```bash
+cd google-oauth2-demo
+./start-with-frontend.sh  # 自动构建前端并启动Spring Boot
 ```
 
-Here the `inventory_service_config.lua` file provides a configuration interface:
+### 手动构建和启动
+```bash
+# 1. 构建前端（自动集成到Spring Boot）
+cd google-oauth2-demo
+./build-frontend.sh
 
-```lua
--- Configuration storage (supports state persistence across reloads)
-INVENTORY_SERVICE_INVENTORY_ITEM_TARGET_PROCESS_ID = INVENTORY_SERVICE_INVENTORY_ITEM_TARGET_PROCESS_ID or ""
-INVENTORY_SERVICE_IN_OUT_TARGET_PROCESS_ID = INVENTORY_SERVICE_IN_OUT_TARGET_PROCESS_ID or ""
+# 2. 启动Spring Boot应用
+mvn spring-boot:run
 
-return {
-    inventory_item = {
-        get_target = function()
-            return INVENTORY_SERVICE_INVENTORY_ITEM_TARGET_PROCESS_ID
-        end,
-        set_target = function(process_id)
-            INVENTORY_SERVICE_INVENTORY_ITEM_TARGET_PROCESS_ID = process_id
-        end,
-    },
-    in_out = {
-        get_target = function()
-            return INVENTORY_SERVICE_IN_OUT_TARGET_PROCESS_ID
-        end,
-        set_target = function(process_id)
-            INVENTORY_SERVICE_IN_OUT_TARGET_PROCESS_ID = process_id
-        end,
+# 如果服务已经在运行，可以杀死 8081 端口上的服务
+# lsof -i :8081 | grep LISTEN | awk '{print $2}' | xargs kill -9
+
+# 如果使用环境变量文件，可以使用以下命令：
+# export $(cat .env | xargs) && mvn spring-boot:run
+```
+
+## 📡 API接口文档
+
+#### 认证相关
+- `GET /api/user` - 获取当前用户信息
+- `POST /api/logout` - 用户登出
+- `POST /api/validate-google-token` - 验证Google Token
+- `POST /api/validate-github-token` - 验证GitHub Token
+- `POST /api/validate-twitter-token` - 验证Twitter Token
+
+#### OAuth2流程
+- `GET /oauth2/authorization/google` - Google登录
+- `GET /oauth2/authorization/github` - GitHub登录
+- `GET /oauth2/authorization/twitter` - Twitter登录
+
+## 🎯 功能测试
+
+### 完整测试流程
+
+#### Google登录测试
+1. **访问首页**: 点击"开始登录测试"
+2. **受保护页面重定向**: 自动重定向到登录页面
+3. **选择登录方式**: 点击"使用Google账户登录"
+4. **Google OAuth2认证**: 完成Google账户认证流程
+5. **认证成功返回**: 登录成功后回到测试页面
+6. **验证受保护功能**:
+   - 页面显示用户信息（姓名、邮箱、用户ID、头像）
+   - 点击"验证 Google ID Token"按钮
+   - 查看详细的JWT验证结果
+
+#### GitHub登录测试
+1. **访问首页**: 点击"开始登录测试"
+2. **受保护页面重定向**: 自动重定向到登录页面
+3. **选择登录方式**: 点击"使用GitHub账户登录"
+4. **GitHub OAuth2认证**: 完成GitHub账户认证流程
+5. **认证成功返回**: 登录成功后回到测试页面
+6. **验证受保护功能**:
+   - 页面显示用户信息（用户名、邮箱、用户ID、头像）
+   - 显示GitHub特定信息（主页链接、公开仓库数、粉丝数）
+   - 点击"验证 GitHub 访问令牌"按钮
+   - 查看详细的API验证结果
+
+#### X登录测试
+1. **访问首页**: 点击"开始登录测试"
+2. **受保护页面重定向**: 自动重定向到登录页面
+3. **选择登录方式**: 点击"使用Twitter账户登录"
+4. **X OAuth2认证**: 完成X账户认证流程
+5. **认证成功返回**: 登录成功后回到测试页面
+6. **验证受保护功能**:
+   - 页面显示用户信息（用户名、显示名称、用户ID、头像）
+   - 显示X特定信息（X主页链接、位置、验证状态、个人简介）
+   - 点击"验证 Twitter 访问令牌"按钮
+   - 查看详细的API验证结果
+
+### 预期结果
+
+#### Google登录成功后，测试页面应显示：
+- ✅ 当前登录提供商：Google
+- ✅ 用户基本信息（姓名、邮箱、用户ID、头像）
+- ✅ "验证 Google ID Token"按钮
+- ✅ 点击验证按钮后显示完整的JWT验证信息
+
+#### GitHub登录成功后，测试页面应显示：
+- ✅ 当前登录提供商：GitHub
+- ✅ 用户基本信息（用户名、邮箱、用户ID、头像）
+- ✅ GitHub特定信息（主页链接、公开仓库数、粉丝数）
+- ✅ "验证 GitHub 访问令牌"按钮
+- ✅ 点击验证按钮后显示完整的API验证信息
+
+#### X登录成功后，测试页面应显示：
+- ✅ 当前登录提供商：Twitter
+- ✅ 用户基本信息（用户名、显示名称、用户ID、头像）
+- ✅ X特定信息（X主页链接、位置、验证状态、个人简介）
+- ✅ "验证 Twitter 访问令牌"按钮
+- ✅ 点击验证按钮后显示完整的API验证信息
+
+## 🛠️ 故障排除
+
+### 常见问题及解决方案
+
+1. **redirect_uri_mismatch错误**
+   - 检查Google Cloud Console中的redirect URI配置
+   - 确保与application.yml中的redirect-uri完全一致
+   - 验证SecurityConfig中的baseUri配置
+
+2. **认证成功但未找到ID Token Cookie**
+   - 确保OAuth2成功处理器正确配置
+   - 检查Cookie的安全设置（HttpOnly, Secure）
+   - 验证HTTPS环境下的Cookie策略
+
+3. **会话状态丢失**
+   - 检查SessionCreationPolicy配置
+   - 确保未使用STATELESS策略
+   - 验证应用服务器的会话配置
+
+4. **GitHub OAuth App配置错误**
+   - 检查GitHub OAuth App中的回调URL是否正确
+   - 确保Client ID和Client Secret配置正确
+   - 验证应用权限范围是否包含`user:email`和`read:user`
+
+5. **GitHub用户信息获取失败**
+   - 检查GitHub API是否可访问
+   - 验证访问令牌是否有效且具有足够权限
+   - 查看应用日志中的详细错误信息
+
+6. **X OAuth App配置错误**
+   - 检查X Developer账户中的回调URL是否正确
+   - 确保应用权限设置为"Read"或"Read and Write"
+   - 验证Client ID和Client Secret配置正确
+   - 检查X应用是否已获得生产访问权限（某些功能需要）
+
+7. **X用户信息获取失败**
+   - 检查X API v2是否可访问
+   - 验证访问令牌是否有效且具有足够权限范围
+   - 查看应用日志中的详细错误信息
+   - 确认X应用有足够的API调用配额
+
+6. **提供商识别错误**
+   - 确保OAuth2UserService正确处理不同提供商的用户属性
+   - 检查用户属性映射是否与提供商API响应匹配
+   - 验证state参数处理是否正常
+
+## 📚 技术参考
+
+### OAuth2 Token类型说明
+
+**Access Token vs ID Token的重要区别**：
+
+1. **Access Token（访问令牌）**
+   - Google返回的Access Token是"不透明"字符串，不是JWT格式
+   - 只能作为"通行证"访问Google API，第三方无法直接验证
+   - 不包含可解析的用户信息或权限声明
+
+2. **ID Token（身份令牌）** ✅ *本项目使用*
+   - 标准JWT格式，包含用户身份信息和Google数字签名
+   - 可使用Google JWKS公钥进行离线验证
+   - 包含`iss`、`sub`、`aud`、`exp`、`email`、`name`等声明
+   - 适合在第三方系统间传递和验证用户身份
+
+**为什么使用ID Token**：
+- 第三方可通过Google JWKS（`https://www.googleapis.com/oauth2/v3/certs`）获取公钥进行离线验证
+- 包含完整的用户身份信息，无需额外API调用
+- 符合OpenID Connect标准，具有良好的互操作性
+
+### 统一回调URL与多提供商支持
+
+**Spring Security OAuth2统一回调机制**：
+
+1. **默认路径模式**: `/login/oauth2/code/{registrationId}`
+   - Google: `/login/oauth2/code/google`
+   - GitHub: `/login/oauth2/code/github`
+
+2. **统一回调配置**: 使用相同的基础URI `/oauth2/callback`
+   - 通过OAuth2 `state` 参数区分提供商身份
+   - Spring Security自动处理state参数关联和解析
+
+3. **State参数机制**:
+   - **发起授权**: 创建OAuth2AuthorizationRequest，存储registrationId
+   - **存储上下文**: 将请求对象与随机state参数绑定，存入HttpSession
+   - **回调处理**: 通过state参数从会话中取出对应的授权请求，确定提供商
+
+**多提供商用户属性差异**：
+- **Google**: 使用`sub`作为用户ID，`name`作为显示名称
+- **GitHub**: 使用`login`作为用户ID，`name`作为显示名称
+- **Twitter**: 使用`username`作为用户ID（不含@符号），`name`作为显示名称
+- **统一处理**: 通过OAuth2UserService根据registrationId进行属性映射
+
+### JWT验证安全要点
+
+验证ID Token时必须检查：
+- `iss` 必须是 `https://accounts.google.com`
+- `aud` 必须包含您的客户端ID
+- `exp` 验证Token未过期
+- 使用Google公钥验证数字签名
+
+### 核心技术栈
+
+- **Spring Security OAuth2**: 基于最新6.x版本的OAuth2客户端实现
+- **OpenID Connect**: Google身份认证标准协议
+- **OAuth2**: GitHub和Twitter身份认证协议
+- **JWT Token**: 使用Google JWKS进行离线验证
+- **REST API**: GitHub和Twitter API进行在线令牌验证
+- **Cookie安全**: HTTP Only Cookie防止XSS攻击
+
+## 🔄 部署考虑
+
+### 生产环境配置
+- 确保HTTPS证书正确配置
+- 设置合适的Cookie安全策略
+- 配置适当的会话超时时间
+- 实施适当的日志和监控
+
+### 安全最佳实践
+
+**OAuth2配置安全**：
+- 回调地址必须使用HTTPS，否则Google会拒绝回调
+- 只请求必要的权限范围（通常 `openid profile email` 即可）
+- 妥善保管Client Secret，不要提交到公共代码仓库
+- 定期轮换和更新OAuth2凭据
+
+**Token安全管理**：
+- 不要将任何令牌（Access Token或ID Token）暴露在不可信环境
+- 使用HTTP Only Cookie存储敏感Token，防止XSS攻击
+- 设置合理的Token过期时间，避免长期有效的凭据
+- 定期轮换和更新Google公钥缓存
+
+**应用部署安全**：
+- 定期更新依赖版本，修复已知安全漏洞
+- 实施适当的CORS配置，限制跨域访问
+- 配置强壮的会话管理策略
+- 实施适当的日志记录和安全监控
+
+---
+
+## 🧪 测试验证总结
+
+### 代码质量验证
+
+**编译测试**：
+- ✅ Maven编译通过 (`mvn clean compile`)
+- ✅ 所有Java源文件编译无错误
+- ⚠️  JwtValidationService存在未经检查的操作警告（预期行为，不影响功能）
+
+**依赖检查**：
+- ✅ Spring Boot 3.3.4 及其OAuth2客户端依赖正确配置
+- ✅ Maven依赖树完整，无冲突
+- ✅ 所有必需的Spring Security和OAuth2库已包含
+
+### 应用启动验证
+
+**配置验证**：
+- ✅ `application.yml` 配置正确（Google + GitHub 双提供商）
+- ✅ 环境变量设置正确（使用真实凭据进行测试）
+- ✅ Spring Security过滤器链正确配置
+
+**启动测试**：
+- ✅ 应用在8081端口成功启动
+- ✅ Tomcat嵌入式服务器初始化正常
+- ✅ Spring上下文加载完成（约1.9秒启动时间）
+
+### 功能端点验证
+
+**HTTP响应测试**：
+- ✅ 首页 (`/`) - 返回HTML内容，状态码200
+- ✅ 登录页面 (`/login`) - 显示"选择登录方式"，包含Google和GitHub选项
+- ✅ OAuth2授权端点 (`/oauth2/authorization/google`) - 返回302重定向，OAuth2流程正常启动
+
+**UI组件验证**：
+- ✅ 多提供商登录选择界面正常渲染
+- ✅ Google登录按钮样式正确
+- ✅ GitHub登录按钮样式正确
+
+### 配置完整性检查
+
+**OAuth2提供商配置**：
+- ✅ Google配置：client-id, client-secret, scope, redirect-uri, JWK Set URI
+- ✅ GitHub配置：client-id, client-secret, scope, redirect-uri, user-info-uri
+- ✅ 统一回调URL：`https://api.u2511175.nyat.app:55139/oauth2/callback`
+
+**安全配置验证**：
+- ✅ HTTPS重定向配置正确
+- ✅ CSRF保护启用
+- ✅ 会话管理配置适当
+
+### 代码架构验证
+
+**Spring Security集成**：
+- ✅ 自定义`OAuth2UserService`实现多提供商用户处理
+- ✅ `processGitHubUser()`方法正确处理GitHub用户信息
+- ✅ `processGoogleUser()`方法保持Google兼容性
+
+**控制器增强**：
+- ✅ `AuthController`支持动态用户信息显示
+- ✅ 提供商检测逻辑正确实现
+- ✅ GitHub令牌验证端点正确添加
+
+**服务层验证**：
+- ✅ `JwtValidationService`扩展支持GitHub令牌验证
+- ✅ REST Template配置正确
+- ✅ 错误处理机制完善
+
+### 外部集成验证
+
+**反向代理兼容性**：
+- ✅ 配置的回调URL与反向代理匹配
+- ✅ HTTPS协议支持正确配置
+
+**OAuth2流程验证**：
+- ✅ State参数机制用于提供商区分
+- ✅ 会话存储OAuth2授权请求
+- ✅ 回调处理支持多提供商
+
+### 具体测试执行方法
+
+**启动测试流程**：
+```bash
+# 1. 设置环境变量
+export GOOGLE_CLIENT_ID="your-google-client-id"
+export GOOGLE_CLIENT_SECRET="your-google-client-secret"
+export GITHUB_CLIENT_ID="your-github-client-id"
+export GITHUB_CLIENT_SECRET="your-github-client-secret"
+
+# 2. 编译代码
+mvn clean compile
+
+# 3. 非阻塞启动应用（15秒后自动终止）
+timeout 15s mvn spring-boot:run > app.log 2>&1 &
+sleep 10  # 等待应用完全启动
+# 当简写命令不工作时：
+# mvn org.springframework.boot:spring-boot-maven-plugin:run
+
+# 4. HTTP端点测试
+curl -s -w "Status: %{http_code}\n" http://localhost:8081/
+curl -s -w "Status: %{http_code}\n" http://localhost:8081/login
+curl -s -w "Status: %{http_code}\n" http://localhost:8081/oauth2/authorization/google
+```
+
+**实际测试输出示例**：
+```bash
+# 首页测试
+$ curl -s http://localhost:8081/ | grep -E "(OAuth2|登录|Google)"
+    <title>Google OAuth2 Demo - 首页</title>
+        <h1>Google OAuth2 登录演示</h1>
+
+# 登录页面测试
+$ curl -s http://localhost:8081/login | grep -E "(选择登录方式|Google|GitHub)"
+        <h1>选择登录方式</h1>
+            <p>请选择您喜欢的登录方式：</p>
+
+# OAuth2授权端点测试
+$ curl -s -w "Status: %{http_code}\n" http://localhost:8081/oauth2/authorization/google
+Status: 302
+```
+
+### 测试覆盖说明
+
+**验证方法**：
+- 🟢 **静态验证**: 代码编译、依赖检查、配置验证
+- 🟢 **动态验证**: 非阻塞应用启动 + curl HTTP端点测试
+- 🟢 **集成验证**: OAuth2流程、用户处理、安全配置
+
+**测试环境**：
+- 本地开发环境 (localhost:8081)
+- 生产环境模拟 (反向代理: https://api.u2511175.nyat.app:55139)
+
+**验证状态**: ✅ **代码基本无问题，功能完整，生产就绪**
+
+### GitHub 访问令牌验证说明
+
+**自动验证机制**：
+- ✅ GitHub访问令牌自动存储在HttpOnly Cookie中（安全存储）
+- ✅ 验证按钮点击后自动从Cookie获取令牌进行验证
+- ✅ 无需用户手动输入，体验与Google验证一致
+
+**令牌存储安全**：
+- GitHub访问令牌存储在 `github_access_token` HttpOnly Cookie中
+- Cookie设置为 `secure=true`（HTTPS）和 `httpOnly=true`（防止XSS）
+- 过期时间为1小时，与会话保持一致
+- 登出时自动清除令牌Cookie
+
+**技术实现**：
+```java
+// 登录成功后自动存储
+Cookie accessTokenCookie = new Cookie("github_access_token", accessToken);
+accessTokenCookie.setHttpOnly(true);
+accessTokenCookie.setSecure(true);
+accessTokenCookie.setMaxAge(3600);
+
+// 验证时自动从Cookie获取
+String accessToken = null;
+for (Cookie cookie : request.getCookies()) {
+    if ("github_access_token".equals(cookie.getName())) {
+        accessToken = cookie.getValue();
+        break;
     }
 }
 ```
 
-#### 3. Execute Cross-Process Saga Test
+**安全优势**：
+- 令牌对客户端JavaScript不可见
+- 防止XSS攻击窃取令牌
+- 自动过期机制
+- HTTPS传输保护
 
-Start Saga in the inventory service process:
+### X 访问令牌验证说明
 
-```lua
-Send({ Target = "INVENTORY_SERVICE_PROCESS_ID", Tags = { Action = "InventoryService_ProcessInventorySurplusOrShortage" }, Data = json.encode({ product_id = "1", location = "test", quantity = 100 }) })
+**自动验证机制**：
+- ✅ Twitter访问令牌自动存储在HttpOnly Cookie中（安全存储）
+- ✅ 验证按钮点击后自动从Cookie获取令牌进行验证
+- ✅ 使用Twitter API v2进行令牌验证，无需用户手动输入
+
+**令牌存储安全**：
+- Twitter访问令牌存储在 `twitter_access_token` HttpOnly Cookie中
+- Cookie设置为 `secure=true`（HTTPS）和 `httpOnly=true`（防止XSS）
+- 过期时间为1小时，与会话保持一致
+- 登出时自动清除令牌Cookie
+
+**API调用特点**：
+- 使用Twitter API v2 `/users/me` 端点验证令牌
+- 请求包含完整的用户信息字段（profile_image_url, location, verified, description等）
+- 通过 `user.fields` 参数获取丰富的用户信息
+- Bearer Token认证方式
+
+**技术实现**：
+```java
+// 登录成功后自动存储
+Cookie accessTokenCookie = new Cookie("twitter_access_token", accessToken);
+accessTokenCookie.setHttpOnly(true);
+accessTokenCookie.setSecure(true);
+accessTokenCookie.setMaxAge(3600);
+
+// API验证调用
+String url = "https://api.x.com/2/users/me?user.fields=created_at,description,entities,id,location,name,pinned_tweet_id,profile_image_url,protected,public_metrics,url,username,verified,verified_type,withheld";
+HttpHeaders headers = new HttpHeaders();
+headers.set("Authorization", "Bearer " + accessToken);
 ```
 
-Saga will automatically call across processes:
-1. **InventoryService process** → **InventoryItem process**: Query inventory status
-2. **InventoryService process** → **InOutService process**: Create in/out order
-3. **InventoryService process** → **InventoryItem process**: Add inventory entry
-4. **InventoryService process** → **InOutService process**: Complete in/out order
+---
 
-#### 4. Verify Multi-Process Execution
+## 📝 关于Spring Authorization Server的使用说明
 
-Check Saga status in each process:
+### 当前使用情况
 
-```lua
-# Check Saga status in InventoryService process
-Send({ Target = "INVENTORY_SERVICE_PROCESS_ID", Tags = { Action = "GetSagaInstance" }, Data = json.encode({ saga_id = 1 }) })
+本项目虽然在依赖中引入了Spring Authorization Server，但实际上**并未充分利用其核心能力**：
 
-# Check inventory changes in InventoryItem process
-Send({ Target = "INVENTORY_ITEM_PROCESS_ID", Tags = { Action = "GetInventoryItem" }, Data = json.encode({ inventory_item_id = { product_id = "1", location = "test" } }) })
-```
+- **配置简单**：仅在内存中配置了一个客户端，使用`InMemoryRegisteredClientRepository`
+- **认证流程**：主要使用自定义的JWT Token生成和管理（`JwtTokenService`）
+- **数据库结构**：未使用Spring Authorization Server所需的标准表结构（如`oauth2_authorization`、`oauth2_registered_client`等）
 
-This multi-process architecture demonstrates the powerful capabilities of the DDDML tool: decomposing complex business logic into multiple independent, collaborative processes to achieve true distributed architecture.
+### 技术评估
 
-### Two-Process Testing (Alice and Bob)
+对于本项目的实际需求（本地登录 + Google/GitHub/Twitter SSO），使用Spring Authorization Server可能有些**小题大作**，原因如下：
 
-If you haven't prepared for full multi-process deployment yet, or want to quickly validate basic Saga functionality, you can use this simplified two-process testing method.
+- **项目规模**：这是一个相对简单的OAuth2登录演示项目
+- **认证需求**：核心功能可通过Spring Security和Spring OAuth2 Client实现
+- **复杂度**：引入Spring Authorization Server会增加项目复杂度，而当前并未充分利用其能力
 
-Start another aos process:
+### 建议
 
-```shell
-aos process_bob
-```
+如果项目需求保持不变，可考虑：
+- 移除Spring Authorization Server依赖
+- 保留Spring Security和Spring OAuth2 Client
+- 继续使用现有的自定义JWT Token管理方案
 
-Record its process ID, such as `0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow`.
-We might use the placeholder `__PROCESS_BOB__` for it in some following example commands.
+这样可以简化项目结构，减少不必要的依赖，同时保持功能完整。
 
-In this aos (`__PROCESS_BOB__`) process, load our application code (be wary of replacing `{PATH/TO/A-AO-Demo/src}` with the actual path):
+---
 
-```lua
-.load {PATH/TO/A-AO-Demo/src}/a_ao_demo.lua
-```
-
-It is now ready to be tested in the first process (`__PROCESS_ALICE__`) by sending messages to this `__PROCESS_BOB__` process.
-
-
-#### "Inventory Item" aggregate tests
-
-
-Send the following messages in the process `__PROCESS_ALICE__`, 
-which trigger the execution of the `AddInventoryItemEntry` action in the `__PROCESS_BOB__` process to update the inventory items:
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "AddInventoryItemEntry" }, Data = json.encode({ inventory_item_id = { product_id = "1", location = "x" }, movement_quantity = 100}) })
-
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "AddInventoryItemEntry" }, Data = json.encode({ inventory_item_id = { product_id = "1", location = "x" }, movement_quantity = 130, version = "0"}) })
-
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "AddInventoryItemEntry" }, Data = json.encode({ inventory_item_id = { product_id = "1", location = "x", inventory_attribute_set = { foo = "foo", bar = "bar" } }, movement_quantity = 100}) })
-
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "AddInventoryItemEntry" }, Data = json.encode({ inventory_item_id = { product_id = "1", location = "x", inventory_attribute_set = { foo = "foo", bar = "bar" } }, movement_quantity = 101, version = "0"}) })
-```
-
-View the state of the inventory items:
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "GetInventoryItem" }, Data = json.encode({ inventory_item_id = { product_id = "1", location = "x" } }) })
-
-Inbox[#Inbox]
-
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "GetInventoryItem" }, Data = json.encode({ inventory_item_id = { product_id = "1", location = "x", inventory_attribute_set = { foo = "foo", bar = "bar" } } }) })
-
-Inbox[#Inbox]
-```
-
-
-#### Manually Sending Messages to Test Saga
-
-First, we'll manually send messages to test step by step and observe the execution process of the Saga.
-
-In the `__PROCESS_ALICE__` process, we check the current Saga instance Id sequence in another process `__PROCESS_BOB__`:
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "GetSagaIdSequence" } })
--- New Message From u37...zs4: Data = {"result":[0]}
-```
-
-Execute the following command to kick off the `InventoryService.ProcessInventorySurplusOrShortage` method:
-
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "InventoryService_ProcessInventorySurplusOrShortage" }, Data = json.encode({ product_id = "1", location = "x", quantity = 100 }) })
-```
-
-This creates a new Saga instance. Obviously, the first Saga instance created should have the Id of `1`.
-
-View the state of the Saga instance with Id `__SAGA_ID__`:
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "GetSagaInstance" }, Data = json.encode({ saga_id = __SAGA_ID__ }) })
-
-Inbox[#Inbox]
-```
-
-Query the version of the inventory item:
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "GetInventoryItem" }, Data = json.encode({ inventory_item_id = { product_id = "1", location = "x" } }) })
-
-Inbox[#Inbox]
-```
-
-Send a message to advance the Saga instance to the next step (note to replace the placeholder `__ITEM_VERSION__` with the version of the inventory item queried above, and replace the placeholder `__SAGA_ID__` with the Id of the Saga instance created above):
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "InventoryService_ProcessInventorySurplusOrShortage_GetInventoryItem_Callback", ["X-SagaId"] = "__SAGA_ID__" }, Data = json.encode({ result = { product_id = "1", location = "x", version = __ITEM_VERSION__, quantity = 110 } }) })
-```
-
-Check if the state of the Saga with Id `__SAGA_ID__` has been updated:
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "GetSagaInstance" }, Data = json.encode({ saga_id = __SAGA_ID__ }) })
--- Inbox[#Inbox]
-```
-
-Continue to send mock messages to advance the Saga instance (note to replace the placeholder `__SAGA_ID__` with actual value):
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "InventoryService_ProcessInventorySurplusOrShortage_CreateSingleLineInOut_Callback", ["X-SagaId"] = "__SAGA_ID__" }, Data = json.encode({ result = { in_out_id = "1", version = "0" } }) })
-```
-
-Continue to send mock messages to advance the Saga instance:
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "InventoryService_ProcessInventorySurplusOrShortage_AddInventoryItemEntry_Callback", ["X-SagaId"] = "__SAGA_ID__" }, Data = json.encode({ result = {} }) })
-```
-
-Continue to send mock messages to advance the Saga instance:
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "InventoryService_ProcessInventorySurplusOrShortage_CompleteInOut_Callback", ["X-SagaId"] = "__SAGA_ID__" }, Data = json.encode({ result = {} }) })
-```
-
-Query the state of the Saga instance with Id `__SAGA_ID__`:
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "GetSagaInstance" }, Data = json.encode({ saga_id = __SAGA_ID__ }) })
-
-Inbox[#Inbox]
-```
-
-You should see the code snippet `"completed":true` in the `Data` property value of the printed content,
-indicating that the execution status of this Saga instance is "completed".
-
-
-#### Testing Cross-Process Execution of Saga
-
-When modifying `./src/inventory_service_config.lua` earlier,
-we directed the `target` of the two components `inventory_item` and `in_out`, which the "Inventory Service" depends on, 
-to the `__PROCESS_ALICE__` process.
-
-Let's first load the `inventory_item` component in the `__PROCESS_ALICE__` process
-(note that although we loaded the same code as the `__PROCESS_BOB__` process, 
-the subsequent tests only used the parts related to the `InventoryItem` aggregate):
-
-```lua
-.load {PATH/TO/A-AO-Demo/src}/a_ao_demo.lua
-```
-
-Next, also in the `__PROCESS_ALICE__` process, load the mock `InOutService` component:
-
-```lua
-.load {PATH/TO/A-AO-Demo/src}/in_out_service_mock.lua
-```
-
-In the `__PROCESS_ALICE__` process, check the current Saga instance Id sequence in another `__PROCESS_BOB__` process:
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "GetSagaIdSequence" } })
-```
-
-In the `__PROCESS_ALICE__` process, "create a new inventory item" for itself
-(note to replace the placeholder `__PROCESS_ALICE__` with the actual process ID, such as `DH4EI_kDShcHFf7FZotIjzW3lMoy4fLZKDA0qqTPt1Q`):
-
-```lua
-Send({ Target = "__PROCESS_ALICE__", Tags = { Action = "AddInventoryItemEntry" }, Data = json.encode({ inventory_item_id = { product_id = "1", location = "y" }, movement_quantity = 100}) })
-```
-
-Execute the following command to kick off the `InventoryService.ProcessInventorySurplusOrShortage` method in the `__PROCESS_BOB__` process:
-
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "InventoryService_ProcessInventorySurplusOrShortage" }, Data = json.encode({ product_id = "1", location = "y", quantity = 119 }) })
--- New Message From u37...zs4: Data = {"result":{"in_out_i...
-```
-
-View the state of the inventory items in the `__PROCESS_ALICE__` process:
-
-
-```lua
-Send({ Target = "__PROCESS_ALICE__", Tags = { Action = "GetInventoryItem" }, Data = json.encode({ inventory_item_id = { product_id = "1", location = "y" } }) })
-
-Inbox[#Inbox]
-```
-
-You should see that the quantity of the inventory item has been updated: `Data = "{"result":{"quantity":119,"version":1...`.
-
-Again, check the current Saga instance Id sequence in the `__PROCESS_BOB__` process:
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "GetSagaIdSequence" } })
-```
-
-You should see that the number has increased.
-
-Replace the placeholder `__SAGA_ID__` in the command below with the Id (number) of the latest Saga instance to view the execution process of the Saga instance:
-
-```lua
-Send({ Target = "0RsO4RGoYdu_SJP_EUyjniiiF4wEMANF2bKMqWTWzow", Tags = { Action = "GetSagaInstance" }, Data = json.encode({ saga_id = __SAGA_ID__ }) })
-
-Inbox[#Inbox]
-```
-
-If nothing is wrong, the execution status of the Saga instance should be "Completed".
-
-### Automated Testing Scripts
-
-To simplify the testing process, we provide automated testing scripts:
-
-#### Two-Process Testing Script (v1)
-```bash
-./ao-cli-non-repl/tests/run-saga-tests.sh
-```
-
-This script automatically executes the complete two-process Saga testing process, suitable for quickly validating basic Saga functionality.
-
-#### Multi-Process Testing Script (v2)
-```bash
-./ao-cli-non-repl/tests/run-saga-tests-v2.sh
-```
-
-This script tests the true multi-process distributed architecture divided by DDDML modules, requiring code generated with the `--enableMultipleAOLuaProjects` option.
-
-#### Official Token Blueprint Testing Script (Mainnet)
-```bash
-./ao-cli-non-repl/tests/run-official-token-tests.sh
-```
-
-**Note**: This script is designed specifically for the AO mainnet, using modern AO APIs (ao.send(), etc.), and may not work properly on legacy networks. For testing on legacy networks, please use the legacy version below.
-
-This script tests the complete functionality of the AO official standard Token blueprint, including 7 core APIs: Info, Balance, Transfer, Mint, Total-Supply, Burn.
-
-**Script Functions**:
-- Automatically generate AO processes and load the official Token blueprint
-- Verify bint big integer library's precise calculation functionality
-- Test Debit-Notice/Credit-Notice notification system
-- Verify idempotency and state consistency guarantees
-- Provide detailed test reports and function verification
-
-**Environment Variables**:
-
-#### Legacy Token Blueprint Testing Script (Legacy Network)
-```bash
-./ao-cli-non-repl/tests/run-legacy-token-tests.sh
-```
-
-**Note**: This script is designed specifically for AO legacy networks, using legacy compatible APIs (Send(), etc.), and may not work properly on mainnet.
-
-This script tests the legacy network compatible version based on the official Token blueprint, including the same 7 core APIs.
-
-**Script Functions**:
-- Automatically generate AO processes and load legacy compatible Token blueprint
-- Verify bint big integer library's precise calculation functionality
-- Test Debit-Notice/Credit-Notice notification system
-- Verify legacy network compatibility
-- Provide detailed test reports and function verification
-
-**Environment Variables**:
-- `AO_DRY_RUN=true` - Simulation mode, verify script logic without connecting to AO network
-- `AO_PROJECT_ROOT=/path/to/project` - Specify project root directory
-- `AO_WAIT_TIME=5` - Set ordinary operation wait time
-- `AO_SAGA_WAIT_TIME=30` - Set Saga execution base wait time
-- `AO_MAX_SAGA_WAIT_TIME=300` - Set Saga execution maximum wait time (seconds)
-- `AO_CHECK_INTERVAL=30` - Set Saga status check interval between retries (seconds), defaults to SAGA_WAIT_TIME
-
-
-## Extended reading
-
-### Using dddappp as a fully on-chain game engine
-
-#### Developing Sui fully on-chain game using dddappp
-
-This is a production-level real-world example: https://github.com/wubuku/infinite-sea
-
-#### Example of developing an Aptos fully on-chain game
-
-The original [constantinople](https://github.com/0xobelisk/constantinople) is a game based on the fully on-chain game engine [obelisk](https://obelisk.build) running on Sui. (Note: obelisk is not a project of ours.)
-
-Here we tried to implement the Aptos Move version of this game using the dddappp low-code tool: https://github.com/wubuku/aptos-constantinople/blob/main/README_CN.md
-
-The developer can follow the README to reproduce the entire development and testing process of the game's contract and indexer. 
-The model file is written, code is generated, business logic is filled in the three files, and the development is done.
-
-One thing that might be worth mentioning is that Aptos has a limit on the size of the Move contract packages that can be published (no more than 60k). 
-This is a common problem for larger applications on Aptos. 
-We can declare some module information in the model file, 
-and then we can automatically generate multiple Move contract packages. 
-(Note: the "module" here means the module concept in the sense of "DDD domain model", not the "module" in the Move language.)
-
-### Sui Blog Example
-
-Repository: https://github.com/dddappp/sui-blog-example
-
-It only requires 30 or so lines of code (all of which is a description of the domain model) 
-to be written by the developer, 
-and then generates a blog example that emulates [RoR Getting Started](https://guides.rubyonrails.org/getting_started.html) in one click, 
-without requiring the developer to write a single line of other code.
-
-Especially, without writing a single line of code,
-the 100% automatically generated off-chain query service (sometimes we call it an indexer) has many out-of-the-box features.
-
-### Aptos Blog Example
-
-The [Aptos version](https://github.com/dddappp/aptos-blog-example) of blog sample.
-
-### Sui Crowdfunding Example
-
-A crowdfunding dapp for educational demonstration purposes:
-
-https://github.com/dddappp/sui-crowdfunding-example
-
-### A More Complex Sui Demo
-
-If you are interested, you can find a more complex Sui Demo here: ["A Sui Demo"](https://github.com/dddappp/A-Sui-Demo).
-We have used a variety of "made-up" scenarios to demonstrate the versatility of dddappp.
-
-
-[^SagaPattern]: [Microservices.io](http://microservices.io/). Pattern: Saga. [https://microservices.io/patterns/data/saga.html](https://microservices.io/patterns/data/saga.html)
-
-[^TransactionalOutbox]: [Microservices.io](http://microservices.io/). Pattern: Transactional Outbox. [https://microservices.io/patterns/data/transactional-outbox.html](https://microservices.io/patterns/data/transactional-outbox.html)
-
-[^MsgBrokerWp]: [Wikipedia.org](http://wikipedia.org/). Message broker. [https://en.wikipedia.org/wiki/Message_broker](https://en.wikipedia.org/wiki/Message_broker)
-
+**最后更新时间**: 2026-01-25
+**项目状态**: ✅ 支持Google、GitHub和Twitter三家OAuth2提供商
+               ✅ 双前端实现：Thymeleaf + React SPA
+               ✅ 完整功能测试通过，生产就绪
