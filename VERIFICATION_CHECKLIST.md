@@ -78,7 +78,7 @@
 ## 🚀 启动命令
 
 ```bash
-cd google-oauth2-demo
+# cd repo-root
 export $(cat .env | xargs)
 mvn clean compile spring-boot:run
 ```

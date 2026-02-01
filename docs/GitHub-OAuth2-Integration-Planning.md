@@ -2,9 +2,6 @@
 
 ## 📋 项目概述
 
-### 当前项目状态
-现有项目 `google-oauth2-demo` 是一个完整的 Spring Boot 3.3.4 + Spring Security 6.1.13 OAuth2 演示应用，已实现 Google 账号登录功能。
-
 ### 目标需求
 在现有项目基础上增加 GitHub 账号登录演示，保持代码结构一致性和功能对等性。
 

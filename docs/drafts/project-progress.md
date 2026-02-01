@@ -14,6 +14,30 @@
 > - **新增**: 本地用户可以绑定SSO、SSO用户可以添加本地密码
 > - 所有前端 API 调用都会通过此地址访问后端服务
 
+## 测试提示
+
+手动构建和启动：
+
+```bash
+# 1. 构建前端（自动集成到Spring Boot）
+# cd repo-root
+./build-frontend.sh
+
+# 2. 启动Spring Boot应用
+mvn spring-boot:run
+
+# 如果服务已经在运行，可以杀死 8081 端口上的服务
+# lsof -i :8081 | grep LISTEN | awk '{print $2}' | xargs kill -9
+
+# 如果使用环境变量文件，可以使用以下命令：
+# export $(cat .env | xargs) && mvn spring-boot:run
+
+# **提示**：
+# - ✅ 外部隧道域名配置： `https://api.u2511175.nyat.app:55139`
+# - 目前各平台 SSO 登录配置都使用这个域名作为回调地址。
+```
+
+
 ## 项目概述
 OAuth2 Demo项目 - 完整的现代化用户认证系统实现，支持多登录方式管理。
 
@@ -399,7 +423,7 @@ OAuth2 Demo项目现在已经**完全可用**，支持：
 
 **构建命令**：
 ```bash
-cd google-oauth2-demo/frontend
+# cd repo-root/frontend
 npm run build  # 自动输出到../src/main/resources/static
 cd ..
 mvn spring-boot:run  # 重启应用加载新前端

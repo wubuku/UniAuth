@@ -11,9 +11,9 @@
 - 前后端分离架构
 
 项目结构：
-- `google-oauth2-demo/`：Spring Boot 后端项目
-- `google-oauth2-demo/frontend/`：React 前端项目
-- `google-oauth2-demo/python-resource-server/`：Python 资源服务器
+- `./`：Spring Boot 后端项目
+- `./frontend/`：React 前端项目
+- `./python-resource-server/`：Python 资源服务器
 
 ## 1. 问题描述
 
@@ -148,7 +148,7 @@ Invalid token (Python资源服务器验证失败)
 
 #### 4.1.1 修复 TokenRefreshService.java
 
-**文件路径**：`google-oauth2-demo/src/main/java/com/example/oauth2demo/service/TokenRefreshService.java`
+**文件路径**：`./src/main/java/com/example/oauth2demo/service/TokenRefreshService.java`
 
 **修改内容**：
 - 在调用 `jwtTokenService.extractUsername()` 和 `jwtTokenService.getUserIdFromToken()` 时添加异常处理
@@ -159,12 +159,12 @@ Invalid token (Python资源服务器验证失败)
 **操作命令**：
 ```bash
 # 编辑文件
-vim google-oauth2-demo/src/main/java/com/example/oauth2demo/service/TokenRefreshService.java
+vim ./src/main/java/com/example/oauth2demo/service/TokenRefreshService.java
 ```
 
 #### 4.1.2 修复 OAuth2TokenController.java
 
-**文件路径**：`google-oauth2-demo/src/main/java/com/example/oauth2demo/controller/OAuth2TokenController.java`
+**文件路径**：`./src/main/java/com/example/oauth2demo/controller/OAuth2TokenController.java`
 
 **修改内容**：
 - 恢复 `introspect()` 方法的端点路径为 `/oauth2/api/introspect`，或者同时支持新旧路径
@@ -174,12 +174,12 @@ vim google-oauth2-demo/src/main/java/com/example/oauth2demo/service/TokenRefresh
 **操作命令**：
 ```bash
 # 编辑文件
-vim google-oauth2-demo/src/main/java/com/example/oauth2demo/controller/OAuth2TokenController.java
+vim ./src/main/java/com/example/oauth2demo/controller/OAuth2TokenController.java
 ```
 
 #### 4.1.3 检查并修复资源服务器配置
 
-**文件路径**：`google-oauth2-demo/src/main/java/com/example/oauth2demo/config/ResourceServerConfig.java`
+**文件路径**：`./src/main/java/com/example/oauth2demo/config/ResourceServerConfig.java`
 
 **修改内容**：
 - 确保 `ResourceServerConfig.java` 中的 JWT 验证配置正确
@@ -189,15 +189,15 @@ vim google-oauth2-demo/src/main/java/com/example/oauth2demo/controller/OAuth2Tok
 **操作命令**：
 ```bash
 # 编辑文件
-vim google-oauth2-demo/src/main/java/com/example/oauth2demo/config/ResourceServerConfig.java
+vim ./src/main/java/com/example/oauth2demo/config/ResourceServerConfig.java
 
 # 检查 Python 资源服务器配置
-vim google-oauth2-demo/python-resource-server/app.py
+vim ./python-resource-server/app.py
 ```
 
 #### 4.1.4 添加 CORS 配置
 
-**文件路径**：`google-oauth2-demo/src/main/java/com/example/oauth2demo/config/WebMvcConfig.java`
+**文件路径**：`./src/main/java/com/example/oauth2demo/config/WebMvcConfig.java`
 
 **修改内容**：
 - 创建 `WebMvcConfig` 类，实现 `WebMvcConfigurer` 接口
@@ -207,7 +207,7 @@ vim google-oauth2-demo/python-resource-server/app.py
 **操作命令**：
 ```bash
 # 创建并编辑文件
-vim google-oauth2-demo/src/main/java/com/example/oauth2demo/config/WebMvcConfig.java
+vim ./src/main/java/com/example/oauth2demo/config/WebMvcConfig.java
 ```
 
 ### 4.2 步骤 2：验证修复
@@ -408,7 +408,7 @@ curl -X POST "https://api.u2511175.nyat.app:55139/api/auth/login" \
 
 #### 4.4.1 实现 SSO 登录的 Token 双重传递
 
-**文件路径**：`google-oauth2-demo/src/main/java/com/example/oauth2demo/config/SecurityConfig.java`
+**文件路径**：`./src/main/java/com/example/oauth2demo/config/SecurityConfig.java`
 
 **修改内容**：
 - 修改 `oauth2SuccessHandler` 方法
@@ -417,12 +417,12 @@ curl -X POST "https://api.u2511175.nyat.app:55139/api/auth/login" \
 **操作命令**：
 ```bash
 # 编辑文件
-vim google-oauth2-demo/src/main/java/com/example/oauth2demo/config/SecurityConfig.java
+vim ./src/main/java/com/example/oauth2demo/config/SecurityConfig.java
 ```
 
 #### 4.4.2 优化 OAuth2 回调处理
 
-**文件路径**：`google-oauth2-demo/src/main/java/com/example/oauth2demo/config/SecurityConfig.java`
+**文件路径**：`./src/main/java/com/example/oauth2demo/config/SecurityConfig.java`
 
 **修改内容**：
 - 实现基于状态参数的 CSRF 保护
@@ -431,12 +431,12 @@ vim google-oauth2-demo/src/main/java/com/example/oauth2demo/config/SecurityConfi
 **操作命令**：
 ```bash
 # 编辑文件
-vim google-oauth2-demo/src/main/java/com/example/oauth2demo/config/SecurityConfig.java
+vim ./src/main/java/com/example/oauth2demo/config/SecurityConfig.java
 ```
 
 #### 4.4.3 统一错误处理
 
-**文件路径**：`google-oauth2-demo/src/main/java/com/example/oauth2demo/exception/GlobalExceptionHandler.java`
+**文件路径**：`./src/main/java/com/example/oauth2demo/exception/GlobalExceptionHandler.java`
 
 **修改内容**：
 - 实现全局异常处理器
@@ -445,7 +445,7 @@ vim google-oauth2-demo/src/main/java/com/example/oauth2demo/config/SecurityConfi
 **操作命令**：
 ```bash
 # 创建并编辑文件
-vim google-oauth2-demo/src/main/java/com/example/oauth2demo/exception/GlobalExceptionHandler.java
+vim ./src/main/java/com/example/oauth2demo/exception/GlobalExceptionHandler.java
 ```
 
 #### 4.4.4 增强 API 文档
@@ -509,7 +509,7 @@ export PATH=$JAVA_HOME/bin:$PATH
 **启动后端服务**：
 ```bash
 # 进入后端目录
-cd google-oauth2-demo
+# cd repo-root
 
 # 编译并运行
 mvn clean compile spring-boot:run
@@ -518,7 +518,7 @@ mvn clean compile spring-boot:run
 **启动前端服务**：
 ```bash
 # 进入前端目录
-cd google-oauth2-demo/frontend
+# cd repo-root/frontend
 
 # 安装依赖
 npm install
@@ -530,7 +530,7 @@ npm run dev
 **启动 Python 资源服务器**：
 ```bash
 # 进入 Python 资源服务器目录
-cd google-oauth2-demo/python-resource-server
+# cd repo-root/python-resource-server
 
 # 安装依赖
 pip install -r requirements.txt

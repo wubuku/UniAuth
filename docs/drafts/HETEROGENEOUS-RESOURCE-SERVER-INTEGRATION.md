@@ -16,12 +16,12 @@
 
 ### 当前项目结构
 
-- **认证服务器**：`google-oauth2-demo`
+- **认证服务器**：`./`
   - Spring Boot应用，提供认证和授权服务
   - 支持本地登录和Google/GitHub/Twitter SSO
   - 使用JWT Token进行认证
 
-- **客户端**：`google-oauth2-demo/frontend`
+- **客户端**：`./frontend`
   - React SPA应用
   - 部署在与认证服务器相同的域下
   - 负责用户登录和获取Token

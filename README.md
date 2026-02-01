@@ -88,7 +88,7 @@
 ## 📁 项目结构
 
 ```
-google-oauth2-demo/
+./
 ├── src/main/java/com/example/oauth2demo/
 │   ├── GoogleOAuth2DemoApplication.java          # 主应用类
 │   ├── config/
@@ -473,7 +473,7 @@ app:
 
 2. **启动应用**
    ```bash
-   cd google-oauth2-demo
+   # cd repo-root
    ./start.sh
    ```
 
@@ -486,7 +486,7 @@ app:
 使用内置脚本一键启动（包含前端构建）：
 
 ```bash
-cd google-oauth2-demo
+# cd repo-root
 ./start-with-frontend.sh
 ```
 
@@ -500,14 +500,14 @@ cd google-oauth2-demo
 
 ### 前端构建和启动（一体化）
 ```bash
-cd google-oauth2-demo
+# cd repo-root
 ./start-with-frontend.sh  # 自动构建前端并启动Spring Boot
 ```
 
 ### 手动构建和启动
 ```bash
 # 1. 构建前端（自动集成到Spring Boot）
-cd google-oauth2-demo
+# cd repo-root
 ./build-frontend.sh
 
 # 2. 启动Spring Boot应用

@@ -895,7 +895,7 @@ if (isUserLoggedIn) {
 **预期开始实施时间**: 2026-01-24</content>
 </xai:function_call">## 规划文档已创建
 
-我已经创建了一个详细的多登录方式绑定功能设计规划文档，位于 `google-oauth2-demo/docs/drafts/multi-login-methods-design.md`。
+我已经创建了一个详细的多登录方式绑定功能设计规划文档，位于 `./docs/drafts/multi-login-methods-design.md`。
 
 ### 📋 文档概述
 

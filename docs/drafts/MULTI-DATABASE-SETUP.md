@@ -19,7 +19,7 @@
 ### 方式1：默认启动（dev环境 - SQLite）
 
 ```bash
-cd google-oauth2-demo
+# cd repo-root
 export $(cat .env | xargs)
 mvn spring-boot:run
 ```

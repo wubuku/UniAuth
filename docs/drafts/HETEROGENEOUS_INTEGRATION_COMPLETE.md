@@ -148,7 +148,7 @@ def get_jwks():
 ## 项目结构
 
 ```
-google-oauth2-demo/
+./
 ├── src/                 # Spring Boot 认证服务器代码
 ├── python-resource-server/  # Python 资源服务器代码
 ├── frontend/           # React 前端应用代码
@@ -296,7 +296,7 @@ Response:
 ### 启动命令
 
 ```bash
-cd google-oauth2-demo
+# cd repo-root
 export $(cat .env | xargs)
 mvn clean compile spring-boot:run
 ```

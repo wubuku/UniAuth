@@ -1433,7 +1433,7 @@ WHERE id IN (
 
 2. **执行迁移脚本**
    ```bash
-   sqlite3 dev-database.db < google-oauth2-demo/src/main/resources/db/migration/migrate-to-multi-login.sql
+   sqlite3 dev-database.db < ./src/main/resources/db/migration/migrate-to-multi-login.sql
    ```
 
 3. **验证迁移结果**

@@ -127,7 +127,7 @@ CREATE TABLE SPRING_SESSION_ATTRIBUTES (
 
 1. **编译和启动应用**：
 ```bash
-cd google-oauth2-demo
+# cd repo-root
 mvn clean package -DskipTests
 java -jar target/google-oauth2-demo-*.jar
 ```
