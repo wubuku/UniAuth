@@ -424,7 +424,9 @@ public class SecurityConfig {
             .authorizeHttpRequests(authz -> authz
                 .requestMatchers("/", "/login/**", "/oauth2/**", "/css/**", "/js/**",
                                "/images/**", "/static/**", "/index.html", "/assets/**",
-                               "/favicon.ico", "/error").permitAll()
+                               "/favicon.ico", "/error",
+                               "/swagger-ui/**", "/swagger-ui.html",
+                               "/v3/api-docs/**", "/swagger-resources/**", "/webjars/**").permitAll()
                 .requestMatchers("/api/auth/**").permitAll()  // 认证API公开
                 .requestMatchers("/api/user").authenticated()  // 所有认证用户都可以访问
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")  // 只有ADMIN角色可以访问
