@@ -19,7 +19,7 @@ public class OpenApiConfig {
     public OpenAPI customOpenAPI() {
         return new OpenAPI()
                 .info(new Info()
-                        .title("OAuth2 Demo API")
+                        .title("UniAuth Service API")
                         .version("1.0.0")
                         .description("OAuth2 登录和Token管理API文档")
                         .license(new License()
