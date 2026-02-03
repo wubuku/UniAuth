@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { AuthService } from '../services/authService';
 import { useAuth } from '../hooks/useAuth';
 import { TokenRefreshResult } from '../types';
-import BindWeb3Wallet from '../components/BindWeb3Wallet';
 
 interface TokenValidationResult {
   valid: boolean;
@@ -390,42 +389,6 @@ export default function TestPage() {
             </div>
           </div>
         )}
-
-        {/* Web3 用户信息 */}
-        {user.provider === 'web3' && (
-          <div style={{
-            marginTop: '20px',
-            padding: '15px',
-            background: 'linear-gradient(135deg, #f7931a 0%, #627eea 100%)',
-            borderRadius: '5px',
-            color: 'white'
-          }}>
-            <h3 style={{ marginBottom: '10px', color: 'white' }}>🌐 Web3 钱包信息</h3>
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-              gap: '10px'
-            }}>
-              <div>
-                <strong>钱包地址：</strong>
-                <span style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                  {user.userName}
-                </span>
-              </div>
-              <div>
-                <strong>登录方式：</strong>
-                Web3 钱包
-              </div>
-              <div>
-                <strong>用户ID：</strong>
-                {user.userId}
-              </div>
-            </div>
-            <p style={{ marginTop: '10px', fontSize: '12px', opacity: 0.8 }}>
-              💡 您已通过以太坊钱包成功登录！签名消息包含 nonce，防止重放攻击。
-            </p>
-          </div>
-        )}
       </div>
 
       {/* 多登录方式管理 */}
@@ -768,21 +731,6 @@ export default function TestPage() {
               </button>
             )}
           </div>
-
-          {/* Web3 钱包绑定 */}
-          {!loginMethods.find(m => m.authProvider === 'WEB3') && (
-            <div style={{ marginTop: '15px' }}>
-              <BindWeb3Wallet
-                onBindSuccess={() => loadLoginMethods()}
-                onBindError={(err) => {
-                  setBindingMessage({
-                    type: 'error',
-                    text: `绑定钱包失败: ${err.message}`
-                  });
-                }}
-              />
-            </div>
-          )}
 
           {/* 已绑定提示 */}
           {loginMethods.find(m => m.authProvider === 'GOOGLE') &&

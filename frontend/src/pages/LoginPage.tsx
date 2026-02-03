@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import Web3LoginButton from '../components/Web3LoginButton';
 
 export default function LoginPage() {
   const { user, oauthLogin, localLogin, register, loading, error } = useAuth();
@@ -13,13 +12,14 @@ export default function LoginPage() {
     displayName: ''
   });
 
+  // 如果用户已登录，重定向到首页
   useEffect(() => {
     if (user) {
       window.location.href = '/';
     }
   }, [user]);
 
-  const handleOAuthLogin = (provider: 'google' | 'github' | 'x') => {
+  const handleOAuthLogin = (provider: 'google' | 'github' | 'x') => {  // ✅ X API v2：提供者名改为 'x'
     oauthLogin(provider);
   };
 
@@ -31,12 +31,15 @@ export default function LoginPage() {
       if (isRegisterMode) {
         await register(formData);
         setSuccessMessage('注册成功！请登录。');
-        setIsRegisterMode(false);
+        setIsRegisterMode(false); // 切换到登录模式
       } else {
         await localLogin(formData.username, formData.password);
         setSuccessMessage('登录成功！正在跳转...');
+        // 用户状态变化会触发重定向
       }
-    } catch (err) {}
+    } catch (err) {
+      // 错误已经在useAuth中处理
+    }
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -76,6 +79,7 @@ export default function LoginPage() {
           🚀 当前使用：React 前端实现 (Modern SPA)
         </div>
 
+        {/* 切换标签 */}
         <div style={{
           display: 'flex',
           marginBottom: '30px',
@@ -117,6 +121,7 @@ export default function LoginPage() {
           </button>
         </div>
 
+        {/* 成功信息 */}
         {successMessage && (
           <div style={{
             background: '#d4edda',
@@ -131,6 +136,7 @@ export default function LoginPage() {
           </div>
         )}
 
+        {/* 错误信息 */}
         {error && (
           <div style={{
             background: '#f8d7da',
@@ -144,6 +150,7 @@ export default function LoginPage() {
           </div>
         )}
 
+        {/* 本地用户表单 */}
         <form onSubmit={handleLocalAuth} style={{ marginBottom: '30px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
             <input
@@ -234,6 +241,7 @@ export default function LoginPage() {
           </div>
         </form>
 
+        {/* 分割线 */}
         <div style={{
           margin: '20px 0',
           position: 'relative',
@@ -252,20 +260,12 @@ export default function LoginPage() {
             color: '#666',
             fontSize: '14px'
           }}>
-            或使用以下方式登录
+            或使用第三方登录
           </span>
         </div>
 
+        {/* OAuth2登录按钮 */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <Web3LoginButton
-            onLoginSuccess={(authData) => {
-              console.log('Web3 登录成功:', authData);
-            }}
-            onLoginError={(err) => {
-              console.error('Web3 登录失败:', err);
-            }}
-          />
-
           <button
             onClick={() => handleOAuthLogin('google')}
             style={{

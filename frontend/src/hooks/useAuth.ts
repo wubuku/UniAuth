@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { User } from '../types';
 import { AuthService } from '../services/authService';
-import web3Auth from '../utils/web3Auth';
+
 
 
 /**
@@ -66,7 +66,7 @@ export function useAuth() {
     try {
       setError(null);
       console.log('Checking authentication status...');
-
+      
       // 首先从cookie中获取token并存储到localStorage
       // 这样可以确保SSO登录后token也能被正确存储
       const getCookie = (name: string) => {
@@ -75,62 +75,52 @@ export function useAuth() {
         if (parts.length === 2) return parts.pop()?.split(';').shift();
         return null;
       };
-
+      
       console.log('Current cookies:', document.cookie);
-
+      
       const accessToken = getCookie('accessToken');
       const refreshToken = getCookie('refreshToken');
-
+      
       console.log('Access token from cookie:', accessToken ? 'Present' : 'Missing');
       console.log('Refresh token from cookie:', refreshToken ? 'Present' : 'Missing');
-
-      // 检查是否有refresh token
-      const hasRefreshToken = refreshToken || document.cookie.split('; ').some(c => c.startsWith('refreshToken='));
-
+      
       if (accessToken) {
         localStorage.setItem('accessToken', accessToken);
         console.log('Stored access token from cookie to localStorage');
       } else {
         console.log('No access token found in cookie');
-        // 只有在有refresh token时才尝试刷新，否则说明用户未登录
-        if (hasRefreshToken) {
-          try {
-            console.log('Attempting to refresh token...');
-            const refreshResponse = await AuthService.refreshToken();
-            console.log('Token refresh response:', refreshResponse);
-            if (refreshResponse.accessToken) {
-              localStorage.setItem('accessToken', refreshResponse.accessToken);
-              console.log('Stored access token from API to localStorage');
-            }
-          } catch (error) {
-            console.log('Token refresh failed:', error);
-            // 如果token刷新失败，跳转到登录页面
-            if (!window.location.pathname.includes('/login')) {
-              console.log('Redirecting to login due to token refresh failure');
-              window.location.href = '/login';
-            }
-            setLoading(false);
-            return;
+        // 尝试调用refreshToken API获取token
+        try {
+          console.log('Attempting to refresh token...');
+          const refreshResponse = await AuthService.refreshToken();
+          console.log('Token refresh response:', refreshResponse);
+          if (refreshResponse.accessToken) {
+            localStorage.setItem('accessToken', refreshResponse.accessToken);
+            console.log('Stored access token from API to localStorage');
           }
-        } else {
-          // 没有accessToken也没有refreshToken，说明用户未登录
-          console.log('No tokens found, user not authenticated');
+        } catch (error) {
+          console.log('Token refresh failed:', error);
+          // 如果token刷新失败，跳转到登录页面
+          if (!window.location.pathname.includes('/login')) {
+            console.log('Redirecting to login due to token refresh failure');
+            window.location.href = '/login';
+          }
           setLoading(false);
           return;
         }
       }
-
+      
       if (refreshToken) {
         localStorage.setItem('refreshToken', refreshToken);
         console.log('Stored refresh token from cookie to localStorage');
       }
-
+      
       console.log('LocalStorage after cookie check:', {
         accessToken: localStorage.getItem('accessToken') ? 'Present' : 'Missing',
         refreshToken: localStorage.getItem('refreshToken') ? 'Present' : 'Missing',
         auth_user: localStorage.getItem('auth_user') ? 'Present' : 'Missing'
       });
-
+      
       // 然后尝试获取用户信息
       const userData = await AuthService.getCurrentUser();
       console.log('User authenticated:', userData);
@@ -275,44 +265,6 @@ export function useAuth() {
     }
   };
 
-  // Web3钱包登录
-  const web3Login = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      console.log('Starting Web3 wallet login...');
-      const authData = await web3Auth.login();
-      console.log('Web3 login successful:', authData);
-
-      // Web3登录成功后，设置用户信息状态
-      setUser({
-        id: '',
-        username: authData.walletAddress,
-        email: '',
-        displayName: authData.walletAddress,
-        avatarUrl: '',
-        provider: 'web3'
-      });
-
-      // 存储authProvider标识
-      localStorage.setItem('authProvider', 'WEB3');
-
-      setError(null);
-
-      // 触发checkAuth以同步状态
-      await checkAuth();
-
-      return authData;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Web3 login failed';
-      setError(message);
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // 用户注册
   const register = async (data: {
     username: string;
@@ -376,7 +328,6 @@ export function useAuth() {
     error,
     oauthLogin,
     localLogin,
-    web3Login,
     register,
     logout,
     refreshToken,
