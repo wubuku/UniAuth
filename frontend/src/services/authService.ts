@@ -258,6 +258,49 @@ export class AuthService {
   }
 
   /**
+   * 绑定Web3钱包到当前用户
+   */
+  static async bindWeb3Wallet(walletAddress: string, message: string, signature: string, nonce: string): Promise<any> {
+    try {
+      const accessToken = localStorage.getItem('accessToken');
+      const response = await axios.post(`${API_BASE_URL}/api/user/web3/bind`, {
+        walletAddress,
+        message,
+        signature,
+        nonce
+      }, {
+        withCredentials: true,
+        headers: {
+          ...(accessToken && { 'Authorization': `Bearer ${accessToken}` })
+        }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Bind Web3 wallet error:', error);
+      throw this.handleApiError(error, '绑定钱包失败');
+    }
+  }
+
+  /**
+   * 解绑Web3钱包
+   */
+  static async unbindWeb3Wallet(walletAddress: string): Promise<any> {
+    try {
+      const accessToken = localStorage.getItem('accessToken');
+      const response = await axios.delete(`${API_BASE_URL}/api/user/web3/${walletAddress}`, {
+        withCredentials: true,
+        headers: {
+          ...(accessToken && { 'Authorization': `Bearer ${accessToken}` })
+        }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Unbind Web3 wallet error:', error);
+      throw this.handleApiError(error, '解绑钱包失败');
+    }
+  }
+
+  /**
    * 处理API错误，返回更友好的错误信息
    */
   private static handleApiError(error: any, defaultMessage: string): Error {

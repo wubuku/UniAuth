@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { User } from '../types';
 import { AuthService } from '../services/authService';
-
+import web3Auth from '../utils/web3Auth';
 
 
 /**
@@ -275,6 +275,44 @@ export function useAuth() {
     }
   };
 
+  // Web3钱包登录
+  const web3Login = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      console.log('Starting Web3 wallet login...');
+      const authData = await web3Auth.login();
+      console.log('Web3 login successful:', authData);
+
+      // Web3登录成功后，设置用户信息状态
+      setUser({
+        id: '',
+        username: authData.walletAddress,
+        email: '',
+        displayName: authData.walletAddress,
+        avatarUrl: '',
+        provider: 'web3'
+      });
+
+      // 存储authProvider标识
+      localStorage.setItem('authProvider', 'WEB3');
+
+      setError(null);
+
+      // 触发checkAuth以同步状态
+      await checkAuth();
+
+      return authData;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Web3 login failed';
+      setError(message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // 用户注册
   const register = async (data: {
     username: string;
@@ -338,6 +376,7 @@ export function useAuth() {
     error,
     oauthLogin,
     localLogin,
+    web3Login,
     register,
     logout,
     refreshToken,
