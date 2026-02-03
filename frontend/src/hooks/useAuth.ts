@@ -66,7 +66,7 @@ export function useAuth() {
     try {
       setError(null);
       console.log('Checking authentication status...');
-      
+
       // 首先从cookie中获取token并存储到localStorage
       // 这样可以确保SSO登录后token也能被正确存储
       const getCookie = (name: string) => {
@@ -75,52 +75,62 @@ export function useAuth() {
         if (parts.length === 2) return parts.pop()?.split(';').shift();
         return null;
       };
-      
+
       console.log('Current cookies:', document.cookie);
-      
+
       const accessToken = getCookie('accessToken');
       const refreshToken = getCookie('refreshToken');
-      
+
       console.log('Access token from cookie:', accessToken ? 'Present' : 'Missing');
       console.log('Refresh token from cookie:', refreshToken ? 'Present' : 'Missing');
-      
+
+      // 检查是否有refresh token
+      const hasRefreshToken = refreshToken || document.cookie.split('; ').some(c => c.startsWith('refreshToken='));
+
       if (accessToken) {
         localStorage.setItem('accessToken', accessToken);
         console.log('Stored access token from cookie to localStorage');
       } else {
         console.log('No access token found in cookie');
-        // 尝试调用refreshToken API获取token
-        try {
-          console.log('Attempting to refresh token...');
-          const refreshResponse = await AuthService.refreshToken();
-          console.log('Token refresh response:', refreshResponse);
-          if (refreshResponse.accessToken) {
-            localStorage.setItem('accessToken', refreshResponse.accessToken);
-            console.log('Stored access token from API to localStorage');
+        // 只有在有refresh token时才尝试刷新，否则说明用户未登录
+        if (hasRefreshToken) {
+          try {
+            console.log('Attempting to refresh token...');
+            const refreshResponse = await AuthService.refreshToken();
+            console.log('Token refresh response:', refreshResponse);
+            if (refreshResponse.accessToken) {
+              localStorage.setItem('accessToken', refreshResponse.accessToken);
+              console.log('Stored access token from API to localStorage');
+            }
+          } catch (error) {
+            console.log('Token refresh failed:', error);
+            // 如果token刷新失败，跳转到登录页面
+            if (!window.location.pathname.includes('/login')) {
+              console.log('Redirecting to login due to token refresh failure');
+              window.location.href = '/login';
+            }
+            setLoading(false);
+            return;
           }
-        } catch (error) {
-          console.log('Token refresh failed:', error);
-          // 如果token刷新失败，跳转到登录页面
-          if (!window.location.pathname.includes('/login')) {
-            console.log('Redirecting to login due to token refresh failure');
-            window.location.href = '/login';
-          }
+        } else {
+          // 没有accessToken也没有refreshToken，说明用户未登录
+          console.log('No tokens found, user not authenticated');
           setLoading(false);
           return;
         }
       }
-      
+
       if (refreshToken) {
         localStorage.setItem('refreshToken', refreshToken);
         console.log('Stored refresh token from cookie to localStorage');
       }
-      
+
       console.log('LocalStorage after cookie check:', {
         accessToken: localStorage.getItem('accessToken') ? 'Present' : 'Missing',
         refreshToken: localStorage.getItem('refreshToken') ? 'Present' : 'Missing',
         auth_user: localStorage.getItem('auth_user') ? 'Present' : 'Missing'
       });
-      
+
       // 然后尝试获取用户信息
       const userData = await AuthService.getCurrentUser();
       console.log('User authenticated:', userData);

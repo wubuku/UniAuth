@@ -45,3 +45,8 @@ logging:
     org.springframework.security: INFO
     org.springframework.web: INFO
     org.hibernate.SQL: DEBUG
+
+app:
+  web3:
+    nonce-expiration-seconds: 300
+    domain: api.u2511175.nyat.app

@@ -18,3 +18,4 @@ cookies*.txt
 dev-database.db
 *.db
 jwt-secret.key
+web3_test_report_*.json

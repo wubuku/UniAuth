@@ -302,6 +302,22 @@ export class AuthService {
   }
 }
 
+// 防止重复刷新的标志
+let isRefreshing = false;
+let failedQueue: Array<{ resolve: (token: string) => void; reject: (error: Error) => void }> = [];
+
+// 处理刷新队列
+const processQueue = (error: Error | null, token: string | null = null) => {
+  failedQueue.forEach(prom => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token!);
+    }
+  });
+  failedQueue = [];
+};
+
 // 配置axios默认设置
 axios.defaults.withCredentials = true;
 
@@ -343,9 +359,29 @@ axios.interceptors.response.use(
     if (window.location.pathname.includes('/login')) {
       return Promise.reject(error);
     }
-    
-    if (error.response?.status === 401) {
-      // 尝试刷新token
+
+    // 检查是否有refresh token
+    const hasRefreshToken = document.cookie.split('; ').some(c => c.startsWith('refreshToken='));
+
+    if (error.response?.status === 401 && !isRefreshing && hasRefreshToken) {
+      // 如果已经在刷新队列中，等待刷新完成
+      if (failedQueue.length > 0) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({
+            resolve: (token: string) => {
+              const originalRequest = error.config;
+              originalRequest.headers['Authorization'] = `Bearer ${token}`;
+              resolve(axios(originalRequest));
+            },
+            reject: (err: Error) => {
+              reject(err);
+            }
+          });
+        });
+      }
+
+      isRefreshing = true;
+
       try {
         console.log('Token过期，尝试刷新...');
         const refreshResponse = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {}, {
@@ -355,7 +391,7 @@ axios.interceptors.response.use(
             'Pragma': 'no-cache'
           }
         });
-        
+
         if (refreshResponse.data && refreshResponse.data.accessToken) {
           console.log('Token刷新成功，重新发起请求...');
           // 存储新token
@@ -363,7 +399,10 @@ axios.interceptors.response.use(
           if (refreshResponse.data.user) {
             localStorage.setItem('auth_user', JSON.stringify(refreshResponse.data.user));
           }
-          
+
+          // 处理等待中的请求
+          processQueue(null, refreshResponse.data.accessToken);
+
           // 重新发起失败的请求
           const originalRequest = error.config;
           originalRequest.headers['Authorization'] = `Bearer ${refreshResponse.data.accessToken}`;
@@ -371,16 +410,32 @@ axios.interceptors.response.use(
         }
       } catch (refreshError) {
         console.error('Token刷新失败，跳转到登录页...', refreshError);
-        // 刷新失败，跳转到登录页
-        if (!window.location.pathname.includes('/login')) {
-          window.location.href = '/login';
-        }
+        // 刷新失败，处理等待中的请求并跳转到登录页
+        processQueue(refreshError instanceof Error ? refreshError : new Error('Token刷新失败'));
+
         // 清除localStorage中的用户状态
         localStorage.removeItem('auth_user');
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
+
+        if (!window.location.pathname.includes('/login')) {
+          window.location.href = '/login';
+        }
+      } finally {
+        isRefreshing = false;
+      }
+    } else if (error.response?.status === 401 && !hasRefreshToken) {
+      // 没有refresh token，直接跳转到登录页
+      console.log('没有refresh token，跳转到登录页...');
+      localStorage.removeItem('auth_user');
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+
+      if (!window.location.pathname.includes('/login')) {
+        window.location.href = '/login';
       }
     }
+
     return Promise.reject(error);
   }
 );

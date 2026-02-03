@@ -70,7 +70,7 @@ public class UserLoginMethod {
      * 登录方式类型枚举
      */
     public enum AuthProvider {
-        LOCAL, GOOGLE, GITHUB, TWITTER
+        LOCAL, GOOGLE, GITHUB, TWITTER, WEB3
     }
 
     /**

@@ -117,6 +117,33 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Web3j: Ethereum signature verification (exclude KZG dependency) -->
+        <dependency>
+            <groupId>org.web3j</groupId>
+            <artifactId>core</artifactId>
+            <version>4.11.0</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>tech.pegasys</groupId>
+                    <artifactId>jc-kzg-4844</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- Bouncy Castle: Cryptography provider for Web3j -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>1.77</version>
+        </dependency>
+        
+        <!-- Bouncy Castle TLS (required by Web3j) -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bctls-jdk18on</artifactId>
+            <version>1.77</version>
+        </dependency>
+
         <!-- Spring Session JDBC - Session 持久化到数据库 -->
         <dependency>
             <groupId>org.springframework.session</groupId>
