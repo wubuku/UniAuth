@@ -6,7 +6,7 @@ spring:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DATABASE:google_oauth2_demo}
     driver-class-name: org.postgresql.Driver
     username: ${POSTGRES_USER:postgres}
-    password: ${POSTGRES_PASSWORD:password}
+    password: ${POSTGRES_PASSWORD:123456}
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2

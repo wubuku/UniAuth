@@ -10,6 +10,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
@@ -192,7 +193,7 @@ public class DevEnvironmentInitializer implements CommandLineRunner {
             .providerUsername(displayName)
             .isPrimary(true)
             .isVerified(true)
-            .linkedAt(LocalDateTime.now())
+            .linkedAt(Instant.now())
             .build();
 
         user.addLoginMethod(googleMethod);
@@ -241,7 +242,7 @@ public class DevEnvironmentInitializer implements CommandLineRunner {
             .providerUsername(displayName)
             .isPrimary(false)
             .isVerified(true)
-            .linkedAt(LocalDateTime.now())
+            .linkedAt(Instant.now())
             .build();
 
         user.addLoginMethod(googleMethod);

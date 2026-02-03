@@ -16,12 +16,14 @@ import org.dddml.uniauth.dto.web3.Web3NonceResponse;
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.Web3AuthService;
+import org.dddml.uniauth.service.Web3NonceService;
 import org.dddml.uniauth.util.Web3SignatureUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 @Slf4j
 @RestController
@@ -31,6 +33,7 @@ import java.time.LocalDateTime;
 public class Web3AuthController {
 
     private final Web3AuthService web3AuthService;
+    private final Web3NonceService web3NonceService;
     private final JwtTokenService jwtTokenService;
 
     @GetMapping("/nonce/{walletAddress}")
@@ -66,6 +69,20 @@ public class Web3AuthController {
                             .detail(e.getMessage())
                             .timestamp(LocalDateTime.now())
                             .build());
+        }
+    }
+    
+    @DeleteMapping("/nonce/{walletAddress}")
+    @Operation(summary = "Delete nonce for testing",
+               description = "Deletes the nonce for a given wallet address (for testing purposes)")
+    public ResponseEntity<?> deleteNonce(@PathVariable String walletAddress) {
+        try {
+            String normalizedAddress = Web3SignatureUtils.normalizeAddress(walletAddress);
+            web3NonceService.deleteNonce(normalizedAddress);
+            return ResponseEntity.ok(Map.of("message", "Nonce deleted"));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
         }
     }
 

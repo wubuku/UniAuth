@@ -3,6 +3,7 @@ package org.dddml.uniauth.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -26,7 +27,7 @@ public class UserLoginMethod {
     private String id;  // UUID 字符串格式
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
+    @JoinColumn(name = "user_id", nullable = true)
     private UserEntity user;
 
     @Enumerated(EnumType.STRING)
@@ -61,10 +62,13 @@ public class UserLoginMethod {
 
     @CreationTimestamp
     @Column(name = "linked_at", nullable = false, updatable = false)
-    private LocalDateTime linkedAt;
+    private Instant linkedAt;
 
     @Column(name = "last_used_at")
-    private LocalDateTime lastUsedAt;
+    private Instant lastUsedAt;
+
+    @Column(name = "nonce_expires_at")
+    private Instant nonceExpiresAt;
 
     /**
      * 登录方式类型枚举
@@ -77,7 +81,7 @@ public class UserLoginMethod {
      * 更新最后使用时间
      */
     public void updateLastUsedAt() {
-        this.lastUsedAt = LocalDateTime.now();
+        this.lastUsedAt = Instant.now();
     }
 
     /**
