@@ -29,6 +29,7 @@ const Web3LoginButton: React.FC<Web3LoginButtonProps> = ({
       setWalletAddress(authData.walletAddress);
       setIsConnected(true);
       onLoginSuccess?.(authData);
+      window.location.href = '/';
     } catch (err: any) {
       setError(err.message || '登录失败');
       console.error(err);
@@ -48,13 +49,13 @@ const Web3LoginButton: React.FC<Web3LoginButtonProps> = ({
     return (
       <div className="p-4 border border-gray-200 rounded-lg">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
-            <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          <div className="w-10 h-10 bg-gradient-to-r from-orange-500 to-blue-500 rounded-full flex items-center justify-center">
+            <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
             </svg>
           </div>
           <div>
-            <p className="text-sm text-gray-500">已连接钱包</p>
+            <p className="text-sm text-gray-500">Web3 钱包已连接</p>
             <p className="font-mono font-medium">{formatAddress(walletAddress)}</p>
           </div>
         </div>
@@ -96,7 +97,7 @@ const Web3LoginButton: React.FC<Web3LoginButtonProps> = ({
         ) : (
           <>
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" />
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
             </svg>
             <span>连接钱包</span>
           </>

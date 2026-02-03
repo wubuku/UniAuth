@@ -6,6 +6,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +33,24 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Tag(name = "Web3 Authentication", description = "Web3 wallet authentication endpoints")
 public class Web3AuthController {
+
+    private static void setTokenCookies(HttpServletResponse response, String accessToken, String refreshToken) {
+        Cookie accessTokenCookie = new Cookie("accessToken", accessToken);
+        accessTokenCookie.setHttpOnly(true);
+        accessTokenCookie.setPath("/");
+        accessTokenCookie.setMaxAge(3600);
+        accessTokenCookie.setSecure(false);
+        accessTokenCookie.setAttribute("SameSite", "Lax");
+        response.addCookie(accessTokenCookie);
+
+        Cookie refreshTokenCookie = new Cookie("refreshToken", refreshToken);
+        refreshTokenCookie.setHttpOnly(true);
+        refreshTokenCookie.setPath("/");
+        refreshTokenCookie.setMaxAge(604800);
+        refreshTokenCookie.setSecure(false);
+        refreshTokenCookie.setAttribute("SameSite", "Lax");
+        response.addCookie(refreshTokenCookie);
+    }
 
     private final Web3AuthService web3AuthService;
     private final Web3NonceService web3NonceService;
@@ -97,7 +117,9 @@ public class Web3AuthController {
         @ApiResponse(responseCode = "400", description = "Invalid request parameters",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
-    public ResponseEntity<?> verifyAndLogin(@Valid @RequestBody Web3LoginRequest request) {
+    public ResponseEntity<?> verifyAndLogin(
+            @Valid @RequestBody Web3LoginRequest request,
+            HttpServletResponse response) {
         try {
             String normalizedAddress = Web3SignatureUtils.normalizeAddress(request.getWalletAddress());
 
@@ -131,7 +153,7 @@ public class Web3AuthController {
 
             long expiresIn = jwtTokenService.getExpires().getAccessToken() / 1000;
 
-            Web3AuthResponse response = Web3AuthResponse.builder()
+            Web3AuthResponse responseBody = Web3AuthResponse.builder()
                     .accessToken(accessToken)
                     .refreshToken(refreshToken)
                     .tokenType("Bearer")
@@ -143,7 +165,9 @@ public class Web3AuthController {
 
             log.info("Web3 login successful for wallet: {}, userId: {}", normalizedAddress, user.getId());
 
-            return ResponseEntity.ok(response);
+            setTokenCookies(response, accessToken, refreshToken);
+
+            return ResponseEntity.ok(responseBody);
         } catch (Exception e) {
             log.error("Error during Web3 authentication", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
