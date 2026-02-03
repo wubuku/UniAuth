@@ -128,7 +128,15 @@ class RealWeb3LoginTester:
         account = Account.from_key(private_key)
         message_encoded = encode_defunct(text=message)
         signed = account.sign_message(message_encoded)
-        return signed.signature.hex()
+        
+        signature = signed.signature.hex()
+        if not signature.startswith('0x'):
+            signature = '0x' + signature
+        
+        if len(signature) != 132:
+            raise ValueError(f"Invalid signature length: {len(signature)}")
+        
+        return signature
     
     def test_web3_login_with_new_wallet(self) -> TestResult:
         """
