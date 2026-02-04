@@ -1,10 +1,14 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import Web3LoginButton from '../components/Web3LoginButton';
 
 export default function LoginPage() {
   const { user, oauthLogin, localLogin, register, loading, error } = useAuth();
+  const navigate = useNavigate();
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [web3Error, setWeb3Error] = useState<string | null>(null); // 专门处理Web3组件传递的错误
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -15,9 +19,9 @@ export default function LoginPage() {
   // 如果用户已登录，重定向到首页
   useEffect(() => {
     if (user) {
-      window.location.href = '/';
+      navigate('/');
     }
-  }, [user]);
+  }, [user, navigate]);
 
   const handleOAuthLogin = (provider: 'google' | 'github' | 'x') => {  // ✅ X API v2：提供者名改为 'x'
     oauthLogin(provider);
@@ -137,7 +141,7 @@ export default function LoginPage() {
         )}
 
         {/* 错误信息 */}
-        {error && (
+        {(error || web3Error) && (
           <div style={{
             background: '#f8d7da',
             color: '#721c24',
@@ -146,7 +150,7 @@ export default function LoginPage() {
             marginBottom: '20px',
             fontSize: '14px'
           }}>
-            {error}
+            {error || web3Error}
           </div>
         )}
 
@@ -355,6 +359,8 @@ export default function LoginPage() {
             <span style={{ fontSize: '16px' }}>🐦</span>
             Twitter 登录
           </button>
+
+          <Web3LoginButton onError={setWeb3Error} />
         </div>
 
         <a

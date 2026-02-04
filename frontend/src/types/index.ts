@@ -6,7 +6,7 @@ export interface User {
   email?: string;
   displayName?: string;
   avatarUrl?: string;
-  provider: 'google' | 'github' | 'x' | 'local' | 'unknown';  // ✅ X API v2：提供者名改为 'x'
+  provider: 'google' | 'github' | 'x' | 'local' | 'web3' | 'unknown';  // ✅ X API v2：提供者名改为 'x'
   authenticated?: boolean;
   userName?: string;
   userEmail?: string;
@@ -23,6 +23,8 @@ export interface User {
     location?: string;
     verified?: boolean;
     description?: string;
+    // Web3特有
+    walletAddress?: string;
   };
 }
 

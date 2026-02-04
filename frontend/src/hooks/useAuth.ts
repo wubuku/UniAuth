@@ -265,6 +265,50 @@ export function useAuth() {
     }
   };
 
+  // Web3钱包登录
+  const web3Login = async (data: {
+    walletAddress: string;
+    message: string;
+    signature: string;
+    nonce: string;
+  }) => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      console.log('Starting Web3 login...');
+      const response = await AuthService.loginWeb3(data);
+      console.log('Web3 login successful:', response);
+
+      // Web3登录成功后，设置用户信息状态
+      setUser({
+        id: response.userId,
+        username: response.username || data.walletAddress, // 如果没有用户名，暂用地址
+        provider: 'web3',
+        providerInfo: {
+          walletAddress: response.walletAddress
+        }
+      });
+      
+      // 存储令牌
+      if (response.accessToken) {
+        localStorage.setItem('accessToken', response.accessToken);
+      }
+      if (response.refreshToken) {
+        localStorage.setItem('refreshToken', response.refreshToken);
+      }
+      
+      setError(null);
+      return response;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Web3 login failed';
+      setError(message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // 用户注册
   const register = async (data: {
     username: string;
@@ -328,6 +372,7 @@ export function useAuth() {
     error,
     oauthLogin,
     localLogin,
+    web3Login,
     register,
     logout,
     refreshToken,

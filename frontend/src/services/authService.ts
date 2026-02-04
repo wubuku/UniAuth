@@ -276,6 +276,63 @@ export class AuthService {
   }
 
   /**
+   * 获取Web3登录用的Nonce
+   */
+  static async getWeb3Nonce(walletAddress: string): Promise<{ nonce: string; message: string }> {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/auth/web3/nonce/${walletAddress}`);
+      return response.data;
+    } catch (error) {
+      console.error('Get Web3 nonce error:', error);
+      throw this.handleApiError(error, '获取Nonce失败');
+    }
+  }
+
+  /**
+   * Web3钱包登录
+   */
+  static async loginWeb3(data: {
+    walletAddress: string;
+    message: string;
+    signature: string;
+    nonce: string;
+  }): Promise<any> {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/web3/verify`, data, {
+        withCredentials: true
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Web3 login error:', error);
+      throw this.handleApiError(error, 'Web3登录失败');
+    }
+  }
+
+  /**
+   * 绑定Web3钱包
+   */
+  static async bindWeb3(data: {
+    walletAddress: string;
+    message: string;
+    signature: string;
+    nonce: string;
+  }): Promise<any> {
+    try {
+      const accessToken = localStorage.getItem('accessToken');
+      const response = await axios.post(`${API_BASE_URL}/api/auth/web3/bind`, data, {
+        withCredentials: true,
+        headers: {
+          ...(accessToken && { 'Authorization': `Bearer ${accessToken}` })
+        }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Web3 bind error:', error);
+      throw this.handleApiError(error, '绑定钱包失败');
+    }
+  }
+
+  /**
    * 获取OAuth2登录URL
    */
   static getLoginUrl(provider: 'google' | 'github' | 'x'): string {  // ✅ X API v2：提供者名改为 'x'
