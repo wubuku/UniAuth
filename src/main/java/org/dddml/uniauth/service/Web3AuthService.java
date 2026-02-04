@@ -35,6 +35,9 @@ public class Web3AuthService {
     @Value("${app.web3.nonce-expiration-seconds:300}")
     private long nonceExpirationSeconds;
 
+    @Value("${app.web3.message-format}")
+    private String messageFormat;
+
     public Web3NonceResponse generateNonce(String walletAddress) {
         if (!Web3SignatureUtils.isValidAddress(walletAddress)) {
             throw new IllegalArgumentException("Invalid wallet address format");
@@ -54,20 +57,25 @@ public class Web3AuthService {
     private String buildSiweMessage(String walletAddress, String nonce) {
         Instant now = Instant.now();
         Instant expiry = now.plusSeconds(nonceExpirationSeconds);
+        String uri = "https://" + domain;
 
-        return String.format(
-                "%s wants you to sign in with your Ethereum account:\n" +
-                "%s\n\n" +
+        // Use configured format or fallback to default if missing (though @Value should enforce it if not optional)
+        String template = (messageFormat != null && !messageFormat.isBlank()) ? messageFormat :
+                "%1$s wants you to sign in with your Ethereum account:\n" +
+                "%2$s\n\n" +
                 "By signing, you agree to authenticate with your wallet.\n\n" +
-                "URI: https://%s\n" +
+                "URI: %3$s\n" +
                 "Version: 1\n" +
                 "Chain ID: 1\n" +
-                "Nonce: %s\n" +
-                "Issued At: %s\n" +
-                "Expiration Time: %s",
+                "Nonce: %4$s\n" +
+                "Issued At: %5$s\n" +
+                "Expiration Time: %6$s";
+
+        return String.format(
+                template,
                 domain,
                 walletAddress,
-                domain,
+                uri,
                 nonce,
                 now.toString(),
                 expiry.toString()

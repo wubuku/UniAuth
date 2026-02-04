@@ -12,6 +12,26 @@ app:
   web3:
     nonce-expiration-seconds: 300  # Nonce有效期（秒）
     domain: localhost  # 域名，用于SIWE消息
+    # SIWE 签名消息模板
+    # 参数说明:
+    # %1$s: Domain (域名)
+    # %2$s: Wallet Address (钱包地址)
+    # %3$s: URI (完整URI，包含协议)
+    # %4$s: Nonce (随机数)
+    # %5$s: Issued At (签发时间)
+    # %6$s: Expiration Time (过期时间)
+    message-format: |
+      %1$s wants you to sign in with your Ethereum account:
+      %2$s
+
+      By signing, you agree to authenticate with your wallet.
+
+      URI: %3$s
+      Version: 1
+      Chain ID: 1
+      Nonce: %4$s
+      Issued At: %5$s
+      Expiration Time: %6$s
   cors:
     allowed-origins:
       - https://api.u2511175.nyat.app:55139
