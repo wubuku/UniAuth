@@ -39,6 +39,18 @@ spring:
       initialize-schema: always
     timeout: 1800
 
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            redirect-uri: http://localhost:5173/oauth2/callback
+          github:
+            redirect-uri: http://localhost:5173/oauth2/callback
+          x:  # ✅ X API v2：提供者名改为 'x'
+            redirect-uri: http://localhost:5173/oauth2/callback
+            # redirect-uri: https://api.u2511175.nyat.app:55139/oauth2/callback
+
 logging:
   level:
     com.example.oauth2demo: INFO
