@@ -36,7 +36,7 @@ mvn spring-boot:run
 # lsof -i :8081 | grep LISTEN | awk '{print $2}' | xargs kill -9
 
 # 如果使用环境变量文件，可以使用以下命令：
-# export $(cat .env | xargs) && mvn spring-boot:run
+# export $(cat .env | grep -v '^#' | xargs) && mvn spring-boot:run
 
 # **提示**：
 # - ✅ 外部隧道域名配置： `https://api.u2511175.nyat.app:55139`
