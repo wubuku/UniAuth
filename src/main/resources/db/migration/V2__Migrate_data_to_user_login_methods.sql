@@ -1,5 +1,6 @@
 -- 迁移本地用户
 INSERT INTO user_login_methods (
+    id,
     user_id,
     auth_provider,
     local_username,
@@ -9,12 +10,13 @@ INSERT INTO user_login_methods (
     linked_at
 )
 SELECT
+    gen_random_uuid()::text,
     id,
     'LOCAL',
     username,
     password_hash,
-    1,
-    CASE WHEN email_verified = 1 THEN 1 ELSE 0 END,
+    TRUE,
+    CASE WHEN email_verified = TRUE THEN TRUE ELSE FALSE END,
     created_at
 FROM users
 WHERE auth_provider = 'LOCAL'
@@ -27,6 +29,7 @@ WHERE auth_provider = 'LOCAL'
 
 -- 迁移Google用户
 INSERT INTO user_login_methods (
+    id,
     user_id,
     auth_provider,
     provider_user_id,
@@ -37,13 +40,14 @@ INSERT INTO user_login_methods (
     linked_at
 )
 SELECT
+    gen_random_uuid()::text,
     id,
     'GOOGLE',
     provider_user_id,
     email,
     display_name,
-    1,
-    1,
+    TRUE,
+    TRUE,
     created_at
 FROM users
 WHERE auth_provider = 'GOOGLE'
@@ -55,6 +59,7 @@ WHERE auth_provider = 'GOOGLE'
 
 -- 迁移GitHub用户
 INSERT INTO user_login_methods (
+    id,
     user_id,
     auth_provider,
     provider_user_id,
@@ -65,13 +70,14 @@ INSERT INTO user_login_methods (
     linked_at
 )
 SELECT
+    gen_random_uuid()::text,
     id,
     'GITHUB',
     provider_user_id,
     email,
     display_name,
-    1,
-    1,
+    TRUE,
+    TRUE,
     created_at
 FROM users
 WHERE auth_provider = 'GITHUB'
@@ -83,6 +89,7 @@ WHERE auth_provider = 'GITHUB'
 
 -- 迁移Twitter用户
 INSERT INTO user_login_methods (
+    id,
     user_id,
     auth_provider,
     provider_user_id,
@@ -93,13 +100,14 @@ INSERT INTO user_login_methods (
     linked_at
 )
 SELECT
+    gen_random_uuid()::text,
     id,
     'TWITTER',
     provider_user_id,
     email,
     display_name,
-    1,
-    1,
+    TRUE,
+    TRUE,
     created_at
 FROM users
 WHERE auth_provider = 'TWITTER'

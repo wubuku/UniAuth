@@ -1,4 +1,0 @@
-[submodule "blacksheep-ui"]
-	path = blacksheep-ui
-	url = https://xxx:xxx@gitee.com/wuyue1819/blacksheep.git
-	branch = test-login

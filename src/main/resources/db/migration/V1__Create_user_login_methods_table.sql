@@ -1,17 +1,17 @@
--- 创建user_login_methods表
+-- 创建user_login_methods表 (PostgreSQL Compatible)
 CREATE TABLE IF NOT EXISTS user_login_methods (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
     auth_provider TEXT NOT NULL,
     provider_user_id TEXT,
     provider_email TEXT,
     provider_username TEXT,
     local_username TEXT,
     local_password_hash TEXT,
-    is_primary INTEGER DEFAULT 0,
-    is_verified INTEGER DEFAULT 0,
-    linked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    last_used_at DATETIME,
+    is_primary BOOLEAN DEFAULT FALSE,
+    is_verified BOOLEAN DEFAULT FALSE,
+    linked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
