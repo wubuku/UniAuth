@@ -278,39 +278,38 @@ CREATE INDEX IF NOT EXISTS idx_token_blacklist_expires_at ON token_blacklist(exp
 
 -- =====================================================
 -- JWT密钥表 (jwt_keys)
--- 用于JWT Token的签名和验证
--- 支持多密钥管理，便于密钥轮换
+-- 注意：此表为早期设计遗留，当前版本未使用，可安全忽略或删除
+-- 如需支持JWT密钥轮换功能，可参考此表结构重新启用
 -- =====================================================
-CREATE TABLE IF NOT EXISTS jwt_keys (
-    -- 主键：UUID格式，由应用层生成
-    id VARCHAR(36) PRIMARY KEY,
-    
-    -- 密钥内容：实际的对称/非对称密钥
-    -- 对于HS256：存储共享密钥
-    -- 对于RS256：存储私钥
-    secret_key TEXT NOT NULL,
-    
-    -- 算法：JWT签名算法
-    -- 常用值：'HS256'、'HS384'、'HS512'、'RS256'、'ES256'
-    -- 推荐：RS256（更安全，支持密钥分离）
-    algorithm TEXT NOT NULL,
-    
-    -- 是否激活：默认为true
-    -- 仅激活的密钥用于签名
-    -- 验证时使用所有密钥（包括非激活的）以支持密钥轮换
-    active BOOLEAN DEFAULT TRUE NOT NULL,
-    
-    -- 创建时间
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
-    -- 更新时间
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+-- CREATE TABLE IF NOT EXISTS jwt_keys (
+--     -- 主键：UUID格式，由应用层生成
+--     id VARCHAR(36) PRIMARY KEY,
+--     
+--     -- 密钥内容：实际的对称/非对称密钥
+--     -- 对于HS256：存储共享密钥
+--     -- 对于RS256：存储私钥
+--     secret_key TEXT NOT NULL,
+--     
+--     -- 算法：JWT签名算法
+--     -- 常用值：'HS256'、'HS384'、'HS512'、'RS256'、'ES256'
+--     -- 推荐：RS256（更安全，支持密钥分离）
+--     algorithm TEXT NOT NULL,
+--     
+--     -- 是否激活：默认为true
+--     -- 仅激活的密钥用于签名
+--     -- 验证时使用所有密钥（包括非激活的）以支持密钥轮换
+--     active BOOLEAN DEFAULT TRUE NOT NULL,
+--     
+--     -- 创建时间
+--     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+--     
+--     -- 更新时间
+--     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+-- );
 
 -- JWT密钥表索引
-
--- 算法和激活状态索引：查找指定算法的活跃密钥
-CREATE INDEX IF NOT EXISTS idx_jwt_keys_algorithm_active ON jwt_keys(algorithm, active);
+-- 注意：此索引为早期设计遗留，当前版本未使用
+-- CREATE INDEX IF NOT EXISTS idx_jwt_keys_algorithm_active ON jwt_keys(algorithm, active);
 
 -- =====================================================
 -- Spring Session表 (spring_session)
