@@ -64,28 +64,6 @@ public class DevEnvironmentInitializer implements CommandLineRunner {
             log.info("========================================");
             log.info("✅ 开发环境初始化完成");
             log.info("========================================");
-            log.info("");
-            log.info("📋 可用的测试账户：");
-            log.info("");
-            log.info("  场景1: 本地登录 → 绑定SSO");
-            log.info("    用户名: testlocal");
-            log.info("    密码: " + PASSWORD);
-            log.info("    状态: 仅有本地登录方式，无SSO绑定");
-            log.info("");
-            log.info("  场景2: SSO登录 → 绑定本地密码");
-            log.info("    用户名: testsso");
-            log.info("    模拟: 已通过Google登录");
-            log.info("    状态: 仅有Google登录方式，无本地密码");
-            log.info("");
-            log.info("  场景3: 多方式登录");
-            log.info("    用户名: testboth");
-            log.info("    密码: " + PASSWORD);
-            log.info("    Google: 已绑定");
-            log.info("    状态: 同时有本地密码和Google登录方式");
-            log.info("");
-            log.info("🔐 开发环境密码重置端点：POST /api/auth/reset-password (仅dev环境)");
-            log.info("");
-
         } catch (Exception e) {
             log.error("❌ 开发环境初始化失败", e);
             throw new RuntimeException("Failed to initialize development environment", e);

@@ -3,7 +3,7 @@
 
 spring:
   datasource:
-    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DATABASE:google_oauth2_demo}
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DATABASE:blacksheep_dev}
     driver-class-name: org.postgresql.Driver
     username: ${POSTGRES_USER:postgres}
     password: ${POSTGRES_PASSWORD:123456}
