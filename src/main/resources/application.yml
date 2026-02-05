@@ -12,7 +12,7 @@ app:
     secret-file: ""  # 配置密钥文件路径
   web3:
     nonce-expiration-seconds: 300  # Nonce有效期（秒）
-    domain: localhost  # 域名，用于SIWE消息
+    domain: blacksheepmedia.xyz  # 域名，用于SIWE消息
     # SIWE 签名消息模板
     # 参数说明:
     # %1$s: Domain (域名)

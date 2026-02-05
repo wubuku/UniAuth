@@ -65,3 +65,5 @@ app:
   web3:
     nonce-expiration-seconds: 300
     domain: api.u2511175.nyat.app
+  # frontend:
+  #   url: https://api.u2511175.nyat.app:55139  # 前端地址，用于OAuth2回调重定向
