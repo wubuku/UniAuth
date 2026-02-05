@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    allowedHosts: ['api.u2511175.nyat.app', 'localhost', '127.0.0.1', 'blacksheepmedia.xyz'],
     proxy: {
       // 开发环境代理API请求到后端
       '/api': {

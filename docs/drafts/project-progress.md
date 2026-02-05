@@ -32,11 +32,16 @@
 # 2. 启动Spring Boot应用
 mvn spring-boot:run
 
-# 如果服务已经在运行，可以杀死 8081 端口上的服务
+# 如果服务已经在运行，可以杀死 808x 端口上的服务
 # lsof -i :8081 | grep LISTEN | awk '{print $2}' | xargs kill -9
+# lsof -i :8082 | grep LISTEN | awk '{print $2}' | xargs kill -9
 
 # 如果使用环境变量文件，可以使用以下命令：
 # export $(cat .env | grep -v '^#' | xargs) && mvn spring-boot:run
+# 指定后端服务端口号运行：
+# export $(cat .env | grep -v '^#' | xargs) && mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8082"
+# 也可以设置环境变量：
+# export SERVER_PORT=8082
 
 # **提示**：
 # - ✅ 外部隧道域名配置： `https://api.u2511175.nyat.app:55139`

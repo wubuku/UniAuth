@@ -69,7 +69,334 @@ java -jar target/oauth2-demo.jar
 
 ### 选项 A：使用 Nginx 作为反向代理
 
-#### 1. Nginx 安装
+#### 方案 1：使用 Docker 运行 Nginx（推荐用于开发和测试）
+
+这是最快的部署方式，适合开发和测试环境。
+
+##### 1. 前置条件
+
+- 已安装 Docker
+- 前端开发服务器已启动（默认端口 5173）
+- Java 后端服务已启动（默认端口 8081）
+
+##### 2. 创建 Nginx 配置文件
+
+创建目录和配置文件：
+
+```bash
+mkdir -p /path/to/project/docker/nginx
+```
+
+##### 2. Nginx 配置文件
+
+配置文件位于项目目录：`docker/nginx/nginx.conf`
+
+**核心配置说明**：
+
+- **upstream 配置**：
+  - `frontend_dev` → `host.docker.internal:5173`（Vite 开发服务器）
+  - `backend_service` → `host.docker.internal:8081`（Java 后端服务）
+
+- **路由规则**：
+  - `/api/auth/`, `/api/user/`, `/oauth2/` → 转发到后端服务
+  - `/@vite/`, `/@fs/`, `/node_modules/` → 转发到前端开发服务器（支持 HMR）
+  - `/login`, `/register`, `/profile` → 前端 SPA 路由
+  - `/` → 默认转发到前端
+
+- **关键特性**：
+  - WebSocket 支持（Vite HMR 热更新）
+  - CORS 头转发（`Origin`, `Access-Control-*`）
+  - 认证头传递（`Authorization`）
+  - 开发环境禁用缓存
+
+完整配置请参考：[docker/nginx/nginx.conf](/docker/nginx/nginx.conf)
+
+##### 3. 端口配置说明
+
+默认端口映射关系：
+
+| 服务 | 默认端口 | 说明 |
+|-----|---------|------|
+| Nginx | 8080 | 统一入口，对外暴露 |
+| 前端开发服务器 | 5173 | Vite dev server |
+| Java 后端 | 8081 | Spring Boot 服务 |
+
+**修改端口的方法**：
+
+**场景 1：修改 Nginx 对外端口（如改为 8081）**
+
+```bash
+# 1. 停止并删除旧容器
+docker stop uniauth-nginx
+docker rm uniauth-nginx
+
+# 2. 使用新的端口映射启动（-p 新端口:80）
+docker run -d \
+  --name uniauth-nginx \
+  --add-host=host.docker.internal:host-gateway \
+  -p 8081:80 \
+  -v /path/to/project/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro \
+  nginx:alpine
+```
+
+**场景 2：修改后端服务端口（如改为 8082）**
+
+步骤 1：修改 Nginx 配置文件中的 upstream
+```nginx
+# docker/nginx/nginx.conf
+upstream backend_service {
+    server host.docker.internal:8082;  # 修改为新的后端端口
+}
+```
+
+步骤 2：使用命令行参数启动后端
+```bash
+# 方式 1：命令行参数
+java -jar target/uni-auth-1.0.0.jar --server.port=8082
+
+# 方式 2：Maven 启动
+mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8082"
+
+# 方式 3：环境变量
+export SERVER_PORT=8082
+java -jar target/uni-auth-1.0.0.jar
+```
+
+步骤 3：重启 Nginx 容器
+```bash
+docker stop uniauth-nginx
+docker rm uniauth-nginx
+docker run -d \
+  --name uniauth-nginx \
+  --add-host=host.docker.internal:host-gateway \
+  -p 8081:80 \
+  -v /path/to/project/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro \
+  nginx:alpine
+```
+
+**场景 3：同时修改 Nginx 和后端端口**
+
+例如：Nginx 运行在 8081，后端运行在 8082：
+
+1. 启动后端：`java -jar target/uni-auth-1.0.0.jar --server.port=8082`
+2. 修改 `docker/nginx/nginx.conf` 中的 `backend_service` 为 `host.docker.internal:8082`
+3. 启动 Nginx：`docker run -d ... -p 8081:80 ...`
+4. 访问地址变为 `http://localhost:8081`
+
+##### 4. 启动 Docker Nginx 容器
+
+```bash
+# 运行 Nginx 容器（默认配置）
+docker run -d \
+  --name uniauth-nginx \
+  --add-host=host.docker.internal:host-gateway \
+  -p 8080:80 \
+  -v /path/to/project/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro \
+  nginx:alpine
+```
+
+**参数说明**：
+- `-d`：后台运行容器
+- `--name uniauth-nginx`：容器名称
+- `--add-host=host.docker.internal:host-gateway`：允许容器访问宿主机服务（macOS/Linux）
+- `-p 8080:80`：将容器 80 端口映射到宿主机 8080 端口
+- `-v /path/to/project/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro`：挂载配置文件（只读）
+- `nginx:alpine`：使用轻量级 Alpine 版本的 Nginx 镜像
+
+##### 4. 验证容器运行状态
+
+```bash
+# 查看容器状态
+docker ps | grep uniauth-nginx
+
+# 查看容器日志
+docker logs uniauth-nginx --tail 20
+```
+
+##### 5. 测试验证
+
+使用 curl 命令测试各个端点：
+
+```bash
+# 测试1: 前端首页访问
+curl -s -o /dev/null -w "HTTP状态码: %{http_code}\n" http://localhost:8080/
+# 预期输出: HTTP状态码: 200
+
+# 测试2: 前端登录页面
+curl -s -o /dev/null -w "HTTP状态码: %{http_code}\n" http://localhost:8080/login
+# 预期输出: HTTP状态码: 200
+
+# 测试3: Web3 nonce 接口（后端 API）
+curl -s http://localhost:8080/api/auth/web3/nonce/0x1234567890123456789012345678901234567890
+# 预期输出: JSON 格式的 nonce 和签名消息
+
+# 测试4: OAuth2 JWKS 端点
+curl -s http://localhost:8080/oauth2/jwks
+# 预期输出: JSON Web Key Set
+
+# 测试5: OAuth2 授权端点（应返回 302 重定向）
+curl -s -o /dev/null -w "HTTP状态码: %{http_code}\n" http://localhost:8080/oauth2/authorization/google
+# 预期输出: HTTP状态码: 302
+```
+
+##### 6. Docker 容器管理（修改配置后重启）
+
+当需要修改 Nginx 配置并重启容器时，按以下步骤操作：
+
+**查看容器状态**：
+```bash
+# 查看运行中的容器
+docker ps
+
+# 查看所有容器（包括已停止的）
+docker ps -a
+
+# 查看特定容器状态
+docker ps | grep uniauth-nginx
+```
+
+**停止容器**：
+```bash
+# 优雅停止容器（发送 SIGTERM 信号）
+docker stop uniauth-nginx
+
+# 强制停止容器（发送 SIGKILL 信号，立即停止）
+docker kill uniauth-nginx
+```
+
+**删除容器**：
+```bash
+# 删除已停止的容器
+docker rm uniauth-nginx
+
+# 强制删除运行中的容器（停止并删除）
+docker rm -f uniauth-nginx
+
+# 删除容器并清理相关卷（如果有）
+docker rm -v uniauth-nginx
+```
+
+**修改配置后重启（完整流程）**：
+```bash
+# 1. 停止并删除旧容器
+docker stop uniauth-nginx
+docker rm uniauth-nginx
+
+# 2. 修改配置文件（/path/to/project/docker/nginx/nginx.conf）
+# ... 使用编辑器修改配置 ...
+
+# 3. 验证配置文件语法（可选但推荐）
+docker run --rm -v /path/to/project/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro nginx:alpine nginx -t
+
+# 4. 重新启动容器
+docker run -d \
+  --name uniauth-nginx \
+  --add-host=host.docker.internal:host-gateway \
+  -p 8080:80 \
+  -v /path/to/project/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro \
+  nginx:alpine
+
+# 5. 验证新容器运行状态
+docker ps | grep uniauth-nginx
+docker logs uniauth-nginx --tail 10
+```
+
+**快捷重启脚本**：
+
+创建 `restart-nginx.sh` 脚本便于快速重启：
+
+```bash
+#!/bin/bash
+
+PROJECT_DIR="/path/to/project"
+CONTAINER_NAME="uniauth-nginx"
+
+echo "=== 重启 Nginx 容器 ==="
+
+# 停止并删除旧容器
+echo "停止旧容器..."
+docker stop $CONTAINER_NAME 2>/dev/null
+docker rm $CONTAINER_NAME 2>/dev/null
+
+# 验证配置文件
+echo "验证配置文件..."
+if ! docker run --rm -v $PROJECT_DIR/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro nginx:alpine nginx -t; then
+    echo "配置文件语法错误，请检查！"
+    exit 1
+fi
+
+# 启动新容器
+echo "启动新容器..."
+docker run -d \
+  --name $CONTAINER_NAME \
+  --add-host=host.docker.internal:host-gateway \
+  -p 8080:80 \
+  -v $PROJECT_DIR/docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro \
+  nginx:alpine
+
+# 等待容器启动
+sleep 2
+
+# 验证状态
+if docker ps | grep -q $CONTAINER_NAME; then
+    echo "✅ Nginx 容器重启成功！"
+    echo "访问地址: http://localhost:8080"
+else
+    echo "❌ Nginx 容器启动失败，查看日志："
+    docker logs $CONTAINER_NAME
+fi
+```
+
+赋予执行权限并运行：
+```bash
+chmod +x restart-nginx.sh
+./restart-nginx.sh
+```
+
+**查看日志排查问题**：
+```bash
+# 查看实时日志
+docker logs -f uniauth-nginx
+
+# 查看最近 50 行日志
+docker logs --tail 50 uniauth-nginx
+
+# 查看包含特定关键字的日志
+docker logs uniauth-nginx 2>&1 | grep error
+```
+
+##### 7. 常见问题排查
+
+**问题 1：容器无法访问宿主机服务**
+
+**症状**：返回 502 Bad Gateway
+
+**解决**：
+- macOS：确保使用 `host.docker.internal`，Docker Desktop 默认支持
+- Linux：添加 `--add-host=host.docker.internal:host-gateway` 参数
+- 检查宿主机服务是否运行在正确的端口（5173 和 8081）
+
+**问题 2：配置文件挂载失败**
+
+**症状**：容器启动后立即退出
+
+**解决**：
+- 检查配置文件路径是否正确
+- 确保配置文件语法正确：`docker run --rm -v /path/to/nginx.conf:/etc/nginx/nginx.conf:ro nginx:alpine nginx -t`
+
+**问题 3：端口冲突**
+
+**症状**：`bind: address already in use`
+
+**解决**：
+- 更换宿主机端口：`-p 8081:80` 或 `-p 8090:80`
+- 查找并停止占用端口的进程
+
+---
+
+#### 方案 2：本地安装 Nginx（适合生产环境）
+
+##### 1. Nginx 安装
 
 - **Ubuntu/Debian**:
   ```bash
@@ -86,7 +413,7 @@ java -jar target/oauth2-demo.jar
   brew install nginx
   ```
 
-#### 2. Nginx 配置文件
+##### 2. Nginx 配置文件
 
 创建或修改 Nginx 配置文件（例如：`/etc/nginx/conf.d/auth-gateway.conf`）：
 
@@ -1020,3 +1347,4 @@ spring:
 |-----|------|---------|
 | 1.0 | 2026-01-27 | 初始版本，包含 Nginx 和 Spring Gateway 配置 |
 | 1.1 | 2026-01-27 | 添加前端页面集成和业务服务示例 |
+| 1.2 | 2026-02-05 | 添加 Docker Nginx 部署方案，包含完整配置和测试步骤 |

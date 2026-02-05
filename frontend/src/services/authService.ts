@@ -336,12 +336,8 @@ export class AuthService {
    * 获取OAuth2登录URL
    */
   static getLoginUrl(provider: 'google' | 'github' | 'x'): string {  // ✅ X API v2：提供者名改为 'x'
-    const state = {
-      response_type: 'redirect',
-      redirect_uri: '/'  // 登录成功后重定向到首页
-    };
-    const stateParam = encodeURIComponent(JSON.stringify(state));
-    const baseUrl = `${API_BASE_URL}/oauth2/authorization/${provider}?state=${stateParam}`;
+    // 不再传递自定义参数，后端会从 Referer 头获取重定向地址
+    const baseUrl = `${API_BASE_URL}/oauth2/authorization/${provider}`;
     console.log('OAuth2 login URL:', baseUrl);
     return baseUrl;
   }
@@ -401,7 +397,20 @@ axios.interceptors.response.use(
       return Promise.reject(error);
     }
     
+    // 避免对刷新token接口本身进行重试，防止循环
+    if (error.config?.url?.includes('/api/auth/refresh')) {
+      console.log('Refresh token request failed, not retrying');
+      return Promise.reject(error);
+    }
+    
     if (error.response?.status === 401) {
+      // 标记请求已经尝试过刷新，避免无限循环
+      if (error.config._retry) {
+        console.log('Already retried, rejecting...');
+        return Promise.reject(error);
+      }
+      error.config._retry = true;
+      
       // 尝试刷新token
       try {
         console.log('Token过期，尝试刷新...');
@@ -427,11 +436,8 @@ axios.interceptors.response.use(
           return axios(originalRequest);
         }
       } catch (refreshError) {
-        console.error('Token刷新失败，跳转到登录页...', refreshError);
-        // 刷新失败，跳转到登录页
-        if (!window.location.pathname.includes('/login')) {
-          window.location.href = '/login';
-        }
+        console.error('Token刷新失败:', refreshError);
+        // 不再自动跳转登录页，避免循环
         // 清除localStorage中的用户状态
         localStorage.removeItem('auth_user');
         localStorage.removeItem('accessToken');

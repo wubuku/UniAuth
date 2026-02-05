@@ -89,24 +89,25 @@ export function useAuth() {
         console.log('Stored access token from cookie to localStorage');
       } else {
         console.log('No access token found in cookie');
-        // 尝试调用refreshToken API获取token
-        try {
-          console.log('Attempting to refresh token...');
-          const refreshResponse = await AuthService.refreshToken();
-          console.log('Token refresh response:', refreshResponse);
-          if (refreshResponse.accessToken) {
-            localStorage.setItem('accessToken', refreshResponse.accessToken);
-            console.log('Stored access token from API to localStorage');
+        // 只在有refreshToken时才尝试刷新
+        const storedRefreshToken = localStorage.getItem('refreshToken') || refreshToken;
+        if (storedRefreshToken) {
+          try {
+            console.log('Attempting to refresh token...');
+            const refreshResponse = await AuthService.refreshToken();
+            console.log('Token refresh response:', refreshResponse);
+            if (refreshResponse.accessToken) {
+              localStorage.setItem('accessToken', refreshResponse.accessToken);
+              console.log('Stored access token from API to localStorage');
+            }
+          } catch (error) {
+            console.log('Token refresh failed:', error);
+            // 清除过期的token
+            localStorage.removeItem('accessToken');
+            localStorage.removeItem('refreshToken');
           }
-        } catch (error) {
-          console.log('Token refresh failed:', error);
-          // 如果token刷新失败，跳转到登录页面
-          if (!window.location.pathname.includes('/login')) {
-            console.log('Redirecting to login due to token refresh failure');
-            window.location.href = '/login';
-          }
-          setLoading(false);
-          return;
+        } else {
+          console.log('No refresh token available, skipping refresh');
         }
       }
       
@@ -129,11 +130,8 @@ export function useAuth() {
       console.log('Authentication check failed:', err);
       setUser(null);
       setError(err instanceof Error ? err.message : 'Authentication check failed');
-      // 如果在受保护页面且认证失败，重定向到登录页面
-      if (!window.location.pathname.includes('/login')) {
-        console.log('Redirecting to login due to authentication failure');
-        window.location.href = '/login';
-      }
+      // 不再自动重定向到登录页面，避免循环
+      // 只在受保护路由需要时由组件自行处理
     } finally {
       setLoading(false);
     }
@@ -194,6 +192,13 @@ export function useAuth() {
       return;
     }
     
+    // 如果没有refreshToken，不进行自动刷新
+    const refreshTokenValue = localStorage.getItem('refreshToken');
+    if (!refreshTokenValue) {
+      console.log('No refresh token found, skipping auto refresh');
+      return;
+    }
+    
     if (isTokenExpiring()) {
       try {
         console.log('Token is expiring, refreshing...');
@@ -208,15 +213,21 @@ export function useAuth() {
           localStorage.setItem('refreshToken', result.refreshToken);
         }
 
-        // 刷新token后，重新获取用户信息以确保状态同步
-        await checkAuth();
+        // 刷新token后，获取用户信息（但不调用checkAuth避免循环）
+        try {
+          const userData = await AuthService.getCurrentUser();
+          console.log('User data refreshed:', userData);
+          setUser(userData);
+        } catch (err) {
+          console.log('Failed to get user data after refresh:', err);
+        }
       } catch (error) {
         console.error('Auto token refresh failed:', error);
         // 刷新失败，清除用户状态并跳转到登录页
         logout();
       }
     }
-  }, [isTokenExpiring, logout, checkAuth]);
+  }, [isTokenExpiring, logout]);
 
   // OAuth2登录
   const oauthLogin = (provider: 'google' | 'github' | 'x') => {  // ✅ X API v2：提供者名改为 'x'

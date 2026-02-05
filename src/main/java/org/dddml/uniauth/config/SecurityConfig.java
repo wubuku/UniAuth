@@ -54,7 +54,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @EnableWebSecurity
 public class SecurityConfig {
 
-
+    @Value("${app.frontend.url:}")
+    private String frontendUrl;
 
     @Autowired
     private UserService userService;
@@ -219,36 +220,17 @@ public class SecurityConfig {
                             System.out.println("Login completed successfully for user: " + userDto.getId());
                         }
                         
-                        // 检测回调模式：优先使用state参数中的response_type，其次使用Accept头
+                        // 检测回调模式：使用Accept头判断
                         String callbackMode = "redirect";
                         String redirectUri = "/";
                         
-                        // 解析state参数
-                        String state = request.getParameter("state");
-                        if (state != null) {
-                            try {
-                                // 解码state参数
-                                String decodedState = java.net.URLDecoder.decode(state, "UTF-8");
-                                // 尝试解析为JSON
-                                ObjectMapper objectMapper = new ObjectMapper();
-                                Map<String, Object> stateData = objectMapper.readValue(decodedState, Map.class);
-                                
-                                // 获取回调模式
-                                if (stateData.containsKey("response_type")) {
-                                    String responseType = stateData.get("response_type").toString();
-                                    if ("json".equals(responseType)) {
-                                        callbackMode = "json";
-                                    }
-                                }
-                                
-                                // 获取重定向URI
-                                if (stateData.containsKey("redirect_uri")) {
-                                    redirectUri = stateData.get("redirect_uri").toString();
-                                }
-                            } catch (Exception e) {
-                                // 解析失败，使用默认值
-                                System.out.println("Failed to parse state parameter: " + e.getMessage());
-                            }
+                        // 使用配置文件中的前端地址
+                        System.out.println("Frontend URL from config: " + frontendUrl);
+                        if (frontendUrl != null && !frontendUrl.isEmpty()) {
+                            redirectUri = frontendUrl.endsWith("/") ? frontendUrl : frontendUrl + "/";
+                            System.out.println("Using config frontend URL for redirect: " + redirectUri);
+                        } else {
+                            System.out.println("No frontend URL in config, using default redirect: /");
                         }
                         
                         // 如果没有指定回调模式，使用Accept头判断
@@ -281,6 +263,7 @@ public class SecurityConfig {
                         } else {
                             // 重定向模式 - 完全由前端主导
                             // 使用state参数中指定的redirect_uri，或使用默认值
+                            System.out.println("OAuth2 redirecting to: " + redirectUri);
                             response.sendRedirect(redirectUri);
                         }
                     }
@@ -415,6 +398,8 @@ public class SecurityConfig {
     public SecurityFilterChain webSecurityFilterChain(HttpSecurity http,
                                                      ClientRegistrationRepository clientRegistrationRepository) throws Exception {
         http
+            // CORS配置 - 必须在其他配置之前启用
+            .cors(cors -> {})
             // CSRF保护
             .csrf(csrf -> csrf
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
@@ -615,10 +600,41 @@ public class SecurityConfig {
         // 配置自定义的授权请求参数 - 先启用PKCE
         defaultResolver.setAuthorizationRequestCustomizer(OAuth2AuthorizationRequestCustomizers.withPkce());
 
-        // 创建自定义解析器，保留前端传入的state参数（但不要覆盖Spring Security生成的state）
-        // ✅ 关键修复：Spring Security使用state作为session key，不能直接覆盖
-        // 前端state信息会在回调时从URL参数中获取，不需要在这里处理
-        return defaultResolver;
+        // 包装解析器，在解析请求时将前端地址存入Session
+        return new OAuth2AuthorizationRequestResolver() {
+            @Override
+            public OAuth2AuthorizationRequest resolve(HttpServletRequest request) {
+                // 保存前端地址到Session
+                saveFrontendUrl(request);
+                return defaultResolver.resolve(request);
+            }
+
+            @Override
+            public OAuth2AuthorizationRequest resolve(HttpServletRequest request, String clientRegistrationId) {
+                // 保存前端地址到Session
+                saveFrontendUrl(request);
+                return defaultResolver.resolve(request, clientRegistrationId);
+            }
+            
+            private void saveFrontendUrl(HttpServletRequest request) {
+                String referer = request.getHeader("Referer");
+                System.out.println("Saving frontend URL from referer: " + referer);
+                if (referer != null && !referer.isEmpty()) {
+                    try {
+                        java.net.URL refererUrl = new java.net.URL(referer);
+                        // 只保存协议、主机和端口
+                        String frontendUrl = refererUrl.getProtocol() + "://" + refererUrl.getHost();
+                        if (refererUrl.getPort() != -1) {
+                            frontendUrl += ":" + refererUrl.getPort();
+                        }
+                        request.getSession().setAttribute("OAUTH2_FRONTEND_URL", frontendUrl);
+                        System.out.println("Saved frontend URL to session: " + frontendUrl);
+                    } catch (Exception e) {
+                        System.out.println("Failed to parse referer: " + e.getMessage());
+                    }
+                }
+            }
+        };
     }
 
     /**

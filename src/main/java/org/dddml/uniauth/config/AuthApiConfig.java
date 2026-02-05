@@ -23,6 +23,7 @@ public class AuthApiConfig {
     public SecurityFilterChain authApiSecurityFilterChain(HttpSecurity http) throws Exception {
         http
             .securityMatcher("/api/auth/**")  // 只匹配认证API
+            .cors(cors -> {})  // 启用CORS
             .authorizeHttpRequests(authz -> authz
                 .anyRequest().permitAll()  // 所有认证API都公开
             )

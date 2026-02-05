@@ -96,6 +96,7 @@ public class ResourceServerConfig {
                                                                  JwtAuthenticationConverter jwtAuthenticationConverter) throws Exception {
         http
             .securityMatcher("/api/**")  // 只匹配API请求（排除认证API，因为AuthApiConfig优先级更高）
+            .cors(cors -> {})  // 启用CORS
             .authorizeHttpRequests(authz -> authz
                 .requestMatchers("/api/auth/**").permitAll()  // 认证API公开
                 .requestMatchers("/api/user").authenticated()  // 所有认证用户都可以访问
