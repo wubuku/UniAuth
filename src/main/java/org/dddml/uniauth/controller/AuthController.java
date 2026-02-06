@@ -1,5 +1,6 @@
 package org.dddml.uniauth.controller;
 
+import org.dddml.uniauth.config.EmailRegistrationProperties;
 import org.dddml.uniauth.dto.RegisterRequest;
 import org.dddml.uniauth.dto.UserDto;
 import org.dddml.uniauth.entity.UserLoginMethod;
@@ -33,6 +34,7 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * 认证相关API控制器和SPA路由控制器
@@ -49,6 +51,13 @@ public class AuthController {
     private final UserLoginMethodRepository loginMethodRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
+    private final EmailRegistrationProperties emailRegistrationProperties;
+
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
+
+    private boolean isValidEmail(String username) {
+        return EMAIL_PATTERN.matcher(username).matches();
+    }
 
     /**
      * 用户注册
@@ -79,15 +88,43 @@ public class AuthController {
             )
         )
     })
-    public ResponseEntity<UserDto> register(
+    public ResponseEntity<?> register(
             @Parameter(
                 name = "request",
                 description = "注册信息",
                 required = true
             )
             @RequestBody RegisterRequest request) {
-        UserDto user = userService.register(request);
-        return ResponseEntity.ok(user);
+        boolean isEmailUsername = isValidEmail(request.getUsername());
+
+        if (isEmailUsername) {
+            return handleEmailRegistration(request);
+        } else {
+            if (emailRegistrationProperties.isRequireEmailUsername()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "REGISTRATION_NOT_ALLOWED",
+                    "message", "Only email addresses are allowed for registration",
+                    "requireEmailUsername", true
+                ));
+            }
+            UserDto user = userService.register(request);
+            return ResponseEntity.ok(user);
+        }
+    }
+
+    private ResponseEntity<?> handleEmailRegistration(RegisterRequest request) {
+        if (loginMethodRepository.existsByLocalUsername(request.getUsername())) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "USERNAME_EXISTS",
+                "message", "Username already exists"
+            ));
+        }
+
+        return ResponseEntity.ok(Map.of(
+            "requireEmailVerification", true,
+            "username", request.getUsername(),
+            "message", "Please complete email verification to finish registration"
+        ));
     }
 
     /**

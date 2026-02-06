@@ -40,7 +40,7 @@ mvn spring-boot:run
 # export $(cat .env | grep -v '^#' | xargs) && mvn spring-boot:run
 # 指定后端服务端口号运行：
 # export $(cat .env | grep -v '^#' | xargs) && mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8082"
-# 也可以设置环境变量：
+# 也可以设置环境变量指定端口：
 # export SERVER_PORT=8082
 
 # **提示**：

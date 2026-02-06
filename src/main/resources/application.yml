@@ -5,6 +5,18 @@ app:
   frontend:
     type: react  # 可选值: thymeleaf（传统模板）, react（现代SPA）
     url: https://blacksheepmedia.xyz  # 前端地址，用于OAuth2回调重定向
+  email:
+    service:
+      url: ${EMAIL_SERVICE_URL:http://localhost:8095}
+      timeout: 5000
+    verification:
+      code-length: 6
+      expiry-minutes: 10
+      max-send-per-day: 10
+      max-retry-attempts: 5
+      resend-cooldown-seconds: 60
+    registration:
+      require-email-username: false
   jwt:
     # JWT密钥配置
     # 优先级: 配置项 > 环境变量(JWT_SECRET) > 配置的密钥文件 > 默认文件(jwt-secret.key) > 默认密钥(仅开发环境)
@@ -73,7 +85,8 @@ spring:
     name: uni-auth
   profiles:
     active: test
-    # dev 默认使用 SQLite 数据库，test 使用 PostgreSQL 数据库，prod 使用 PostgreSQL 数据库
+    # dev 默认使用 SQLite 数据库，test 使用 PostgreSQL 数据库，prod 使用 PostgreSQL 数据库。
+    # 当需要使用 PostgreSQL 测试时，请使用 test 环境。
 
   # 数据库配置由环境特定的配置文件（application-{profile}.yml）接管
   # - application-dev.yml: SQLite配置

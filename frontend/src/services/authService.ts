@@ -353,6 +353,58 @@ export class AuthService {
       return false;
     }
   }
+
+  // ==================== 邮箱验证相关 API ====================
+
+  static async getEmailStatus(email: string): Promise<{ email: string; hasPendingVerification: boolean }> {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/auth/email/status/${encodeURIComponent(email)}`);
+      return response.data;
+    } catch (error) {
+      console.error('Get email status error:', error);
+      return { email, hasPendingVerification: false };
+    }
+  }
+
+  static async sendVerificationCode(data: {
+    email: string;
+    purpose?: 'REGISTRATION' | 'LOGIN' | 'PASSWORD_RESET';
+    password?: string;
+    displayName?: string;
+  }): Promise<{
+    success: boolean;
+    message: string;
+    expiresIn: number;
+    resendAfter: number;
+  }> {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/send-verification-code`, data);
+      return response.data;
+    } catch (error) {
+      console.error('Send verification code error:', error);
+      throw this.handleApiError(error, '发送验证码失败');
+    }
+  }
+
+  static async verifyEmail(data: {
+    email: string;
+    verificationCode: string;
+  }): Promise<{
+    success: boolean;
+    message: string;
+    userId?: string;
+    username?: string;
+    accessToken?: string;
+    refreshToken?: string;
+  }> {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/verify-email`, data);
+      return response.data;
+    } catch (error) {
+      console.error('Verify email error:', error);
+      throw this.handleApiError(error, '验证码验证失败');
+    }
+  }
 }
 
 // 配置axios默认设置
