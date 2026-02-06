@@ -1,18 +1,18 @@
 # OAuth2 Demo 项目完善任务进度
 
-> 📋 最新进展（2026-01-24）：
+> 📋 **最新进展（2026-02-06）**：
 >
-> ✅ **多登录方式绑定功能** - 完整实现并通过端到端测试
-> ✅ **本地地址**: http://localhost:8081
-> ✅ **前端集成**: 前端页面已自动构建并发布到 Spring Boot 静态资源目录
-> ✅ **开发环境**: 自动初始化三个测试账户，支持所有测试场景
+> ✅ **邮箱注册与验证码登录功能** - 完整实现并通过端到端测试
+> ✅ **邮箱用户名注册校验**：当用户名是邮箱时，email字段必须为null或相同
+> ✅ **前端自动填充**：用户名输入邮箱时，邮箱字段自动填充并禁用修改
+> ✅ **验证码自动发送**：弹窗打开时自动发送第一封验证码邮件
+> ✅ **测试邮箱**: wubuku@163.com
+> ✅ **端到端测试**: 从注册→发送验证码→数据库查询→验证成功→获取JWT令牌
 >
 > 💡 **使用说明**:
-> - 支持完整的 OAuth2 登录流程测试（Google、GitHub、X）
-> - 支持本地用户注册/登录/登出
-> - **新增**: 支持多登录方式绑定、删除、切换主方式
-> - **新增**: 本地用户可以绑定SSO、SSO用户可以添加本地密码
-> - 所有前端 API 调用都会通过此地址访问后端服务
+> - 用户名支持邮箱格式（如 user@example.com）
+> - 使用邮箱注册时，邮箱字段自动同步，无需重复输入
+> - 注册后需通过邮箱验证码完成注册流程
 
 ## 测试提示
 
@@ -2205,3 +2205,192 @@ git add -A && git commit -m "feat: 在登录页面集成Web3登录按钮"
 - 回退到 7e532ed 提交
 - 采用增量开发方式
 - 严格遵守开发规范
+
+---
+
+## 📋 邮箱注册与验证码登录功能（2026-02-06 完成）
+
+### ✅ 已完成功能
+
+| 功能 | 描述 | 状态 |
+|-----|------|------|
+| 邮箱注册API | 用户名支持邮箱格式 | ✅ |
+| 发送验证码 | 发送验证码到用户邮箱 | ✅ |
+| 验证码验证 | 验证用户输入的验证码 | ✅ |
+| JWT令牌生成 | 验证成功后生成访问令牌 | ✅ |
+| 前端自动填充 | 用户名是邮箱时自动填充邮箱字段 | ✅ |
+| 邮箱校验约束 | email字段必须为null或与用户名相同 | ✅ |
+| 自动发送验证码 | 弹窗打开时自动发送第一封验证码 | ✅ |
+
+### 📊 代码统计
+
+```
+后端新增文件：8个
+- EmailRegistrationProperties.java（配置类）
+- EmailAuthController.java（控制器）
+- EmailVerificationCode.java（实体）
+- EmailVerificationCodeRepository.java（Repository）
+- EmailVerificationCodeService.java（服务）
+- EmailService.java（接口）
+- EmailSendResult.java（枚举）
+- RestTemplateEmailServiceImpl.java（实现）
+
+前端修改文件：2个
+- authService.ts（API方法）
+- LoginPage.tsx（UI和逻辑）
+
+数据库迁移：1个
+- V8__Create_email_verification_codes_table.sql
+
+测试脚本：1个
+- test-email-registration.sh
+```
+
+### 🧪 测试结果
+
+```bash
+# 测试邮箱：wubuku@163.com
+# 测试流程：
+# 1. 注册 → 返回 requireEmailVerification: true
+# 2. 发送验证码 → 验证码存储到数据库
+# 3. 查询验证码 → 从数据库自动获取
+# 4. 验证验证码 → 获取JWT令牌
+# 5. 用户创建成功 → 数据库记录
+
+# 登录测试：
+# POST /api/auth/login?username=wubuku@163.com&password=TestPassword123!
+# 返回：登录成功，JWT令牌
+```
+
+### 🔐 安全特性
+
+- 使用 `SecureRandom` 生成验证码（密码学安全）
+- 邮箱地址格式验证
+- 重试次数限制
+- 验证码过期机制（默认10分钟）
+- 发送频率限制（默认60秒冷却）
+
+### ⚙️ 配置项
+
+```yaml
+app:
+  email:
+    verification:
+      code-length: 6              # 验证码长度
+      expiry-minutes: 10          # 验证码有效期
+      max-send-per-day: 10        # 每日最大发送次数
+      resend-cooldown-seconds: 60 # 重发冷却时间
+```
+
+---
+
+## 🚀 下一步：邮箱登录密码重置功能
+
+### 📋 功能概述
+
+当用户忘记密码时，通过邮箱验证身份后重置密码。
+
+### 📋 API设计
+
+#### 1. 请求密码重置验证码
+
+```http
+POST /api/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "user@example.com"
+}
+```
+
+**响应：**
+```json
+{
+  "success": true,
+  "message": "验证码已发送到邮箱",
+  "resendAfter": 60,
+  "expiresIn": 600
+}
+```
+
+#### 2. 验证验证码并重置密码
+
+```http
+POST /api/auth/reset-password
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "verificationCode": "123456",
+  "newPassword": "NewPassword123!"
+}
+```
+
+**响应：**
+```json
+{
+  "success": true,
+  "message": "密码重置成功，请使用新密码登录"
+}
+```
+
+### 📋 实现步骤
+
+#### Phase 1：后端实现
+
+**新增文件：**
+1. `ForgotPasswordController.java` - 密码重置控制器
+2. `ForgotPasswordRequest.java` - 请求DTO
+3. `ResetPasswordRequest.java` - 重置DTO
+4. 修改 `UserService` - 添加密码重置逻辑
+
+**修改文件：**
+1. `EmailVerificationCodeService.java` - 支持 PASSWORD_RESET 用途
+2. `UserLoginMethodRepository.java` - 按邮箱查询登录方法
+
+**数据库表：**
+- 复用 `email_verification_codes` 表，添加 `purpose: PASSWORD_RESET`
+
+#### Phase 2：前端实现
+
+1. 添加"忘记密码"链接和弹窗
+2. 输入邮箱请求验证码
+3. 输入验证码和新密码
+4. 调用API重置密码
+5. 成功后跳转到登录页
+
+#### Phase 3：测试验证
+
+1. 请求密码重置验证码
+2. 验证验证码正确
+3. 验证新密码登录成功
+4. 验证旧密码登录失败
+5. 验证错误验证码处理
+6. 验证已使用验证码处理
+
+### 📋 安全考虑
+
+1. **验证码一次性使用**
+   - 验证后立即标记为已使用
+   - 防止重复使用
+
+2. **频率限制**
+   - 同一邮箱每日发送次数限制
+   - 同一IP请求频率限制
+
+3. **密码强度验证**
+   - 最小长度要求
+   - 复杂度要求（字母、数字、特殊字符）
+
+4. **错误处理**
+   - 不暴露邮箱是否注册
+   - 详细的错误信息仅返回给用户
+
+### 📋 验收标准
+
+- [ ] 后端API编译通过
+- [ ] 验证码发送和验证流程正常
+- [ ] 密码重置成功后旧密码失效
+- [ ] 前端UI交互正常
+- [ ] 安全机制生效（频率限制、一次性使用）
+- [ ] 端到端测试通过
