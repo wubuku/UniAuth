@@ -120,9 +120,19 @@ public class AuthController {
             ));
         }
 
+        String requestEmail = request.getEmail();
+        String username = request.getUsername();
+
+        if (requestEmail != null && !requestEmail.equalsIgnoreCase(username)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "EMAIL_MISMATCH",
+                "message", "When username is an email address, the email field must be null or the same as username"
+            ));
+        }
+
         return ResponseEntity.ok(Map.of(
             "requireEmailVerification", true,
-            "username", request.getUsername(),
+            "username", username,
             "message", "Please complete email verification to finish registration"
         ));
     }

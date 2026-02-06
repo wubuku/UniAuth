@@ -156,12 +156,14 @@ export default function LoginPage() {
     displayName: ''
   });
 
+  const [isEmailAsUsername, setIsEmailAsUsername] = useState(false);
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [verificationEmail, setVerificationEmail] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
   const [verificationLoading, setVerificationLoading] = useState(false);
   const [verificationCountdown, setVerificationCountdown] = useState(0);
   const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [hasAutoSentCode, setHasAutoSentCode] = useState(false);
   const [registrationData, setRegistrationData] = useState<{
     username: string;
     email: string;
@@ -175,9 +177,33 @@ export default function LoginPage() {
     }
   }, [user, navigate]);
 
+  useEffect(() => {
+    if (showVerificationModal && verificationEmail && !verificationLoading && !hasAutoSentCode && verificationCountdown === 0) {
+      setHasAutoSentCode(true);
+      handleSendVerificationCode();
+    }
+  }, [showVerificationModal, verificationEmail, verificationLoading, hasAutoSentCode, verificationCountdown]);
+
+  const isValidEmail = (value: string): boolean => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+
+    if (name === 'username') {
+      if (isValidEmail(value)) {
+        setFormData(prev => ({ ...prev, username: value, email: value }));
+        setIsEmailAsUsername(true);
+      } else if (isEmailAsUsername) {
+        setFormData(prev => ({ ...prev, username: value, email: '' }));
+        setIsEmailAsUsername(false);
+      } else {
+        setFormData(prev => ({ ...prev, username: value }));
+      }
+    } else {
+      setFormData(prev => ({ ...prev, [name]: value }));
+    }
   };
 
   const startCountdown = (seconds: number) => {
@@ -426,15 +452,29 @@ export default function LoginPage() {
                   placeholder="邮箱"
                   value={formData.email}
                   onChange={handleInputChange}
-                  required
+                  disabled={isEmailAsUsername}
+                  required={!isEmailAsUsername}
                   style={{
                     padding: '12px',
                     border: '1px solid #ddd',
                     borderRadius: '8px',
                     fontSize: '16px',
-                    outline: 'none'
+                    outline: 'none',
+                    backgroundColor: isEmailAsUsername ? '#f5f5f5' : 'white',
+                    cursor: isEmailAsUsername ? 'not-allowed' : 'text'
                   }}
+                  {...(isEmailAsUsername ? { readOnly: true } : {})}
                 />
+                {isEmailAsUsername && (
+                  <div style={{
+                    fontSize: '12px',
+                    color: '#666',
+                    marginTop: '-10px',
+                    marginBottom: '10px'
+                  }}>
+                    ℹ️ 当用户名是邮箱地址时，邮箱字段将使用相同的地址
+                  </div>
+                )}
 
                 <input
                   type="text"
@@ -634,6 +674,7 @@ export default function LoginPage() {
             setShowVerificationModal(false);
             setVerificationCode('');
             setVerificationError(null);
+            setHasAutoSentCode(false);
           }}
         />
       )}
