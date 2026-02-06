@@ -2390,3 +2390,31 @@ Content-Type: application/json
 - [ ] 前端UI交互正常
 - [ ] 安全机制生效（频率限制、一次性使用）
 - [ ] 端到端测试通过
+
+---
+
+## ✅ 最新进展 (2026-02-07)
+
+### 忘记密码功能 - 已完成
+
+**后端实现：**
+- `ForgotPasswordController.java` - 密码重置 API 控制器
+- `ForgotPasswordService.java` - 密码重置业务逻辑
+- 优化验证码查询：使用 `findFirstBy...OrderByCreatedAtDesc` 确保返回最新记录
+- 统一错误响应格式：添加 `errorCode` 字段（EMAIL_EXISTS, EMAIL_NOT_REGISTERED）
+
+**前端实现：**
+- `ForgotPasswordModal.tsx` - 忘记密码弹窗组件（三步流程）
+- 友好的错误提示：未注册邮箱显示"去注册"链接
+- 统一错误处理：解析 `errorCode` 显示中文提示
+
+**测试验证：**
+- ✅ 已注册邮箱注册 → 正确拒绝：EMAIL_ALREADY_REGISTERED
+- ✅ 未注册邮箱注册 → 触发邮件验证流程
+- ✅ 已注册邮箱重置密码 → 发送验证码
+- ✅ 未注册邮箱重置密码 → 正确拒绝：EMAIL_NOT_REGISTERED
+
+**脚本整理：**
+- 创建 `scripts/` 目录集中管理测试脚本
+- `test-registration-password-reset.sh` - 完整测试脚本
+- 优化 `test-email-registration.sh` 自动检测脚本路径
