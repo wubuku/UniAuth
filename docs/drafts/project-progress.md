@@ -1,19 +1,5 @@
 # OAuth2 Demo 项目完善任务进度
 
-> 📋 **最新进展（2026-02-06）**：
->
-> ✅ **邮箱注册与验证码登录功能** - 完整实现并通过端到端测试
-> ✅ **邮箱用户名注册校验**：当用户名是邮箱时，email字段必须为null或相同
-> ✅ **前端自动填充**：用户名输入邮箱时，邮箱字段自动填充并禁用修改
-> ✅ **验证码自动发送**：弹窗打开时自动发送第一封验证码邮件
-> ✅ **测试邮箱**: wubuku@163.com
-> ✅ **端到端测试**: 从注册→发送验证码→数据库查询→验证成功→获取JWT令牌
->
-> 💡 **使用说明**:
-> - 用户名支持邮箱格式（如 user@example.com）
-> - 使用邮箱注册时，邮箱字段自动同步，无需重复输入
-> - 注册后需通过邮箱验证码完成注册流程
-
 ## 测试提示
 
 手动构建和启动：
@@ -33,21 +19,31 @@
 mvn spring-boot:run
 
 # 如果服务已经在运行，可以杀死 808x 端口上的服务
-# lsof -i :8081 | grep LISTEN | awk '{print $2}' | xargs kill -9
 # lsof -i :8082 | grep LISTEN | awk '{print $2}' | xargs kill -9
+# lsof -i :8081 | grep LISTEN | awk '{print $2}' | xargs kill -9
 
 # 如果使用环境变量文件，可以使用以下命令：
 # export $(cat .env | grep -v '^#' | xargs) && mvn spring-boot:run
+
 # 指定后端服务端口号运行：
 # export $(cat .env | grep -v '^#' | xargs) && mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8082"
-# 也可以设置环境变量指定端口：
+# 也可以通过设置环境变量指定端口：
 # export SERVER_PORT=8082
+
+# ----------------------------------------------------------------------
+# **给 AI 助手的话**：
+# 你应该使用后台运行的方式启动服务，避免自己挂起：
+# cd /PATH/TO/UniAuth && nohup bash -c 'export $(cat .env 2>/dev/null | grep -v "^#" | xargs) && mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8082"' > /tmp/spring-boot.log 2>&1 & echo "PID: $!"
+#
+# 在必要的时候，使用 psql 检查数据库。数据库连接信息见：`src/main/resources/application-test.yml`
+# 示例查询：
+# PGPASSWORD="123456" psql -h localhost -p 5432 -U postgres -d your_database -t -c "SELECT count(*) FROM users;"
+# ----------------------------------------------------------------------
 
 # **提示**：
 # - ✅ 外部隧道域名配置： `https://api.u2511175.nyat.app:55139`
 # - 目前各平台 SSO 登录配置都使用这个域名作为回调地址。
 ```
-
 
 ## 项目概述
 OAuth2 Demo项目 - 完整的现代化用户认证系统实现，支持多登录方式管理。
