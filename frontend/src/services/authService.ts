@@ -405,6 +405,40 @@ export class AuthService {
       throw this.handleApiError(error, '验证码验证失败');
     }
   }
+
+  // 密码重置
+  static async requestPasswordReset(email: string): Promise<{
+    success: boolean;
+    message: string;
+    expiresIn: number;
+    resendAfter: number;
+    errorCode?: string;
+  }> {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/forgot-password`, { email });
+      return response.data;
+    } catch (error) {
+      console.error('Request password reset error:', error);
+      throw this.handleApiError(error, '发送密码重置验证码失败');
+    }
+  }
+
+  static async resetPassword(data: {
+    email: string;
+    verificationCode: string;
+    newPassword: string;
+  }): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/auth/verify-reset-code`, data);
+      return response.data;
+    } catch (error) {
+      console.error('Reset password error:', error);
+      throw this.handleApiError(error, '密码重置失败');
+    }
+  }
 }
 
 // 配置axios默认设置

@@ -90,7 +90,7 @@ public class EmailVerificationCodeService {
         log.info("Verifying code for email: {}, purpose: {}", email, purpose);
 
         EmailVerificationCode codeRecord = verificationCodeRepository
-            .findByEmailAndPurposeAndIsUsedFalse(email, purpose)
+            .findFirstByEmailAndPurposeAndIsUsedFalseOrderByCreatedAtDesc(email, purpose)
             .orElse(null);
 
         if (codeRecord == null) {
@@ -163,7 +163,7 @@ public class EmailVerificationCodeService {
 
     @Transactional
     public void markAsUsed(String email, VerificationPurpose purpose) {
-        verificationCodeRepository.findByEmailAndPurposeAndIsUsedFalse(email, purpose)
+        verificationCodeRepository.findFirstByEmailAndPurposeAndIsUsedFalseOrderByCreatedAtDesc(email, purpose)
             .ifPresent(code -> {
                 code.setIsUsed(true);
                 verificationCodeRepository.save(code);

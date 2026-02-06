@@ -20,6 +20,11 @@ public interface EmailVerificationCodeRepository extends JpaRepository<EmailVeri
         VerificationPurpose purpose
     );
 
+    Optional<EmailVerificationCode> findFirstByEmailAndPurposeAndIsUsedFalseOrderByCreatedAtDesc(
+        String email,
+        VerificationPurpose purpose
+    );
+
     List<EmailVerificationCode> findByEmail(String email);
 
     List<EmailVerificationCode> findByExpiresAtBeforeAndIsUsedFalse(Instant now);

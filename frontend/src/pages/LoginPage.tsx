@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { AuthService } from '../services/authService';
 import Web3LoginButton from '../components/Web3LoginButton';
+import { ForgotPasswordModal } from '../components/ForgotPasswordModal';
 
 interface VerificationModalProps {
   email: string;
@@ -171,6 +172,8 @@ export default function LoginPage() {
     displayName: string;
   } | null>(null);
 
+  const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
+
   useEffect(() => {
     if (user) {
       navigate('/');
@@ -316,8 +319,17 @@ export default function LoginPage() {
         await localLogin(formData.username, formData.password);
         setSuccessMessage('登录成功！正在跳转...');
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '操作失败';
+    } catch (err: any) {
+      const errorData = err.response?.data;
+      const errorCode = errorData?.errorCode || errorData?.error;
+      let message = errorData?.message || errorData?.error || '操作失败';
+
+      if (errorCode === 'EMAIL_ALREADY_REGISTERED') {
+        message = '该邮箱已注册，请使用忘记密码功能重置密码';
+      } else if (errorCode === 'EMAIL_NOT_REGISTERED') {
+        message = '该邮箱未注册，请先完成注册';
+      }
+
       setWeb3Error(message);
     } finally {
       setVerificationLoading(false);
@@ -527,6 +539,23 @@ export default function LoginPage() {
             >
               {(loading || verificationLoading) ? '处理中...' : (isRegisterMode ? '注册' : '登录')}
             </button>
+
+            {!isRegisterMode && (
+              <button
+                type="button"
+                onClick={() => setShowForgotPasswordModal(true)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#007bff',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  marginTop: '10px'
+                }}
+              >
+                忘记密码？
+              </button>
+            )}
           </div>
         </form>
 
@@ -678,6 +707,15 @@ export default function LoginPage() {
           }}
         />
       )}
+
+      <ForgotPasswordModal
+        isOpen={showForgotPasswordModal}
+        onClose={() => setShowForgotPasswordModal(false)}
+        onSwitchToRegister={() => {
+          setShowForgotPasswordModal(false);
+          setIsRegisterMode(true);
+        }}
+      />
     </div>
   );
 }

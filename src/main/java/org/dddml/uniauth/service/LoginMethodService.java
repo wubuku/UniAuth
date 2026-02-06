@@ -227,4 +227,28 @@ public class LoginMethodService {
         
         return saved;
     }
+
+    /**
+     * 更新用户密码
+     * 用于密码重置功能
+     *
+     * @param username 用户名（邮箱或本地用户名）
+     * @param newPassword 新密码（明文，会自动加密）
+     * @throws IllegalArgumentException 如果用户不存在
+     */
+    public void updatePassword(String username, String newPassword) {
+        log.info("Updating password for user: {}", username);
+        
+        UserLoginMethod loginMethod = loginMethodRepository.findByLocalUsername(username)
+            .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+        
+        if (loginMethod.getLocalPasswordHash() == null) {
+            throw new IllegalArgumentException("该用户不是本地登录方式，无法通过此方式重置密码");
+        }
+        
+        loginMethod.setLocalPasswordHash(passwordEncoder.encode(newPassword));
+        loginMethodRepository.save(loginMethod);
+        
+        log.info("Password updated successfully for user: {}", username);
+    }
 }

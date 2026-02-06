@@ -115,8 +115,9 @@ public class AuthController {
     private ResponseEntity<?> handleEmailRegistration(RegisterRequest request) {
         if (loginMethodRepository.existsByLocalUsername(request.getUsername())) {
             return ResponseEntity.badRequest().body(Map.of(
-                "error", "USERNAME_EXISTS",
-                "message", "Username already exists"
+                "error", "EMAIL_ALREADY_REGISTERED",
+                "message", "该邮箱已注册，请使用忘记密码功能重置密码",
+                "errorCode", "EMAIL_EXISTS"
             ));
         }
 
@@ -126,14 +127,14 @@ public class AuthController {
         if (requestEmail != null && !requestEmail.equalsIgnoreCase(username)) {
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "EMAIL_MISMATCH",
-                "message", "When username is an email address, the email field must be null or the same as username"
+                "message", "用户名和邮箱必须一致"
             ));
         }
 
         return ResponseEntity.ok(Map.of(
             "requireEmailVerification", true,
             "username", username,
-            "message", "Please complete email verification to finish registration"
+            "message", "请完成邮箱验证以完成注册"
         ));
     }
 

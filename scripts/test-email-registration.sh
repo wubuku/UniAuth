@@ -1,14 +1,19 @@
 #!/bin/bash
 
 # 邮箱注册流程测试脚本
-# 功能：测试邮箱注册 + 验证码验证完整流程
+# 功能：测试邮箱注册 + 验证码验证 + 密码重置完整流程
 # 特点：自动从数据库查询验证码，无需用户手动输入
+
+# 自动检测脚本所在目录，支持从项目根目录运行
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "${SCRIPT_DIR}")"
 
 set -e
 
 BASE_URL="http://localhost:8082"
 EMAIL="xxx@example.com"
 PASSWORD="TestPassword123!"
+NEW_PASSWORD="NewPassword456!"
 DISPLAY_NAME="测试用户"
 
 # 数据库配置
@@ -17,6 +22,12 @@ DB_PORT="5432"
 DB_NAME="blacksheep_dev"
 DB_USER="postgres"
 DB_PASSWORD="123456"
+
+# 函数：从数据库查询验证码
+get_verification_code() {
+    local purpose="$1"
+    PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -t -c "SELECT verification_code FROM email_verification_codes WHERE email = '${EMAIL}' AND purpose = '${purpose}' AND is_used = false ORDER BY created_at DESC LIMIT 1;" 2>/dev/null | tr -d ' '
+}
 
 echo "=============================================="
 echo "  邮箱注册流程测试脚本 (自动查询验证码)"
@@ -54,17 +65,56 @@ echo "注册响应: ${REGISTER_RESPONSE}"
 echo ""
 
 # 解析响应
-REQUIRE_EMAIL_VERIFICATION=$(echo "${REGISTER_RESPONSE}" | grep -o '"requireEmailVerification":[^,}]*' | grep -o 'true\|false')
+REQUIRE_EMAIL_VERIFICATION=$(echo "${REGISTER_RESPONSE}" | grep -o '"requireEmailVerification":[^,}]*' | grep -o 'true\|false' || true)
 USERNAME_FROM_RESPONSE=$(echo "${REGISTER_RESPONSE}" | grep -o '"username":"[^"]*"' | head -1 | sed 's/"username":"//;s/"//')
-ERROR_CODE=$(echo "${REGISTER_RESPONSE}" | grep -o '"error":"[^"]*"' | sed 's/"error":"//;s/"//')
+ERROR_CODE=$(echo "${REGISTER_RESPONSE}" | grep -o '"error":"[^"]*"' | sed 's/"error":"//;s/"//' || true)
 
 if [ "${ERROR_CODE}" = "USERNAME_EXISTS" ]; then
   echo "❌ 用户已存在，无需重新注册"
   echo "   用户名: ${USERNAME_FROM_RESPONSE}"
   echo ""
   echo "=============================================="
-  echo "  测试完成 - 用户已存在"
+  echo "  用户已存在 - 测试密码重置"
   echo "=============================================="
+  echo ""
+  # 直接执行密码重置测试
+  echo "=============================================="
+  echo "Step 6: 请求密码重置验证码..."
+  echo "=============================================="
+  
+  FORGOT_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/forgot-password" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\": \"${EMAIL}\"}")
+  
+  echo "请求密码重置响应: ${FORGOT_RESPONSE}"
+  FORGOT_SUCCESS=$(echo "${FORGOT_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false' || true)
+  
+  if [ "${FORGOT_SUCCESS}" = "true" ]; then
+    echo "✅ 验证码已发送"
+    echo ""
+    echo "=============================================="
+    echo "Step 7: 从数据库查询验证码..."
+    echo "=============================================="
+    sleep 1
+    RESET_CODE=$(get_verification_code "PASSWORD_RESET")
+    if [ -n "${RESET_CODE}" ]; then
+      echo "✅ 获取验证码: ${RESET_CODE}"
+      echo ""
+      echo "=============================================="
+      echo "Step 8: 验证验证码并重置密码..."
+      echo "=============================================="
+      RESET_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/verify-reset-code" \
+        -H "Content-Type: application/json" \
+        -d "{\"email\": \"${EMAIL}\",\"verificationCode\": \"${RESET_CODE}\",\"newPassword\": \"${NEW_PASSWORD}\"}")
+      echo "密码重置响应: ${RESET_RESPONSE}"
+      RESET_SUCCESS=$(echo "${RESET_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false' || true)
+      if [ "${RESET_SUCCESS}" = "true" ]; then
+        echo "✅ 密码重置成功"
+      fi
+    fi
+  fi
+  echo ""
+  echo "测试脚本执行完毕"
   exit 0
 fi
 
@@ -97,7 +147,7 @@ if [ "${REQUIRE_EMAIL_VERIFICATION}" = "true" ]; then
     echo "✅ 验证码已发送成功"
     echo ""
 
-    # Step 4: 从数据库查询验证码
+    # Step 4: 从数据库查询验证码（调用函数）
     echo "=============================================="
     echo "Step 3: 从数据库查询验证码..."
     echo "=============================================="
@@ -106,8 +156,8 @@ if [ "${REQUIRE_EMAIL_VERIFICATION}" = "true" ]; then
     # 等待1秒确保数据已写入数据库
     sleep 1
 
-    # 查询验证码
-    VERIFICATION_CODE=$(PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -t -c "SELECT verification_code FROM email_verification_codes WHERE email = '${EMAIL}' AND purpose = 'REGISTRATION' AND is_used = false ORDER BY created_at DESC LIMIT 1;" 2>/dev/null | tr -d ' ')
+    # 调用函数查询验证码
+    VERIFICATION_CODE=$(get_verification_code "REGISTRATION")
 
     if [ -z "${VERIFICATION_CODE}" ]; then
       echo "❌ 未在数据库中找到验证码"
@@ -196,6 +246,88 @@ if [ "${REQUIRE_EMAIL_VERIFICATION}" = "true" ]; then
           echo "✅ 登录成功！"
         else
           echo "⚠️ 登录响应已收到，请检查"
+        fi
+        
+        # =============================================
+        # 追加：密码重置测试
+        # =============================================
+        echo ""
+        echo "╔════════════════════════════════════════════════╗"
+        echo "║         追加测试：密码重置                  ║"
+        echo "╚════════════════════════════════════════════════╝"
+        echo ""
+        
+        # Step 8: 请求密码重置验证码
+        echo "=============================================="
+        echo "Step 7: 请求密码重置验证码..."
+        echo "=============================================="
+        
+        FORGOT_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/forgot-password" \
+          -H "Content-Type: application/json" \
+          -d "{\"email\": \"${EMAIL}\"}")
+        
+        echo "请求密码重置响应: ${FORGOT_RESPONSE}"
+        FORGOT_SUCCESS=$(echo "${FORGOT_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false')
+        
+        if [ "${FORGOT_SUCCESS}" = "true" ]; then
+          echo "✅ 验证码已发送"
+          echo ""
+          
+          # Step 9: 查询密码重置验证码（调用函数）
+          echo "=============================================="
+          echo "Step 8: 从数据库查询验证码..."
+          echo "=============================================="
+          sleep 1
+          
+          # 调用函数查询验证码
+          RESET_CODE=$(get_verification_code "PASSWORD_RESET")
+          
+          if [ -n "${RESET_CODE}" ]; then
+            echo "✅ 获取验证码: ${RESET_CODE}"
+            echo ""
+            
+            # Step 10: 重置密码
+            echo "=============================================="
+            echo "Step 9: 验证验证码并重置密码..."
+            echo "=============================================="
+            
+            RESET_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/verify-reset-code" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"email\": \"${EMAIL}\",
+                \"verificationCode\": \"${RESET_CODE}\",
+                \"newPassword\": \"${NEW_PASSWORD}\"
+              }")
+            
+            echo "密码重置响应: ${RESET_RESPONSE}"
+            RESET_SUCCESS=$(echo "${RESET_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false')
+            
+            if [ "${RESET_SUCCESS}" = "true" ]; then
+              echo "✅ 密码重置成功"
+              echo ""
+              
+              # Step 11: 测试新密码登录
+              echo "=============================================="
+              echo "Step 10: 测试新密码登录..."
+              echo "=============================================="
+              
+              NEW_LOGIN_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/login?username=${EMAIL}&password=${NEW_PASSWORD}")
+              echo "新密码登录响应: ${NEW_LOGIN_RESPONSE}"
+              NEW_LOGIN_SUCCESS=$(echo "${NEW_LOGIN_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false')
+              
+              if [ "${NEW_LOGIN_SUCCESS}" = "true" ]; then
+                echo "✅ 新密码登录成功"
+              else
+                echo "❌ 新密码登录失败"
+              fi
+            else
+              echo "❌ 密码重置失败"
+            fi
+          else
+            echo "❌ 未找到验证码"
+          fi
+        else
+          echo "❌ 发送验证码失败"
         fi
       else
         echo "⚠️ 未获取到令牌，但验证响应显示成功"
