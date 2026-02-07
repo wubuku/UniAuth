@@ -203,12 +203,17 @@ if [ "${REGISTRATION_MODE}" = "simplified" ]; then
         echo "登录响应: ${LOGIN_RESPONSE}"
         echo ""
 
-        LOGIN_SUCCESS=$(echo "${LOGIN_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false' || true)
+        LOGIN_SUCCESS=$(echo "${LOGIN_RESPONSE}" | grep -o '"authenticated":[^,}]*' | grep -o 'true\|false' || true)
 
         if [ "${LOGIN_SUCCESS}" = "true" ]; then
           echo "✅ 登录成功！"
         else
-          echo "⚠️ 登录响应已收到，请检查"
+          # 检查是否包含 "Login successful" 消息
+          if echo "${LOGIN_RESPONSE}" | grep -q "Login successful"; then
+            echo "✅ 登录成功！"
+          else
+            echo "⚠️ 登录响应异常，请检查"
+          fi
         fi
       fi
     else
@@ -440,7 +445,7 @@ if [ "${REQUIRE_EMAIL_VERIFICATION}" = "true" ]; then
           if echo "${LOGIN_RESPONSE}" | grep -q "Login successful"; then
             echo "✅ 登录成功！"
           else
-            echo "⚠️ 登录响应已收到，请检查"
+            echo "⚠️ 登录响应异常，请检查"
           fi
         fi
         
