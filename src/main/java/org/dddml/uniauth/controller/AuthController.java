@@ -8,6 +8,8 @@ import org.dddml.uniauth.repository.UserRepository;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.service.JwtTokenService;
+import org.dddml.uniauth.service.EmailVerificationCodeService;
+import org.dddml.uniauth.entity.EmailVerificationCode;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -34,6 +36,8 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.Map;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.regex.Pattern;
 
 /**
@@ -52,6 +56,7 @@ public class AuthController {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
     private final EmailRegistrationProperties emailRegistrationProperties;
+    private final EmailVerificationCodeService verificationCodeService;
 
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
 
@@ -131,11 +136,80 @@ public class AuthController {
             ));
         }
 
+        String verificationCode = request.getVerificationCode();
+        if (verificationCode != null && !verificationCode.isEmpty()) {
+            return verifyAndRegisterWithCode(request, username);
+        }
+
         return ResponseEntity.ok(Map.of(
             "requireEmailVerification", true,
             "username", username,
             "message", "请完成邮箱验证以完成注册"
         ));
+    }
+
+    private ResponseEntity<?> verifyAndRegisterWithCode(RegisterRequest request, String email) {
+        var result = verificationCodeService.verifyCode(
+            email,
+            request.getVerificationCode(),
+            EmailVerificationCode.VerificationPurpose.REGISTRATION
+        );
+
+        if (!result.isSuccess()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false,
+                "error", "INVALID_CODE",
+                "message", result.getError(),
+                "remainingAttempts", result.getRemainingAttempts()
+            ));
+        }
+
+        Map<String, Object> metadata = result.getMetadata();
+        if (metadata == null) {
+            metadata = new HashMap<>();
+        }
+
+        String password = request.getPassword();
+        if (password != null && !password.isEmpty()) {
+            metadata.put("password", passwordEncoder.encode(password));
+        }
+
+        String displayName = request.getDisplayName();
+        if (displayName == null || displayName.isEmpty()) {
+            displayName = extractDisplayNameFromEmail(email);
+        }
+        metadata.put("displayName", displayName);
+
+        UserDto user = userService.registerWithEmailVerification(email, metadata);
+
+        verificationCodeService.markAsUsed(email, EmailVerificationCode.VerificationPurpose.REGISTRATION);
+
+        String accessToken = jwtTokenService.generateAccessToken(
+            user.getUsername(),
+            user.getEmail(),
+            user.getId(),
+            user.getAuthorities()
+        );
+
+        String refreshToken = jwtTokenService.generateRefreshToken(
+            user.getUsername(),
+            user.getId()
+        );
+
+        Map<String, Object> responseData = new LinkedHashMap<>();
+        responseData.put("user", user);
+        responseData.put("message", "Registration completed successfully");
+        responseData.put("accessToken", accessToken);
+        responseData.put("refreshToken", refreshToken);
+        responseData.put("accessTokenExpiresIn", 3600);
+        responseData.put("refreshTokenExpiresIn", 604800);
+        responseData.put("tokenType", "Bearer");
+
+        return ResponseEntity.ok(responseData);
+    }
+
+    private String extractDisplayNameFromEmail(String email) {
+        return email.split("@")[0];
     }
 
     /**
@@ -446,7 +520,8 @@ public class AuthController {
                 username,
                 username + "@example.com",
                 password,
-                "Test User"
+                "Test User",
+                null
             ));
 
             return ResponseEntity.ok(Map.of(

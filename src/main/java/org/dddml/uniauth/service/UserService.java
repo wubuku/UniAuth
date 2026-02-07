@@ -5,6 +5,7 @@ import org.dddml.uniauth.dto.UserDto;
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserRepository;
+import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -12,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -25,6 +27,7 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final LoginMethodService loginMethodService;
+    private final UserLoginMethodRepository loginMethodRepository;
 
     /**
      * 本地用户注册
@@ -68,6 +71,50 @@ public class UserService {
         userRepository.save(user);
 
         return convertToDto(user);
+    }
+
+    /**
+     * 使用邮箱验证码注册用户
+     */
+    public UserDto registerWithEmailVerification(String email, Map<String, Object> metadata) {
+        String passwordHash = (String) metadata.get("password");
+        String displayName = (String) metadata.getOrDefault("displayName", extractDisplayNameFromEmail(email));
+
+        if (loginMethodRepository.existsByLocalUsername(email)) {
+            throw new IllegalArgumentException("Email already registered");
+        }
+
+        UserEntity user = new UserEntity();
+        user.setId(UUID.randomUUID().toString());
+        user.setUsername(email);
+        user.setEmail(email);
+        user.setDisplayName(displayName);
+        Set<String> authorities = new HashSet<>();
+        authorities.add("ROLE_USER");
+        user.setAuthorities(authorities);
+        user.setEnabled(true);
+        user.setEmailVerified(true);
+
+        userRepository.save(user);
+
+        UserLoginMethod loginMethod = UserLoginMethod.builder()
+            .id(UUID.randomUUID().toString())
+            .user(user)
+            .authProvider(UserLoginMethod.AuthProvider.LOCAL)
+            .localUsername(email)
+            .localPasswordHash(passwordHash)
+            .isPrimary(true)
+            .isVerified(true)
+            .build();
+
+        user.addLoginMethod(loginMethod);
+        userRepository.save(user);
+
+        return convertToDto(user);
+    }
+
+    private String extractDisplayNameFromEmail(String email) {
+        return email.split("@")[0];
     }
 
     /**
