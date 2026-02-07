@@ -68,9 +68,7 @@ if [ "${REGISTRATION_MODE}" = "simplified" ]; then
     -H "Content-Type: application/json" \
     -d "{
       \"email\": \"${EMAIL}\",
-      \"purpose\": \"REGISTRATION\",
-      \"password\": \"${PASSWORD}\",
-      \"displayName\": \"${DISPLAY_NAME}\"
+      \"purpose\": \"REGISTRATION\"
     }")
 
   echo "发送验证码响应: ${SEND_CODE_RESPONSE}"
@@ -100,7 +98,7 @@ if [ "${REGISTRATION_MODE}" = "simplified" ]; then
     echo "✅ 已从数据库获取验证码: ${VERIFICATION_CODE}"
     echo ""
 
-    # Step 3: 使用简化流程注册（一次完成）
+    # Step 3: 使用简化流程注册（一次完成，验证码+密码）
     echo "=============================================="
     echo "Step 3: 简化流程 - 直接注册（带验证码）..."
     echo "=============================================="
@@ -402,7 +400,12 @@ if [ "${REQUIRE_EMAIL_VERIFICATION}" = "true" ]; then
         if [ "${LOGIN_SUCCESS}" = "true" ]; then
           echo "✅ 登录成功！"
         else
-          echo "⚠️ 登录响应已收到，请检查"
+          # 检查是否包含 "Login successful" 消息
+          if echo "${LOGIN_RESPONSE}" | grep -q "Login successful"; then
+            echo "✅ 登录成功！"
+          else
+            echo "⚠️ 登录响应已收到，请检查"
+          fi
         fi
         
         # =============================================
