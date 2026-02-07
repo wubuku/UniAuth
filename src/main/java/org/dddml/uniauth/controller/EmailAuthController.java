@@ -45,6 +45,31 @@ public class EmailAuthController {
         ));
     }
 
+    @PostMapping("/check-verification-code")
+    public ResponseEntity<Map<String, Object>> checkVerificationCode(@RequestBody Map<String, String> request) {
+        String email = request.get("email");
+        String code = request.get("verificationCode");
+        String purposeStr = request.getOrDefault("purpose", "REGISTRATION");
+
+        if (email == null || code == null) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "valid", false,
+                "status", "INVALID_REQUEST",
+                "message", "Email and verification code are required"
+            ));
+        }
+
+        var purpose = org.dddml.uniauth.entity.EmailVerificationCode.VerificationPurpose.valueOf(purposeStr);
+        var result = verificationCodeService.checkVerificationCode(email, code, purpose);
+
+        return ResponseEntity.ok(Map.of(
+            "valid", result.isValid(),
+            "status", result.getStatus(),
+            "message", result.getMessage(),
+            "remainingAttempts", result.getRemainingAttempts()
+        ));
+    }
+
     @PostMapping("/send-verification-code")
     @Transactional
     public ResponseEntity<Map<String, Object>> sendVerificationCode(@RequestBody Map<String, String> request) {

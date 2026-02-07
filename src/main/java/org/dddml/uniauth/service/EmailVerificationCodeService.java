@@ -86,6 +86,29 @@ public class EmailVerificationCodeService {
         sendVerificationCode(email, purpose, null);
     }
 
+    public CodeCheckResult checkVerificationCode(String email, String code, VerificationPurpose purpose) {
+        log.info("Checking verification code for email: {}, purpose: {}", email, purpose);
+
+        EmailVerificationCode codeRecord = verificationCodeRepository
+            .findFirstByEmailAndPurposeAndIsUsedFalseOrderByCreatedAtDesc(email, purpose)
+            .orElse(null);
+
+        if (codeRecord == null) {
+            return CodeCheckResult.notFound();
+        }
+
+        if (codeRecord.isExpired()) {
+            return CodeCheckResult.expired();
+        }
+
+        if (!codeRecord.getVerificationCode().equals(code)) {
+            int remainingAttempts = 5 - codeRecord.getRetryCount();
+            return CodeCheckResult.invalid(remainingAttempts);
+        }
+
+        return CodeCheckResult.valid();
+    }
+
     public VerificationResult verifyCode(String email, String code, VerificationPurpose purpose) {
         log.info("Verifying code for email: {}, purpose: {}", email, purpose);
 
@@ -249,6 +272,52 @@ public class EmailVerificationCodeService {
 
         public Map<String, Object> getMetadata() {
             return metadata;
+        }
+    }
+
+    public static class CodeCheckResult {
+        private final boolean valid;
+        private final String status;
+        private final String message;
+        private final int remainingAttempts;
+
+        private CodeCheckResult(boolean valid, String status, String message, int remainingAttempts) {
+            this.valid = valid;
+            this.status = status;
+            this.message = message;
+            this.remainingAttempts = remainingAttempts;
+        }
+
+        public static CodeCheckResult valid() {
+            return new CodeCheckResult(true, "VALID", "Verification code is valid", 0);
+        }
+
+        public static CodeCheckResult notFound() {
+            return new CodeCheckResult(false, "NOT_FOUND", "No pending verification code found", 0);
+        }
+
+        public static CodeCheckResult expired() {
+            return new CodeCheckResult(false, "EXPIRED", "Verification code has expired", 0);
+        }
+
+        public static CodeCheckResult invalid(int remainingAttempts) {
+            return new CodeCheckResult(false, "INVALID", "Invalid verification code", remainingAttempts);
+        }
+
+        public boolean isValid() {
+            return valid;
+        }
+
+        public String getStatus() {
+            return status;
+        }
+
+        public String getMessage() {
+            return message;
+        }
+
+        public int getRemainingAttempts() {
+            return remainingAttempts;
         }
     }
 }

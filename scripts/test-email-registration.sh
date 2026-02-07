@@ -98,6 +98,42 @@ if [ "${REGISTRATION_MODE}" = "simplified" ]; then
     echo "✅ 已从数据库获取验证码: ${VERIFICATION_CODE}"
     echo ""
 
+    # Step 2.5: 测试验证码检查接口（预检查验证码）
+    echo "=============================================="
+    echo "Step 2.5: 测试验证码检查接口..."
+    echo "=============================================="
+    echo ""
+
+    # 2.5.1: 测试错误的验证码
+    echo "  2.5.1: 测试错误验证码..."
+    WRONG_CODE_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/check-verification-code" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"email\": \"${EMAIL}\",
+        \"verificationCode\": \"000000\"
+      }")
+    echo "  错误验证码响应: ${WRONG_CODE_RESPONSE}"
+    echo ""
+
+    # 2.5.2: 测试正确的验证码
+    echo "  2.5.2: 测试正确验证码..."
+    CHECK_CODE_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/check-verification-code" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"email\": \"${EMAIL}\",
+        \"verificationCode\": \"${VERIFICATION_CODE}\"
+      }")
+    echo "  正确验证码响应: ${CHECK_CODE_RESPONSE}"
+    echo ""
+
+    CHECK_VALID=$(echo "${CHECK_CODE_RESPONSE}" | grep -o '"valid":[^,}]*' | grep -o 'true\|false')
+    if [ "${CHECK_VALID}" = "true" ]; then
+      echo "✅ 验证码检查接口工作正常"
+    else
+      echo "⚠️ 验证码检查接口返回异常"
+    fi
+    echo ""
+
     # Step 3: 使用简化流程注册（一次完成，验证码+密码）
     echo "=============================================="
     echo "Step 3: 简化流程 - 直接注册（带验证码）..."
