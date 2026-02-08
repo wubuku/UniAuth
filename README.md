@@ -388,6 +388,55 @@ SPRING_PROFILES_ACTIVE=test mvn spring-boot:run
 
 测试环境会自动执行 `schema-postgresql.sql` 脚本创建表结构，并加载测试数据初始化器。
 
+---
+
+更多测试说明：
+
+```bash
+# ----------------------------------------------------------------------
+# **给 AI 编程助手的重要提示**：
+# - 不要试图一次执行过长的 shell 命令！避免生成的错误的命令导致自己挂起。
+# - 宁愿每次执行一个相对简单的命令、多步执行！
+# ----------------------------------------------------------------------
+
+# 1. 构建前端（自动集成到Spring Boot）
+# cd repo-root
+./build-frontend.sh
+
+
+# 2. 启动Spring Boot应用
+mvn spring-boot:run
+
+# 设置环境变量运行测试环境
+# SPRING_PROFILES_ACTIVE=test mvn spring-boot:run
+
+# 如果服务已经在运行，可以杀死 808x 端口上的服务
+# lsof -i :8082 | grep LISTEN | awk '{print $2}' | xargs kill -9
+# lsof -i :8081 | grep LISTEN | awk '{print $2}' | xargs kill -9
+
+# 如果使用环境变量文件，可以使用以下命令：
+# export $(cat .env | grep -v '^#' | xargs) && mvn spring-boot:run
+
+# 指定后端服务端口号运行：
+# export $(cat .env | grep -v '^#' | xargs) && mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8082"
+# 也可以通过设置环境变量指定端口：
+# export SERVER_PORT=8082
+
+# ----------------------------------------------------------------------
+# **给 AI 助手的话**：
+# 你应该使用后台运行的方式启动服务，避免自己挂起：
+# cd /PATH/TO/UniAuth && nohup bash -c 'export $(cat .env 2>/dev/null | grep -v "^#" | xargs) && mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8082"' > /tmp/spring-boot.log 2>&1 & echo "PID: $!"
+#
+# 在必要的时候，使用 psql 检查数据库。数据库连接信息见：`src/main/resources/application-test.yml`
+# 示例查询：
+# PGPASSWORD="123456" psql -h localhost -p 5432 -U postgres -d your_database -t -c "SELECT count(*) FROM users;"
+# ----------------------------------------------------------------------
+
+# **提示**：
+# - ✅ 外部隧道域名配置： `https://api.u2511175.nyat.app:55139`
+# - 目前各平台 SSO 登录配置都使用这个域名作为回调地址。
+```
+
 ### 步骤五：验证安装
 
 应用启动成功后，通过以下方式验证系统正常运行：
