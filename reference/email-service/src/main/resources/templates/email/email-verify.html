@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Verification</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .header .icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+        .content {
+            padding: 30px;
+            background-color: white;
+        }
+        .greeting {
+            font-size: 18px;
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .message {
+            color: #666;
+            margin-bottom: 25px;
+            line-height: 1.8;
+        }
+        .code-container {
+            text-align: center;
+            margin: 30px 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 10px;
+        }
+        .code-label {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        .code {
+            font-size: 36px;
+            font-weight: bold;
+            color: #667eea;
+            letter-spacing: 8px;
+            font-family: 'Courier New', monospace;
+        }
+        .expiry {
+            font-size: 14px;
+            color: #999;
+            margin-top: 15px;
+        }
+        .verify-button {
+            display: block;
+            width: 100%;
+            max-width: 300px;
+            margin: 25px auto;
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 25px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 16px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .verify-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        .info-box {
+            background-color: #e8f4fd;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 5px 5px 0;
+        }
+        .info-box p {
+            margin: 5px 0;
+            color: #555;
+            font-size: 14px;
+        }
+        .warning {
+            background-color: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            font-size: 14px;
+        }
+        .footer {
+            text-align: center;
+            padding: 20px;
+            font-size: 12px;
+            color: #999;
+            background-color: #f9f9f9;
+            border-top: 1px solid #eee;
+        }
+        .footer p {
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="icon">📧</div>
+            <h1>Verify Your Email Address</h1>
+        </div>
+        <div class="content">
+            <div class="greeting">Hi <strong th:text="${username}">User</strong>,</div>
+            
+            <div class="message">
+                <p>Thank you for signing up! To complete your registration, please verify your email address using the verification code below.</p>
+                <p>This helps us ensure that the email address you provided is valid and accessible by you.</p>
+            </div>
+            
+            <div class="code-container">
+                <div class="code-label">Your Verification Code</div>
+                <div class="code" th:text="${verificationCode}">123456</div>
+                <div class="expiry">⏰ This code will expire in <span th:text="${expiryMinutes}">10</span> minutes</div>
+            </div>
+            
+            <a th:href="${verifyUrl}" class="verify-button">Verify Email Address</a>
+            
+            <div class="info-box">
+                <p><strong>📝 What to do:</strong></p>
+                <p>1. Copy the verification code above</p>
+                <p>2. Go to the registration page</p>
+                <p>3. Enter the code to complete verification</p>
+            </div>
+            
+            <div class="warning">
+                <strong>⚠️ Important:</strong> If you didn't create an account with us, please ignore this email or contact our support team. This verification code will expire automatically.
+            </div>
+        </div>
+        <div class="footer">
+            <p>🔒 This is an automated message for security purposes.</p>
+            <p>Please do not reply directly to this email.</p>
+            <p>© 2024 <span th:text="${siteName}">Email Service</span>. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>

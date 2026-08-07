@@ -52,6 +52,25 @@ Authorization Server 协议已经完整接通。
 4. `UserService.getOrCreateOAuthUser` 查找、创建或绑定登录方式。
 5. 自定义 JWT 被签发，随后返回 JSON 或重定向到配置的前端地址。
 
+### 邮箱注册、密码登录与密码重置
+
+1. 邮箱地址注册先由 `EmailAuthController` 请求验证码。
+2. `EmailVerificationCodeService` 生成验证码，通过 `EmailService` 调用外部邮件服务，
+   并把 challenge 保存到 `email_verification_codes`。
+3. 用户提交验证码后，后端创建用户及 `LOCAL` 登录方式并签发 JWT。
+4. 已建立账户后的登录走普通本地用户名/密码流程，邮箱只是 `local_username`，
+   不会在每次登录时发送验证码。
+5. 密码重置复用同一邮件服务边界和验证码表，purpose 为 `PASSWORD_RESET`。
+
+UniAuth 仓库内的 `RestTemplateEmailServiceImpl` 只是 HTTP 客户端，不直接连接 SMTP
+或邮件供应商。外部服务必须提供 health、模板邮件端点、模板和约定的 JSON 响应；
+详细契约见 [配置基线](CONFIGURATION.md#邮件服务依赖)。虽然
+`VerificationPurpose.LOGIN` 和前端联合类型仍存在，当前没有受支持的邮箱验证码
+无密码登录 endpoint。
+
+当前发送流程只把外部 `success=true` 解释为“已接受/入队”，不证明最终送达。
+外部服务不可用或拒绝请求时，代码仍可能保存验证码并返回发送成功，这是待加固行为。
+
 ### API 认证
 
 1. `ResourceServerConfig` 从 `Authorization: Bearer` 或 `accessToken` cookie 取 token。
@@ -100,8 +119,9 @@ Authorization Server 协议已经完整接通。
 - 不能移除最后一个登录方式。
 - 每个用户预期只有一个 primary 登录方式。
 
-这些约束一部分由 service 检查，一部分由数据库唯一索引保证；顺序行为已有
-PostgreSQL 集成测试，并发场景仍是下一轮 P0 覆盖缺口。
+这些约束一部分由 service 检查，一部分由数据库约束保证。顺序行为、并发 provider
+绑定和并发 set-primary 已有 PostgreSQL 集成测试；删除与 set-primary 等组合并发
+仍可能留下零登录方式或零 primary，归下一轮 P0 加固。
 
 ## JWT 模型
 
@@ -137,8 +157,10 @@ access token 默认 1 小时，refresh token 默认 7 天。
 当前问题：
 
 - 演示数据默认关闭；显式启用时只允许 disposable test/demo 数据库并只 upsert 受管账户。
-- Flyway 当前只有 dev-derived V1；结构加固必须通过 V2+，不得修改 V1。
-- V1 保留了实际 dev 中的 nullability、时间类型和冗余索引，H1.4 尚未实施。
+- Flyway 当前为 dev-derived V1 baseline + V2 登录方式加固；不得修改已发布的 V1/V2。
+- V2 已对齐登录方式的时区/nullability，并增加 provider/行形状与 primary 唯一约束；
+  其余实体、索引，以及删除与 set-primary 等写操作的组合并发不变量仍归后续
+  H1.4 切片。
 - Spring Session 表由 Flyway V1 管理，框架自动建表关闭。
 - `blacksheep_dev` 已通过只读 baseline rehearsal，尚未执行 baseline apply。
 

@@ -101,6 +101,14 @@ db_value() {
         -c "$sql"
 }
 
+expect_db_rejection() {
+    local sql="$1"
+    local description="$2"
+    if db_value "$sql" >/dev/null 2>&1; then
+        fail "$description"
+    fi
+}
+
 post_json() {
     local path="$1"
     local payload="$2"
@@ -261,6 +269,11 @@ echo "1/13 Verify Flyway-owned PostgreSQL startup"
 ")" = "1" ] || fail "Flyway V1 was not recorded as a successful SQL migration"
 [ "$(db_value "
     SELECT count(*)
+    FROM uniauth_flyway_schema_history
+    WHERE version = '2' AND type = 'SQL' AND success = true;
+")" = "1" ] || fail "Flyway V2 was not recorded as a successful SQL migration"
+[ "$(db_value "
+    SELECT count(*)
     FROM information_schema.tables
     WHERE table_schema = 'public'
       AND table_name = ANY (ARRAY[
@@ -276,6 +289,68 @@ echo "1/13 Verify Flyway-owned PostgreSQL startup"
 ")" = "8" ] || fail "Flyway did not create all eight managed tables"
 [ "$(db_value "SELECT to_regclass('public.flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "the default Flyway history table was unexpectedly created"
+[ "$(db_value "
+    SELECT data_type
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'user_login_methods'
+      AND column_name = 'linked_at';
+")" = "timestamp with time zone" ] \
+    || fail "Flyway V2 did not migrate linked_at to timestamp with time zone"
+[ "$(db_value "SELECT to_regclass('public.uk_login_methods_one_primary');")" \
+    = "uk_login_methods_one_primary" ] \
+    || fail "Flyway V2 did not create the primary login-method unique index"
+
+expect_db_rejection "
+    BEGIN;
+    INSERT INTO users (id, username, email)
+    VALUES (
+        '00000000-0000-0000-0000-000000000101',
+        'shell-primary-guard',
+        'shell-primary-guard@example.invalid'
+    );
+    INSERT INTO user_login_methods (
+        id, user_id, auth_provider, local_username, is_primary, is_verified
+    ) VALUES (
+        '00000000-0000-0000-0000-000000000102',
+        '00000000-0000-0000-0000-000000000101',
+        'LOCAL',
+        'shell-primary-guard',
+        true,
+        false
+    );
+    INSERT INTO user_login_methods (
+        id, user_id, auth_provider, provider_user_id, is_primary, is_verified
+    ) VALUES (
+        '00000000-0000-0000-0000-000000000103',
+        '00000000-0000-0000-0000-000000000101',
+        'GITHUB',
+        'shell-primary-guard',
+        true,
+        true
+    );
+    COMMIT;
+" "database accepted two primary login methods for one user"
+
+expect_db_rejection "
+    BEGIN;
+    INSERT INTO users (id, username, email)
+    VALUES (
+        '00000000-0000-0000-0000-000000000111',
+        'shell-shape-guard',
+        'shell-shape-guard@example.invalid'
+    );
+    INSERT INTO user_login_methods (
+        id, user_id, auth_provider, is_primary, is_verified
+    ) VALUES (
+        '00000000-0000-0000-0000-000000000112',
+        '00000000-0000-0000-0000-000000000111',
+        'GOOGLE',
+        true,
+        true
+    );
+    COMMIT;
+" "database accepted an invalid provider login-method shape"
 
 echo "2/13 Verify fail-closed HTTP security boundaries"
 [ "$(request_status GET /api/user)" = "401" ] \
@@ -397,8 +472,8 @@ wait_for_application
 [ "$(db_value "
     SELECT count(*)
     FROM uniauth_flyway_schema_history
-    WHERE version = '1' AND type = 'SQL' AND success = true;
-")" = "1" ] || fail "application restart changed the Flyway V1 history"
+    WHERE version IN ('1', '2') AND type = 'SQL' AND success = true;
+")" = "2" ] || fail "application restart changed the Flyway migration history"
 [ "$(db_value "SELECT count(*) FROM users WHERE id = '$local_user_id';")" = "1" ] \
     || fail "application restart lost the registered user"
 restarted_user="$(
@@ -689,7 +764,7 @@ grep -qi 'set-cookie: refreshToken=.*Max-Age=0' "$logout_headers" \
 echo "13/13 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
     || fail "the E2E harness connected to an unexpected database"
-[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "1" ] \
+[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "2" ] \
     || fail "Flyway history contained unexpected rows after two application starts"
 [ "$(db_value "SELECT count(*) FROM web3_nonces;")" = "0" ] \
     || fail "consumed Web3 nonces remained in the database"

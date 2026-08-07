@@ -3,6 +3,9 @@ package org.dddml.uniauth.repository;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.entity.UserLoginMethod.AuthProvider;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -46,4 +49,31 @@ public interface UserLoginMethodRepository extends JpaRepository<UserLoginMethod
      * 检查本地用户名是否已被使用
      */
     boolean existsByLocalUsername(String localUsername);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+                UPDATE user_login_methods
+                SET is_primary = false
+                WHERE user_id = :userId
+                  AND is_primary IS TRUE
+                """,
+        nativeQuery = true
+    )
+    int clearPrimaryForUser(@Param("userId") String userId);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+                UPDATE user_login_methods
+                SET is_primary = true
+                WHERE id = :loginMethodId
+                  AND user_id = :userId
+                """,
+        nativeQuery = true
+    )
+    int setPrimaryForUser(
+        @Param("userId") String userId,
+        @Param("loginMethodId") String loginMethodId
+    );
 }

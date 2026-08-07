@@ -116,16 +116,16 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 
 ## 2026-08-07 当前加固门禁
 
-> 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3 和本轮修复触达路径；
+> 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3、Batch A 和 Batch B1 触达路径；
 > 不代表 H1.4-H8、完整认证正确性或生产就绪。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 63 tests，0 failures/errors/skips |
+| `mvn test` | 通过 | 74 tests，0 failures/errors/skips |
 | `scripts/test-http-e2e.sh` | 通过 | 13/13；真实应用、PostgreSQL、重启、JWT、Web3、email、登录方式 |
-| `scripts/test-flyway-baseline-guard.sh` | 通过 | 7/7；exact schema 与六类拒绝/清理路径 |
-| Flyway integration | 通过 | fresh V1、existing-schema baseline、Hibernate validate、Session、checksum/failure recovery |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 10/10；exact schema、V2 初始/apply 前数据预检、post-baseline 失败恢复与其他拒绝/清理路径 |
+| Flyway integration | 通过 | fresh V1→V2、existing baseline V1→V2、Hibernate validate、Session、checksum/failure recovery |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
@@ -136,11 +136,12 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | Python | 通过 | 9/9 离线 RSA/JWKS/Flask tests |
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 | Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
+| 固定范围收敛检查 | 通过 | 完整门禁后连续 3/3 轮无问题、无修改 |
 
 Shell HTTP E2E 使用 `test` profile、disposable PostgreSQL、临时 RSA key、dummy OAuth
 和不可达邮件服务地址。它验证：
 
-- Flyway V1 和自定义 history table。
+- Flyway V1/V2 和自定义 history table。
 - 应用重启后的 migration 幂等和用户数据保留。
 - `/api/auth/**` allowlist 与资源服务器拒绝边界。
 - 本地注册/登录、JWT claims、cookie/header 优先级和持久化。
@@ -152,8 +153,21 @@ Shell HTTP E2E 使用 `test` profile、disposable PostgreSQL、临时 RSA key、
 
 未执行真实 OAuth provider、真实邮件或共享开发库写操作。
 
+邮件相关门禁只验证 UniAuth 内部状态机和 HTTP 边界，不验证真实投递：
+
+- `EmailAuthenticationIntegrationTest` 使用 mock `EmailService`。
+- Shell HTTP E2E 把邮件服务地址指向不可达端口，并从 disposable PostgreSQL 读取验证码。
+- 外部服务返回 `success=true` 也只表示接受或入队，不证明收件箱已收到邮件。
+
+因此，真实邮箱能力需要单独的显式 opt-in 集成测试，至少覆盖外部服务可达、模板渲染、
+SMTP/供应商接受和实际收件；该测试不得使用共享用户邮箱或进入默认无副作用门禁。
+
 Flyway baseline guard 使用 disposable PostgreSQL 16。错误 major 测试通过离线
 `psql` fixture 注入 PostgreSQL 15 版本号，不要求下载或支持 `postgres:15` 镜像。
+apply 竞态 fixture 会在 rehearsal 后改变 disposable 源数据，确认二次预检在创建
+Flyway history 前失败关闭。第二个 fixture 在 baseline 已创建后注入不兼容数据，
+确认 V2 拒绝迁移，并且脚本只在受管 schema 未变、history 为 baseline-only 时移除
+不完整 history，恢复为可重新 rehearsal 的状态。
 
 前端依赖已把 Axios、Ethers、Vite、Rollup、PostCSS 及相关传递依赖升级到修复版本。
 审计仍报告 2 个 React Router moderate advisories；当前代码只使用客户端
@@ -267,7 +281,8 @@ tests、文档链接和 patch hygiene。统一入口通过 `NPM_REGISTRY` 固定
 
 - 四条 SecurityFilterChain 的 matcher 和权限边界。
 - cookie Secure/HttpOnly/SameSite 在 profile 间一致。
-- 多登录方式唯一性、最后方式保护和 primary 并发不变量。
+- 多登录方式 bind/set-primary 并发不变量保持覆盖；补齐删除与 set-primary 等组合
+  并发下的“至少一个登录方式且恰好一个 primary”保护。
 - Web3 nonce 一次性、过期、消息绑定和覆盖语义。
 - `/api/user` 的 provider 和 claim 映射。
 - Python 资源服务器的 `sub`/`username` 契约。

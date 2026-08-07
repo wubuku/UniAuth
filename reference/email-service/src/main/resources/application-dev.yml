@@ -1,0 +1,21 @@
+spring:
+  config:
+    activate:
+      on-profile: dev
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+
+app:
+  mail:
+    rate-limit:
+      max-per-minute: ${EMAIL_RATE_LIMIT_PER_MINUTE:10}
+    recovery:
+      scan-interval-minutes: ${EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES:2}
+
+logging:
+  level:
+    org.dddml.email: DEBUG

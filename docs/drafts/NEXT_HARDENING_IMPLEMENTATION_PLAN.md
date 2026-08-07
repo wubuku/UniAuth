@@ -1,9 +1,9 @@
 # UniAuth 下一轮加固实施计划
 
-> 状态：Batch A 已实施并通过完整门禁；Batch B 尚未开始
+> 状态：Batch A 与 Batch B1 已实施，通过完整门禁及连续三轮无修改检查
 > 事实基线：2026-08-07
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
-> 前置成果：PostgreSQL-only、Flyway V1、Testcontainers、Java/Shell/Playwright/Python
+> 前置成果：PostgreSQL-only、Flyway V1 baseline + V2、Testcontainers、Java/Shell/Playwright/Python
 > 基础门禁已建立
 
 ## 1. 目标
@@ -27,12 +27,12 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 |------|----------|
 | 数据库 | `dev`、`test`、`prod` 只支持显式 PostgreSQL |
 | Schema owner | Flyway，runtime location 为 `db/migration/postgresql` |
-| 当前 migration | `V1__baseline_uniauth_auth_schema.sql` |
+| 当前 migration | `V1__baseline_uniauth_auth_schema.sql` + `V2__harden_login_method_invariants.sql` |
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
-| Java | `mvn clean compile test-compile` 和 63 tests 已通过 |
+| Java | `mvn clean compile test-compile` 和 74 tests 已通过 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 13/13 已通过 |
-| Flyway guard | `scripts/test-flyway-baseline-guard.sh` 7/7 已通过 |
+| Flyway guard | `scripts/test-flyway-baseline-guard.sh` 10/10 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、18 个 Mock Playwright tests 已通过 |
 | Python | 9 个离线 JWT/JWKS/Flask tests 已通过 |
 | 统一入口 | `scripts/verify.sh` 本地通过；CI 使用同一入口 |
@@ -50,8 +50,8 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 
 ### 3.1 已有后端覆盖
 
-- fresh PostgreSQL 执行 Flyway V1，Hibernate validate。
-- 既有 V1 schema baseline 后应用启动。
+- fresh PostgreSQL 执行 Flyway V1→V2，Hibernate validate。
+- 既有 V1 schema baseline 后执行 V2 并启动应用。
 - Spring Session JDBC create/read/delete。
 - 本地注册、登录、错误密码、refresh、access/refresh type confusion。
 - `/api/user`、登录方式查询、设置 primary、删除、添加本地方式。
@@ -93,7 +93,7 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | JWT | issuer、audience、type、expiry、tamper、missing user、header/cookie 冲突 |
 | Refresh/logout | 并发 refresh、旧 refresh replay、logout 后撤销、introspection 与资源服务器一致性 |
 | CORS/CSRF/cookie | allow/deny origin、preflight、cookie Secure/SameSite、cookie 认证写请求 |
-| 登录方式 | 并发 bind、并发 set-primary、并发删除最后两个方式、跨用户所有权 |
+| 登录方式 | 并发 bind、并发 set-primary、删除与 primary 切换组合竞态、跨用户所有权 |
 | Email | 无效 purpose/输入、重试耗尽、频控并发、投递失败、事务失败、重复 pending code |
 | Web3 | domain/address/URI/nonce/chain/expiry 篡改、并发 replay、nonce 覆盖、过期清理 |
 | Flyway | checksum 变化、缺表、额外 auth 结构、错误 history、失败 migration 恢复 |
@@ -230,52 +230,143 @@ Playwright 继续使用 route/mock 和进程环境变量，不写持久 `.env.lo
 
 以下目标没有被误写成“已修复”，继续归属后续批次：
 
-- 登录方式并发 bind/set-primary/delete 不变量与 PostgreSQL V2+ 约束：Batch B。
+- 登录方式删除与 set-primary 等组合并发不变量：Batch B2。
 - token blacklist、refresh replay、logout 撤销、cookie/CSRF/CORS/redirect：Batch C。
 - Email 投递失败/并发状态机和完整 SIWE 字段绑定/nonce 原子消费：Batch D。
 - Python access/refresh type confusion、跨语言固定 token；前端 logout 只清理应用存储、
   Web3 bind 和 StrictMode 单次 callback：与 Batch C/D 修复同步补齐。
 
-### Batch B：PostgreSQL V2+ schema、并发不变量与安全审计基座
+### Batch B：PostgreSQL V2+ schema 与并发不变量
 
 Batch A 通过后才开始。
 
-#### B1. 数据预检
+#### Batch B1：登录方式约束与 bind/set-primary 并发
 
-在任何 V2 migration 前，对目标库执行只读报告：
+本切片只处理可通过 PostgreSQL 约束、显式条件更新和稳定冲突映射可靠保证的
+登录方式不变量，不把全部 Batch B 风险一次混入。
+
+##### B1.1 已完成的数据预检
+
+2026-08-07 对 `blacksheep_dev` 执行了只读查询。数据库为 PostgreSQL 16.8、
+`TimeZone=Etc/UTC`，尚无 `uniauth_flyway_schema_history`。结果：
+
+- 无缺失登录方式或 primary 数量不为 1 的用户。
+- 无重复 `(user_id, auth_provider)`、`(auth_provider, provider_user_id)` 或
+  `local_username`。
+- 无未知 provider、登录方式必需字段 null、无效 LOCAL/provider 行形状。
+- 当前没有 `LOCAL + local_password_hash IS NULL` 记录，但代码允许邮箱验证码绑定
+  创建这种 passwordless LOCAL 记录；V2 不得错误要求所有 LOCAL 行都有密码哈希。
+- 按“未使用且未过期”统计没有重复 email challenge。该结果不足以定义可靠的
+  challenge 唯一性和清理策略，因此 email 约束仍归 Batch D。
+
+该查询只证明当前数据可进入 B1，不代替 migration 内的 fail-fast preflight。
+不得对共享 dev 库执行 baseline 或 migration apply。
+
+##### B1.2 固定实施范围
+
+1. 新增不可修改的 Flyway V2：
+   - migration 开始时检查 provider、必需字段、行形状和重复 primary。
+   - `user_id`、`auth_provider`、`is_primary`、`is_verified`、`linked_at` 与实体
+     nullability/default 对齐。
+   - `linked_at`、`last_used_at` 从无时区列按已验证的 UTC 语义迁移为
+     `TIMESTAMP WITH TIME ZONE`。
+   - 增加 provider 枚举 check、LOCAL/provider 行形状 check。
+   - 增加每用户至多一个 primary 的 partial unique index。
+2. 修正 `UserLoginMethod` 的 `user` 与时间列映射。
+3. bind 继续以数据库唯一约束为最终并发裁决：
+   - 保留快速存在性检查以提供常见路径错误。
+   - 强制 flush 捕获并发唯一冲突。
+   - 按约束名映射为稳定业务错误，不返回 SQL 或数据库细节。
+4. set-primary 改为显式数据库更新：
+   - 校验目标属于当前用户。
+   - 清除旧 primary 后设置目标，并在返回前 flush。
+   - 并发竞争允许一个请求收到稳定的可重试冲突；最终必须恰好一个 primary。
+5. 顺序删除 primary 必须兼容新的唯一索引；先清除旧 primary、选定替代项，再删除。
+6. 测试先行覆盖 fresh V1 -> V2、existing baseline V1 -> V2、坏数据阻断、
+   schema 约束、并发 bind、并发 set-primary 和 HTTP 错误契约。
+
+##### B1.3 明确非目标
+
+- 删除与其他登录方式变更并发时产生零登录方式或零 primary 的 write-skew 不在
+  B1 宣称修复；该问题需要单独选择非悲观锁方案并归入 Batch B2。
+- 不增加 JPA `@Version`，不默认使用 `SELECT FOR UPDATE` 或其他悲观锁。
+- 不增加 email challenge partial unique index。
+- 不创建安全审计/outbox 表。
+- 不修改 token、cookie、CORS、CSRF、OAuth2 redirect、邮件或 SIWE 功能语义。
+- 不对 `blacksheep_dev` 或其他共享数据库执行写操作。
+
+##### Batch B1 退出条件
+
+- fresh 数据库从 V1 升级到 V2，existing schema baseline V1 后升级到 V2。
+- migration 对重复 primary、未知 provider、null 必需字段和非法行形状 fail closed。
+- PostgreSQL 直接拒绝同一用户两个 primary 和非法登录方式行。
+- 同一 subject/同一 provider 的并发 bind 只有一个持久结果，失败方获得稳定业务错误。
+- 并发 set-primary 后恰好一个 primary；任何失败是稳定、可重试的业务冲突而非 500
+  或数据库错误泄漏。
+- 原有登录方式 HTTP 生命周期、Shell E2E、前端和跨语言门禁无回归。
+- 完整统一门禁通过后，连续三轮固定范围无修改检查通过。
+
+##### Batch B1 实际结果
+
+2026-08-07 已完成实现与完整硬门槛：
+
+- 新增不可修改的 Flyway V2，fresh V1→V2 与 existing baseline V1→V2 均通过。
+- migration 对 primary 数量、null runtime 字段、未知 provider 和非法行形状 fail closed；
+  `linked_at`/`last_used_at` 已迁移为 `TIMESTAMP WITH TIME ZONE`。
+- PostgreSQL 已直接约束 provider/行形状和每用户至多一个 primary，同时保留
+  passwordless LOCAL 合法形状。
+- OAuth2 bind 使用数据库唯一约束作为并发裁决；同一 subject 跨用户竞争、同一用户
+  同一 provider 的不同 subject 竞争，以及同一用户同一 subject 重放均返回真实且稳定
+  的业务错误。
+- set-primary 使用显式数据库更新；并发测试得到一个 `200`、一个稳定 `409`，
+  最终恰好一个 primary，未使用悲观锁或 JPA `@Version`。
+- Shell HTTP E2E 13/13、Flyway baseline guard 10/10、Java 74 tests、
+  Mock Playwright 18/18、Python 9/9 和统一验证入口全部通过。
+- `blacksheep_dev` 只执行过只读数据/结构预检，未 baseline、未 apply、未写入。
+- baseline apply 在 rehearsal 后重新执行只读数据预检；竞态 fixture 已证明数据变化时
+  会在创建 Flyway history 前失败关闭。
+- 如果数据在 baseline 创建后、V2 migrate 前变化，V2 仍会 fail closed；脚本仅在
+  受管 schema 未变且 history 为 baseline-only 时移除不完整 history。独立竞态
+  fixture 已覆盖该失败恢复路径。
+
+完整门禁后已连续完成三轮固定范围检查，期间无问题、无修改，本批退出条件满足。
+删除与 set-primary 等组合并发的 write-skew 未在 B1 中修复，继续归 Batch B2。
+
+#### Batch B2：登录方式删除并发保护与后续 schema 对齐
+
+##### B2.1 数据预检
+
+在任何后续 migration 前，对目标库执行只读报告：
 
 - 零/多个 primary 的用户。
 - 无登录方式用户。
-- 重复 `(user_id, auth_provider)`。
-- 重复 `(auth_provider, provider_user_id)`。
 - 重复规范化 email/local username。
 - 同一 `(email,purpose)` 多条未使用 code。
-- entity 声明非空但数据库为 null 的记录。
-- 无效 enum、超长 ID/subject、混合 LOCAL/provider 字段。
+- 其余 entity 声明非空但数据库为 null 的记录。
+- 超长 ID/subject 和未映射 Web3 字段。
 
 发现冲突时停止 migration。自动修复规则必须单独评审，不能依赖查询返回顺序。
 
-#### B2. V2+ migration
+##### B2.2 后续 migration
 
-1. 增加每用户至多一个 primary 的 partial unique index。
-2. 对齐 `users`、`user_login_methods`、`web3_nonces`、
-   `email_verification_codes`、`token_blacklist` 的 nullability/default。
-3. 增加 login-method shape checks。
-4. 将 Java `Instant` 对应列迁移为 `TIMESTAMP WITH TIME ZONE`，保留
+1. 对齐 `users`、`web3_nonces`、`email_verification_codes`、`token_blacklist`
+   的 nullability/default。
+2. 将其余 Java `Instant` 对应列迁移为 `TIMESTAMP WITH TIME ZONE`，保留
    `LocalDateTime` 对应无时区列。
-5. 为 email code 查询和过期清理增加索引。
-6. 删除确认冗余的 users/blacklist 索引，但保留唯一性。
-7. 处理 V1 中未映射的 Web3 列时采用 expand/contract，不在同一版本直接破坏旧代码。
+3. 为 email code 查询和过期清理增加索引。
+4. 删除确认冗余的 users/blacklist 索引，但保留唯一性。
+5. 处理 V1 中未映射的 Web3 列时采用 expand/contract，不在同一版本直接破坏旧代码。
 
-#### B3. 并发策略
+##### B2.3 并发策略
 
 - 优先数据库唯一约束、条件更新和 CAS。
 - 不把悲观锁作为默认方案。
 - 不为了形式引入 JPA `@Version`。
-- set-primary 和删除最后登录方式必须在并发测试下保持业务不变量。
+- 删除与 set-primary 等组合并发必须在测试下保持“至少一个登录方式且恰好一个
+  primary”的业务不变量。
 - 唯一冲突必须映射为稳定业务错误，不返回数据库细节。
 
-#### B4. 最小持久安全审计基座
+#### Batch B3：最小持久安全审计基座
 
 本工作只建立内部安全控制基础，不增加用户可见审计功能：
 
@@ -291,7 +382,7 @@ Batch A 通过后才开始。
 5. 定义 runtime 与 retention 权限/运行手册；自动化测试验证业务角色不能更新或任意删除
    已提交事件，retention 路径不能修改事件正文。
 
-#### Batch B 退出条件
+#### Batch B2/B3 退出条件
 
 - fresh V1 -> 最新 V2+ 和 existing baseline V1 -> 最新 V2+ 均通过。
 - migration 重复执行、失败恢复和 forward-fix 演练通过。

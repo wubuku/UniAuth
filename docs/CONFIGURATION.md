@@ -17,6 +17,90 @@
 `8080`、`8082`、`5001` 和历史隧道域名仍散落在旧文档、脚本或部署示例中。
 除非文件明确覆盖端口，否则它们不是当前默认值。
 
+## 邮件服务依赖
+
+邮箱地址注册验证和密码重置需要一个独立邮件发送服务。UniAuth 当前没有 SMTP、
+JavaMailSender 或邮件供应商 SDK 实现；`RestTemplateEmailServiceImpl` 只是调用外部
+服务的 HTTP 适配器。已有的独立 email-service 实现不属于本仓库，因此只克隆或部署
+UniAuth 不会自动获得真实邮件投递能力。
+
+这个依赖不是 Spring 进程的启动前置条件，但它是以下用户流程的运行前置条件：
+
+| 流程 | 是否需要邮件服务 |
+|------|------------------|
+| 普通用户名/密码登录 | 否 |
+| 已验证账户的邮箱加密码登录 | 否 |
+| 邮箱地址首次注册和所有权验证 | 是 |
+| 忘记密码和密码重置 | 是 |
+| 邮箱验证码无密码登录 | 当前不支持；没有对应 endpoint |
+
+服务地址由 `app.email.service.url` 控制，`application.yml` 的显式环境变量入口是
+`EMAIL_SERVICE_URL`，默认值为 `http://localhost:8095`。Spring 标准环境变量
+`APP_EMAIL_SERVICE_URL` 也可覆盖同一属性，Shell E2E 使用该形式指向不可达测试地址。
+
+这里的依赖是协议契约，不只是一个 host/port。外部 RESTful 服务必须满足：
+
+| 调用 | UniAuth 的要求 |
+|------|----------------|
+| `GET /api/email/health` | 返回 2xx JSON，且 `status` 精确为 `UP` |
+| `POST /api/email/template` | 接收 `Content-Type: application/json` |
+| 模板 | 提供 `email/email-verify` 和 `email/password-reset` |
+| 模板变量 | 支持 `username`、`verificationCode`、`expiryMinutes`；请求还会同时发送 `code` |
+| 成功响应 | 返回 2xx JSON `success=true`；UniAuth 将其解释为 `QUEUED` |
+| 服务鉴权 | 当前客户端不发送 API key、Bearer token 或其他服务鉴权 header |
+
+health 响应的最小兼容形状：
+
+```json
+{
+  "status": "UP"
+}
+```
+
+模板邮件请求的字段和一个邮箱验证示例：
+
+```json
+{
+  "to": "user@example.com",
+  "subject": "Verify your email",
+  "templateName": "email/email-verify",
+  "variables": {
+    "code": "123456",
+    "verificationCode": "123456",
+    "username": "user@example.com",
+    "expiryMinutes": 10
+  },
+  "emailType": "VERIFICATION"
+}
+```
+
+密码重置使用 `templateName=email/password-reset`、`emailType=PASSWORD_RESET`，变量
+形状相同。响应至少需要：
+
+```json
+{
+  "success": true
+}
+```
+
+外部服务可以额外返回 `queueId`、`message` 等字段，但 UniAuth 当前不会保存或跟踪
+这些值。非 2xx、空响应、无法解析的 JSON 或 `success` 不为 `true` 都不会被适配器
+视为已接受。`/api/email/simple` 虽然存在于当前适配器接口中，但邮箱注册和密码重置
+只依赖模板邮件端点。
+
+`success=true` 只表示外部服务接受或入队，不代表 SMTP/供应商已经送达邮件。外部服务
+仍需自行负责模板渲染、队列、重试、SMTP/供应商凭据和投递状态。
+
+当前实现还有两个必须显式知晓的限制：
+
+- `app.email.service.timeout: 5000` 已出现在 YAML，但 `RestTemplate` 仍以
+  `new RestTemplate()` 创建，该值目前没有绑定到 connect/read timeout。
+- 邮件服务不可用、返回失败或后续异步投递失败时，UniAuth 仍可能保存验证码，
+  `/api/auth/send-verification-code` 和忘记密码接口仍可能返回发送成功。
+
+因此，生产启用邮箱流程前不能只检查 UniAuth 接口返回值；必须另外验证外部服务
+可达、模板存在、SMTP/供应商凭据有效，并完成一条显式 opt-in 的真实收件测试。
+
 ## Spring Profiles
 
 `application.yml` 不设置 `spring.profiles.active`。直接运行 Maven 时必须显式选择
@@ -36,7 +120,7 @@
 
 - Flyway location：`classpath:db/migration/postgresql`
 - history table：`uniauth_flyway_schema_history`
-- 当前版本：V1
+- 当前版本：V2（V1 baseline + V2 登录方式加固）
 - `baseline-on-migrate=false`
 - `clean-disabled=true`
 - SQL init：`never`
@@ -62,7 +146,8 @@ Flyway 只扫描 `src/main/resources/db/migration/postgresql/`。旧 V1-V4、V6-
 和四份 SQL init 文件已归档到 `docs/archive/database/legacy-sql/`，不能执行或复制回
 runtime classpath。
 
-V1 来自获准的实际 dev PostgreSQL 8 表结构。后续修复使用 V2+；不得改写 V1 checksum。
+V1 来自获准的实际 dev PostgreSQL 8 表结构。V2 加固登录方式时区/nullability、
+provider/行形状和 primary 唯一性。后续修复使用 V3+；不得改写 V1/V2 checksum。
 
 ## Existing-schema baseline
 
@@ -74,9 +159,12 @@ V1 来自获准的实际 dev PostgreSQL 8 表结构。后续修复使用 V2+；�
 - 非生产数据库名保护。
 - rehearsal 成功。
 - 精确匹配本次结构指纹的 `UNIAUTH_BASELINE_CONFIRM`。
-- apply 写入前再次确认源 schema 指纹未变化且仍不存在 Flyway history table。
+- apply 写入前再次确认源 schema 指纹、V2 数据预检均未变化，且仍不存在 Flyway history table。
 - apply 创建 baseline history、执行 pending migrations，并确认最终结构与 rehearsal
   中的 fresh 最新迁移结果一致。
+- 如果 baseline 创建后 pending migration 失败，脚本只会在受管 schema 未变化且
+  history 精确为本次 baseline-only 状态时删除不完整 history；其他状态保留现场并
+  要求人工恢复，避免把部分迁移伪装成未接管。
 - 用户对该次 apply 的显式授权。
 
 `blacksheep_dev` 当前只完成 rehearsal，尚未创建 Flyway history。

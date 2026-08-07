@@ -43,9 +43,11 @@ UniAuth 是一个单仓库认证系统，包含三个可运行部分：
 - 默认不激活任何 Spring profile；启动者必须显式选择 `dev`、`test` 或 `prod`。
 - `dev`、`test`、`prod` 只支持 PostgreSQL。
 - 三个 profile 的 host、port、database、user 和 password 都必须显式提供。
-- Flyway 是唯一 schema owner；当前 runtime migration 是 PostgreSQL V1。
+- Flyway 是唯一 schema owner；当前 runtime migration 链是 PostgreSQL V1 baseline + V2 登录方式加固。
 - Hibernate 使用 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 外部邮件服务默认地址：`http://localhost:8095`。
+- UniAuth 只实现邮件服务 HTTP 适配器，不包含 SMTP/供应商发送实现。真实邮箱注册验证
+  和密码重置需要独立邮件服务满足当前 HTTP、模板和响应契约；普通邮箱加密码登录不发信。
 - React 生产构建直接写入 `src/main/resources/static/`，该目录是生成物并被 gitignore。
 - OAuth2 callback 和 `app.frontend.url` 当前包含部署域名硬编码；本地 OAuth2 流程需要显式覆盖配置。
 
@@ -62,11 +64,16 @@ test/demo 安全规则时 upsert 三个受管账户；它不得执行全表删�
 `dev` 只接受 dev/test/demo 命名的非生产数据库，`test` 只接受明确可丢弃的
 test/demo 数据库。自动化测试必须使用 Testcontainers，不得读取 `.env`。
 
+共享 `blacksheep_dev` 只允许显式只读预检和 rehearsal。普通测试、开发验证和
+migration 测试不得连接它；baseline/apply 仍需要用户单独授权和精确 confirmation
+token。不要因为本地已有凭据就推断获得了写权限。
+
 Flyway V1 源自 2026-08-07 对 `blacksheep_dev` 的只读 schema 导出。
 该库已通过只读 rehearsal，但尚未执行 baseline apply。未经用户显式授权和精确
 confirmation token，不得对其创建 `uniauth_flyway_schema_history` 或执行 pending
-migrations。apply 前必须重新核对源 schema 指纹和 history table，不能沿用长时间
-rehearsal 开始时的旧状态；apply 后必须与 rehearsal 的 fresh 最新迁移结果一致。
+migrations。apply 前必须重新核对源 schema 指纹、V2 数据预检和 history table，
+不能沿用长时间 rehearsal 开始时的旧状态；apply 后必须与 rehearsal 的 fresh 最新
+迁移结果一致。
 
 仓库根目录 `.env`、`jwt-secret.key`、OAuth2 凭据和数据库密码属于敏感信息。不要打印、提交或写入文档。
 历史提交中的 `rsa-keys.ser` 包含已暴露的 JWT 私钥材料，不能继续信任或恢复到版本控制。
@@ -96,6 +103,8 @@ CORS 目前同时存在于 `CorsConfig`、`WebConfig`、`WebMvcConfig` 和 YAML�
 - 本地用户名全局唯一；provider + provider user id 全局唯一。
 - 不能删除用户最后一个登录方式。
 - 每个用户预期只有一个 primary 登录方式。
+- `LOCAL` 同时承载用户名/密码和邮箱验证码绑定；后者允许
+  `local_password_hash IS NULL`。数据库行形状约束不得假设每个 LOCAL 方式都有密码。
 
 JWT 由 `JwtTokenService` 使用 RS256 签发：
 
@@ -133,6 +142,24 @@ JWKS、旧 token 和 Python 资源服务器；真实环境仍需外部密钥管�
 - 前端认证状态：`frontend/src/hooks/useAuth.ts`。
 - SPA 路由：`frontend/src/App.tsx` 和后端 `SpaController`。
 
+## Email Service Boundary
+
+`RestTemplateEmailServiceImpl` 是 UniAuth 到外部邮件服务的唯一生产实现。它要求：
+
+- `GET /api/email/health` 返回 JSON `status=UP`。
+- `POST /api/email/template` 接收 `to`、`subject`、`templateName`、`variables`
+  和 `emailType`，并以 JSON `success=true` 表示已接受或入队。
+- 外部服务提供 `email/email-verify` 和 `email/password-reset` 模板，使用
+  `username`、`verificationCode` 和 `expiryMinutes`；当前请求不携带服务鉴权 header。
+
+真实邮箱注册验证和密码重置依赖该服务及其下游 SMTP/供应商配置。普通
+`POST /api/auth/login` 的邮箱加密码登录不调用邮件服务；虽然 enum 和前端类型仍有
+`LOGIN` purpose，当前没有受支持的邮箱验证码登录 endpoint。
+
+当前失败语义不是生产可靠状态机：邮件服务不可用、拒绝或异步投递失败时，UniAuth
+仍可能持久化验证码并向客户端返回“已发送”。Java 集成测试 mock `EmailService`，
+Shell E2E 使用不可达地址并从隔离数据库读取验证码；这些门禁不证明真实邮件已入队或送达。
+
 ## Database Reality
 
 PostgreSQL 是唯一受支持数据库。Flyway 配置：
@@ -144,8 +171,9 @@ PostgreSQL 是唯一受支持数据库。Flyway 配置：
 - `validate-on-migrate=true`
 - `out-of-order=false`
 
-当前 V1 精确复现获准的 8 张 dev auth/session 表。后续结构修复必须新增 V2+，
-不得修改已经发布或 baseline 的 V1 checksum。
+V1 精确复现获准的 8 张 dev auth/session 表；V2 对齐登录方式时区/nullability，
+增加 provider/行形状约束和每用户至多一个 primary 的唯一索引。后续结构修复必须
+新增 V3+，不得修改已经发布或 baseline 的 V1/V2 checksum。
 
 修改 entity/schema 时至少核对：
 
@@ -204,12 +232,13 @@ PYTHON_BIN=python3 scripts/verify.sh
 
 已知状态（2026-08-07 当前工作树）：
 
-- Maven：63 tests，0 failures/errors/skips。
+- Maven：74 tests，0 failures/errors/skips。
 - Shell HTTP E2E：13/13。
-- Flyway baseline guard：7/7。
+- Flyway baseline guard：10/10。
 - Mock Playwright：18 tests。
 - Python：9 tests。
 - 前端 ESLint、TypeScript 和生产构建通过。
+- 本批完整门禁后的固定范围检查：连续无修改 3/3。
 - 前端 lockfile 已通过严格 `npm ci`；已显式升级受影响的 Axios、Ethers、
   React Router、Vite 和相关传递依赖，`npm audit --audit-level=high` 通过。
 - npm audit 仍报告 2 个 React Router moderate advisories。当前 SPA 只使用
@@ -255,7 +284,8 @@ PYTHON_BIN=python3 scripts/verify.sh
 - `ApiAuthController` 对 JWT 用户把 provider 默认标成 `local`，不能反映真实主登录方式。
 - 邮件投递失败、频控、retry 和 challenge 并发消费尚未形成可靠状态机。
 - Web3 尚未严格绑定完整 SIWE message，nonce 也不是原子消费。
-- 登录方式 primary、最后一个方式删除和首次 provider bind 缺少并发数据库不变量。
+- 登录方式并发 bind 与 set-primary 已由数据库约束和稳定冲突映射加固；删除与
+  其他登录方式变更并发时仍可能产生零登录方式或零 primary，归下一批处理。
 - live 端口已统一到后端 `8081`、Python `5002`；部署域名仍需外部化。
 
 这些条目是工作提示，不代替针对当前任务的代码阅读和测试。
@@ -276,11 +306,17 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 外部依赖下载遇到网络阻断时，可使用用户提供的本机 `http_proxy`、`https_proxy`
   和 `all_proxy` 临时注入当前命令；不要把机器专用代理地址写入仓库配置、`.npmrc`
   或可提交的环境文件。
+- 工作区可能有其他开发者并行修改。绝不能丢弃、覆盖或回滚不是自己创建的改动，
+  也绝不能使用 `git stash` 干扰共享工作区。
+- 若其他人的修改导致编译或测试夹具暂时阻塞，只做解除验证阻塞所必需的最小测试
+  适配；业务接口未稳定前不要追着中间状态修改测试，更不能擅自改写其业务实现。
 - 保持改动紧贴请求，不顺手重写历史文档或大规模清理认证架构。
 - 安全、token、cookie、OAuth2 callback、CORS 和 schema 改动具有跨模块影响，必须同时检查后端、前端和 Python 示例。
 - API 响应变更要同步 `frontend/src/services/authService.ts`、类型、调用页面和相关脚本。
 - JWT claim 变更要同步 ResourceServer、OAuth2 introspection、Python 示例和文档。
 - provider 命名变更必须处理 `x` 与 `TWITTER` 的映射。
+- 新增或修改外部 REST 依赖时，不能只记录 URL/端口；必须在 live 文档中说明责任边界、
+  必需 endpoint、鉴权、请求/响应 schema、成功语义、超时/重试和自动化验证边界。
 - 不要把 `docs/drafts/` 中的规划代码当成已实现事实。
 - 增加或修改后端行为时必须同步补充相应的集成/行为测试。
 - 完成工作后检查 `git status`，不要提交 `.env`、数据库、key、报告、`target/`、`node_modules/` 或静态构建产物。

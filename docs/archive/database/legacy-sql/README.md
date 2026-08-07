@@ -18,7 +18,8 @@ instead of editing the archived source files.
 
 ## Current Source Of Truth
 
-- Runtime migration: [`V1__baseline_uniauth_auth_schema.sql`](../../../../src/main/resources/db/migration/postgresql/V1__baseline_uniauth_auth_schema.sql)
+- Runtime baseline: [`V1__baseline_uniauth_auth_schema.sql`](../../../../src/main/resources/db/migration/postgresql/V1__baseline_uniauth_auth_schema.sql)
+- Current hardening migration: [`V2__harden_login_method_invariants.sql`](../../../../src/main/resources/db/migration/postgresql/V2__harden_login_method_invariants.sql)
 - Live database guidance: [configuration baseline](../../../CONFIGURATION.md)
 - Migration and verification plan: [hardening implementation plan](../../../drafts/HARDENING_IMPLEMENTATION_PLAN.md)
 

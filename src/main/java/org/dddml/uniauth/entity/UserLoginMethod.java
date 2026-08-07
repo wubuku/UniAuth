@@ -4,7 +4,6 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
@@ -27,7 +26,7 @@ public class UserLoginMethod {
     private String id;  // UUID 字符串格式
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = true)
+    @JoinColumn(name = "user_id", nullable = false)
     private UserEntity user;
 
     @Enumerated(EnumType.STRING)
@@ -61,10 +60,15 @@ public class UserLoginMethod {
     private boolean isVerified = false;
 
     @CreationTimestamp
-    @Column(name = "linked_at", nullable = false, updatable = false)
+    @Column(
+        name = "linked_at",
+        nullable = false,
+        updatable = false,
+        columnDefinition = "timestamp with time zone"
+    )
     private Instant linkedAt;
 
-    @Column(name = "last_used_at")
+    @Column(name = "last_used_at", columnDefinition = "timestamp with time zone")
     private Instant lastUsedAt;
 
     @Column(name = "nonce_expires_at")

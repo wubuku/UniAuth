@@ -8,6 +8,7 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="$PROJECT_DIR/scripts"
 FINGERPRINT_SQL="$SCRIPT_DIR/sql/uniauth-schema-fingerprint.sql"
+LOGIN_METHOD_PREFLIGHT_SQL="$SCRIPT_DIR/sql/v2-login-method-preflight.sql"
 MODE="${1:-rehearse}"
 RUN_TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 ARTIFACT_DIR="${UNIAUTH_BASELINE_ARTIFACT_DIR:-$PROJECT_DIR/.local/uniauth/baseline-rehearsal/$RUN_TIMESTAMP-$$}"
@@ -96,6 +97,17 @@ source_history_tables() {
     "
 }
 
+source_data_violations() {
+    PGOPTIONS="-c default_transaction_read_only=on" \
+        PGPASSWORD="$POSTGRES_PASSWORD" \
+        psql -X -qAt -v ON_ERROR_STOP=1 \
+            -h "$POSTGRES_HOST" \
+            -p "$POSTGRES_PORT" \
+            -U "$POSTGRES_USER" \
+            -d "$POSTGRES_DATABASE" \
+            -f "$LOGIN_METHOD_PREFLIGHT_SQL"
+}
+
 schema_fingerprint() {
     local host="$1"
     local port="$2"
@@ -120,6 +132,54 @@ schema_fingerprint() {
             | LC_ALL=C sort \
             | hash_stdin
     fi
+}
+
+remove_incomplete_baseline_history() {
+    local current_fingerprint
+    local history_state
+
+    current_fingerprint="$(
+        schema_fingerprint \
+            "$POSTGRES_HOST" \
+            "$POSTGRES_PORT" \
+            "$POSTGRES_DATABASE" \
+            "$POSTGRES_USER" \
+            "$POSTGRES_PASSWORD" \
+            true
+    )"
+    if [ "$current_fingerprint" != "$SOURCE_FINGERPRINT" ]; then
+        echo "ERROR: Flyway migrate failed after baseline and the managed schema changed; leaving history for manual recovery" >&2
+        return 1
+    fi
+
+    history_state="$(
+        source_psql_value "
+            SELECT CASE
+                WHEN count(*) = 1
+                 AND bool_and(
+                     version = '1'
+                     AND type = 'BASELINE'
+                     AND success IS TRUE
+                 )
+                THEN 'baseline-only'
+                ELSE 'unexpected'
+            END
+            FROM public.uniauth_flyway_schema_history;
+        "
+    )"
+    if [ "$history_state" != "baseline-only" ]; then
+        echo "ERROR: Flyway migrate failed after baseline and history is not baseline-only; leaving it for manual recovery" >&2
+        return 1
+    fi
+
+    psql_value \
+        "$POSTGRES_HOST" \
+        "$POSTGRES_PORT" \
+        "$POSTGRES_DATABASE" \
+        "$POSTGRES_USER" \
+        "$POSTGRES_PASSWORD" \
+        "DROP TABLE public.uniauth_flyway_schema_history;" >/dev/null
+    echo "Flyway migrate failed after baseline; removed the incomplete baseline-only history table." >&2
 }
 
 run_flyway() {
@@ -211,6 +271,12 @@ fi
 EXISTING_HISTORY="$(source_history_tables)"
 if [ -n "$EXISTING_HISTORY" ]; then
     echo "ERROR: a Flyway history table already exists: $EXISTING_HISTORY" >&2
+    exit 1
+fi
+
+SOURCE_DATA_VIOLATIONS="$(source_data_violations)"
+if [ -n "$SOURCE_DATA_VIOLATIONS" ]; then
+    echo "ERROR: source data is not compatible with pending login-method migration: $SOURCE_DATA_VIOLATIONS" >&2
     exit 1
 fi
 
@@ -352,6 +418,29 @@ if [ "$RESTORED_HISTORY_TYPE" != "BASELINE" ] || [ "$FRESH_HISTORY_TYPE" != "SQL
     exit 1
 fi
 
+RESTORED_V2_HISTORY_TYPE="$(
+    psql_value \
+        127.0.0.1 \
+        "$REHEARSAL_PORT" \
+        "$REHEARSAL_DATABASE" \
+        "$REHEARSAL_USER" \
+        "$REHEARSAL_PASSWORD" \
+        "SELECT type FROM uniauth_flyway_schema_history WHERE version = '2';"
+)"
+FRESH_V2_HISTORY_TYPE="$(
+    psql_value \
+        127.0.0.1 \
+        "$REHEARSAL_PORT" \
+        "$FRESH_DATABASE" \
+        "$REHEARSAL_USER" \
+        "$REHEARSAL_PASSWORD" \
+        "SELECT type FROM uniauth_flyway_schema_history WHERE version = '2';"
+)"
+if [ "$RESTORED_V2_HISTORY_TYPE" != "SQL" ] || [ "$FRESH_V2_HISTORY_TYPE" != "SQL" ]; then
+    echo "ERROR: Flyway V2 was not applied in both rehearsal paths" >&2
+    exit 1
+fi
+
 REPORT_FILE="$ARTIFACT_DIR/rehearsal-result.txt"
 {
     echo "timestamp=$RUN_TIMESTAMP"
@@ -362,6 +451,8 @@ REPORT_FILE="$ARTIFACT_DIR/rehearsal-result.txt"
     echo "fresh_migrated_fingerprint=$FRESH_FINGERPRINT"
     echo "restored_history_type=$RESTORED_HISTORY_TYPE"
     echo "fresh_history_type=$FRESH_HISTORY_TYPE"
+    echo "restored_v2_history_type=$RESTORED_V2_HISTORY_TYPE"
+    echo "fresh_v2_history_type=$FRESH_V2_HISTORY_TYPE"
     echo "source_dump=$SOURCE_DUMP"
 } > "$REPORT_FILE"
 
@@ -397,9 +488,21 @@ if [ "$MODE" = "apply" ]; then
         exit 1
     fi
 
+    APPLY_SOURCE_DATA_VIOLATIONS="$(source_data_violations)"
+    if [ -n "$APPLY_SOURCE_DATA_VIOLATIONS" ]; then
+        echo "ERROR: source data changed during rehearsal; refusing baseline apply: $APPLY_SOURCE_DATA_VIOLATIONS" >&2
+        exit 1
+    fi
+
     SOURCE_URL="jdbc:postgresql://$POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DATABASE"
     run_flyway "$SOURCE_URL" "$POSTGRES_USER" "$POSTGRES_PASSWORD" baseline
-    run_flyway "$SOURCE_URL" "$POSTGRES_USER" "$POSTGRES_PASSWORD" migrate
+    if run_flyway "$SOURCE_URL" "$POSTGRES_USER" "$POSTGRES_PASSWORD" migrate; then
+        :
+    else
+        MIGRATE_EXIT_CODE=$?
+        remove_incomplete_baseline_history || true
+        exit "$MIGRATE_EXIT_CODE"
+    fi
     run_flyway "$SOURCE_URL" "$POSTGRES_USER" "$POSTGRES_PASSWORD" validate
 
     POST_APPLY_FINGERPRINT="$(

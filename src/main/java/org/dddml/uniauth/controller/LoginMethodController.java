@@ -1,6 +1,7 @@
 package org.dddml.uniauth.controller;
 
 import org.dddml.uniauth.entity.UserLoginMethod;
+import org.dddml.uniauth.service.LoginMethodConflictException;
 import org.dddml.uniauth.service.LoginMethodService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -70,6 +71,11 @@ public class LoginMethodController {
                 "message", "登录方式已移除",
                 "removedMethodId", methodId
             ));
+        } catch (LoginMethodConflictException e) {
+            log.warn("Concurrent login method removal conflict: {}", e.getMessage());
+            return ResponseEntity.status(409).body(
+                Map.of("error", e.getMessage())
+            );
         } catch (IllegalStateException | IllegalArgumentException e) {
             log.warn("Failed to remove login method: {}", e.getMessage());
             return ResponseEntity.status(400).body(
@@ -100,6 +106,11 @@ public class LoginMethodController {
                 "message", "主登录方式已设置",
                 "primaryMethodId", methodId
             ));
+        } catch (LoginMethodConflictException e) {
+            log.warn("Concurrent primary login method update: {}", e.getMessage());
+            return ResponseEntity.status(409).body(
+                Map.of("error", e.getMessage())
+            );
         } catch (IllegalArgumentException e) {
             log.warn("Failed to set primary login method: {}", e.getMessage());
             return ResponseEntity.status(400).body(

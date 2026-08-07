@@ -7,6 +7,8 @@ import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.hibernate.exception.ConstraintViolationException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +24,11 @@ import java.util.UUID;
 @Transactional
 @Slf4j
 public class LoginMethodService {
+
+    private static final String USER_PROVIDER_CONSTRAINT = "uk_user_login_provider";
+    private static final String PROVIDER_SUBJECT_CONSTRAINT = "uk_provider_user";
+    private static final String LOCAL_USERNAME_CONSTRAINT = "uk_local_username";
+    private static final String PRIMARY_CONSTRAINT = "uk_login_methods_one_primary";
 
     private final UserLoginMethodRepository loginMethodRepository;
     private final UserRepository userRepository;
@@ -47,9 +54,16 @@ public class LoginMethodService {
             String providerUserId,
             String providerEmail,
             String providerUsername) {
-        
+
         log.info("Binding OAuth2 login method for provider {}", provider);
-        
+
+        if (provider == null || provider == AuthProvider.LOCAL) {
+            throw new IllegalArgumentException("无效的OAuth2登录方式");
+        }
+        if (providerUserId == null || providerUserId.isBlank()) {
+            throw new IllegalArgumentException("OAuth2账户标识不能为空");
+        }
+
         // 1. 检查用户是否已经绑定该提供商
         if (loginMethodRepository.findByUserIdAndAuthProvider(userId, provider).isPresent()) {
             throw new IllegalStateException("用户已绑定该登录方式");
@@ -78,10 +92,13 @@ public class LoginMethodService {
             .isPrimary(false)  // 新绑定的不是主登录方式
             .build();
         
-        UserLoginMethod saved = loginMethodRepository.save(loginMethod);
-        log.info("OAuth2 login method binding completed");
-        
-        return saved;
+        try {
+            UserLoginMethod saved = loginMethodRepository.saveAndFlush(loginMethod);
+            log.info("OAuth2 login method binding completed");
+            return saved;
+        } catch (DataIntegrityViolationException exception) {
+            throw translateBindingConflict(exception);
+        }
     }
 
     /**
@@ -142,14 +159,24 @@ public class LoginMethodService {
                 .filter(m -> !m.getId().equals(loginMethodId))
                 .findFirst()
                 .orElseThrow();
-            
-            newPrimary.setPrimary(true);
-            loginMethodRepository.save(newPrimary);
-            log.info("Replacement primary login method selected");
+
+            try {
+                loginMethodRepository.clearPrimaryForUser(userId);
+                if (loginMethodRepository.setPrimaryForUser(
+                        userId,
+                        newPrimary.getId()
+                ) != 1) {
+                    throw new IllegalArgumentException("替代登录方式不存在");
+                }
+                log.info("Replacement primary login method selected");
+            } catch (DataIntegrityViolationException exception) {
+                throw translatePrimaryConflict(exception);
+            }
         }
-        
+
         // 4. 删除登录方式
-        loginMethodRepository.delete(method);
+        loginMethodRepository.deleteById(loginMethodId);
+        loginMethodRepository.flush();
         log.info("Login method removed successfully");
     }
 
@@ -167,18 +194,17 @@ public class LoginMethodService {
             throw new IllegalArgumentException("无权设置该登录方式");
         }
         
-        // 2. 取消当前主登录方式
-        loginMethodRepository.findByUserIdAndIsPrimary(userId, true)
-            .ifPresent(current -> {
-                current.setPrimary(false);
-                loginMethodRepository.save(current);
-            });
-        
-        // 3. 设置新的主登录方式
-        method.setPrimary(true);
-        loginMethodRepository.save(method);
-        
-        log.info("Primary login method set successfully");
+        try {
+            // Bulk updates make the write order explicit and avoid relying on ORM flush ordering.
+            loginMethodRepository.clearPrimaryForUser(userId);
+            if (loginMethodRepository.setPrimaryForUser(userId, loginMethodId) != 1) {
+                throw new IllegalArgumentException("登录方式不存在");
+            }
+            loginMethodRepository.flush();
+            log.info("Primary login method set successfully");
+        } catch (DataIntegrityViolationException exception) {
+            throw translatePrimaryConflict(exception);
+        }
     }
 
     /**
@@ -221,10 +247,20 @@ public class LoginMethodService {
             .isVerified(false)  // 未验证（可选：可以改为true如果不需要验证）
             .build();
         
-        UserLoginMethod saved = loginMethodRepository.save(loginMethod);
-        log.info("Local login method added");
-        
-        return saved;
+        try {
+            UserLoginMethod saved = loginMethodRepository.saveAndFlush(loginMethod);
+            log.info("Local login method added");
+            return saved;
+        } catch (DataIntegrityViolationException exception) {
+            String constraint = constraintName(exception);
+            if (USER_PROVIDER_CONSTRAINT.equals(constraint)) {
+                throw new IllegalStateException("该用户已有本地登录方式，无法重复添加");
+            }
+            if (LOCAL_USERNAME_CONSTRAINT.equals(constraint)) {
+                throw new IllegalArgumentException("用户名已被使用，请选择其他用户名");
+            }
+            throw exception;
+        }
     }
 
     /**
@@ -249,5 +285,37 @@ public class LoginMethodService {
         loginMethodRepository.save(loginMethod);
         
         log.info("Local password updated");
+    }
+
+    private RuntimeException translateBindingConflict(
+            DataIntegrityViolationException exception) {
+        String constraint = constraintName(exception);
+        if (USER_PROVIDER_CONSTRAINT.equals(constraint)) {
+            return new IllegalStateException("用户已绑定该登录方式");
+        }
+        if (PROVIDER_SUBJECT_CONSTRAINT.equals(constraint)) {
+            return new IllegalArgumentException("该OAuth2账户已被绑定");
+        }
+        return exception;
+    }
+
+    private RuntimeException translatePrimaryConflict(
+            DataIntegrityViolationException exception) {
+        if (PRIMARY_CONSTRAINT.equals(constraintName(exception))) {
+            return new LoginMethodConflictException("主登录方式已被并发修改，请重试");
+        }
+        return exception;
+    }
+
+    private String constraintName(Throwable exception) {
+        Throwable current = exception;
+        while (current != null) {
+            if (current instanceof ConstraintViolationException constraintViolation
+                    && constraintViolation.getConstraintName() != null) {
+                return constraintViolation.getConstraintName();
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 }

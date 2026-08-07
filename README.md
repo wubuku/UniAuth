@@ -1,8 +1,9 @@
 # UniAuth - 统一身份认证系统
 
-> 状态：Needs verification。H0.1-H0.3 与 PostgreSQL/Flyway H1.1-H1.3 已完成加固验证，
-> 但项目尚无生产就绪证明。仓库不默认激活 Spring profile，所有 profile 只支持显式 PostgreSQL，
-> Flyway 是唯一 schema owner，演示数据默认关闭且不执行全表清理。
+> 状态：Needs verification。H0.1-H0.3、PostgreSQL/Flyway H1.1-H1.3、测试基础
+> Batch A 与登录方式约束 Batch B1 已完成加固验证，但项目尚无生产就绪证明。
+> 仓库不默认激活 Spring profile，所有 profile 只支持显式 PostgreSQL，Flyway 是唯一
+> schema owner，演示数据默认关闭且不执行全表清理。
 > 开始开发或启动前，请先阅读 [文档导航](docs/README.md)、
 > [配置基线](docs/CONFIGURATION.md)、[开发指南](docs/DEVELOPMENT.md) 和
 > [验证指南](docs/VERIFICATION.md)。
@@ -16,11 +17,12 @@
 | 后端 | Spring Boot 3.3.4 / Java 17，默认端口 `8081` |
 | 前端 | React 18 / Vite，开发端口 `5173` |
 | 资源服务器 | Flask，默认端口 `5002` |
+| 邮件发送 | 外部 HTTP 服务，默认端口 `8095`；本仓库不包含 SMTP/供应商发送实现 |
 | 数据库 | PostgreSQL-only |
-| Migration | Flyway V1，history `uniauth_flyway_schema_history` |
-| Java 验证 | 63 tests |
+| Migration | Flyway V1 baseline + V2，history `uniauth_flyway_schema_history` |
+| Java 验证 | 74 tests |
 | HTTP E2E | 13/13 |
-| Flyway baseline guard | 7/7 |
+| Flyway baseline guard | 10/10 |
 | Playwright | 18 tests |
 | Python | 9 tests |
 | 前端 lint/type/build | 通过 |
@@ -53,6 +55,11 @@ UniAuth 是一个正在加固的统一身份认证项目，包含本地认证、
 OAuth2、多登录方式、自定义 JWT、邮箱验证、Web3 和异构资源服务器示例。
 系统采用 Spring Boot 3.3.4 + React 18，`dev`、`test`、`prod` 均使用 PostgreSQL。
 schema 由 Flyway 管理，SQLite runtime 已退役。
+
+邮箱地址注册验证和密码重置依赖一个独立邮件发送服务。UniAuth 当前只包含该服务的
+HTTP 客户端适配器，不直接连接 SMTP 或邮件供应商。已建立账户后的邮箱加密码登录
+不发送邮件；当前也没有受支持的“每次登录发送验证码”无密码登录接口。完整依赖契约
+见 [配置基线](docs/CONFIGURATION.md#邮件服务依赖)。
 
 | 属性 | 说明 |
 |------|------|
@@ -94,7 +101,8 @@ schema 由 Flyway 管理，SQLite runtime 已退役。
 ### 会话持久化
 
 项目启用了 Spring Session JDBC，默认会话超时为 30 分钟。Session 表由 Flyway V1
-管理，集成测试已覆盖 create/read/delete；多实例和负载均衡行为仍无发布级证据。
+创建，当前 schema 迁移到 V2，集成测试已覆盖 create/read/delete；多实例和负载均衡
+行为仍无发布级证据。
 
 ### 细粒度权限控制
 
@@ -102,14 +110,16 @@ schema 由 Flyway 管理，SQLite runtime 已退役。
 
 ### 多登录方式统一管理
 
-后端提供登录方式查询、设置 primary、解绑和添加本地登录方式的接口，OAuth2 成功处理器包含绑定分支；前端和这些接口的完整交互仍需复验。当前代码目标包括：
+后端提供登录方式查询、设置 primary、解绑和添加本地登录方式的接口，OAuth2 成功
+处理器包含绑定分支。真实 HTTP Shell E2E 与 Mock Playwright 已分别覆盖后端生命周期
+和前端操作；非 Mock 浏览器到真实后端的联调仍未进入默认门禁。当前代码目标包括：
 
 | 功能 | 说明 |
 |------|------|
 | **绑定新登录方式** | 用户可以通过 OAuth2 流程绑定新的登录提供商 |
 | **查看已绑定方式** | 展示所有已绑定的登录方式及绑定时间 |
 | **设置主登录方式** | 用户可以切换主登录方式，影响默认显示的提供商信息 |
-| **解绑登录方式** | 用户可以解除与某个提供商的绑定（需保留至少一种 LOCAL 方式） |
+| **解绑登录方式** | 用户可以解除与某个提供商的绑定（需保留至少一种登录方式） |
 | **添加本地账户** | SSO 用户可以为自己的账户添加本地用户名和密码 |
 
 ---

@@ -23,8 +23,10 @@
 - 演示数据默认关闭且不再全表清理；显式启用仍只允许 test/demo 命名的 disposable 数据库。
 - Vite 使用 `5173`，Python 资源服务器代码实际使用 `5002`。
 - `dev`、`test`、`prod` 只支持显式 PostgreSQL；SQLite runtime 已退役。
-- Flyway 已接管 schema，当前 V1 来自实际 dev PostgreSQL 的 8 表结构。
+- Flyway 已接管 schema：V1 来自实际 dev PostgreSQL 的 8 表结构，V2 加固登录方式不变量。
 - Hibernate 只执行 `validate`；SQL init 和 Spring Session 自动建表均关闭。
+- 邮箱注册验证和密码重置依赖独立邮件服务；UniAuth 只提供 HTTP 客户端适配器，
+  不包含 SMTP/邮件供应商实现。普通邮箱加密码登录不需要每次发信。
 - 已建立 PostgreSQL Java 集成测试、真实 HTTP Shell E2E、Mock Playwright 和
   Python 离线 JWT/JWKS 测试；ESLint 与统一验证入口已纳入门禁。
 - `blacksheep_dev` 已通过只读 baseline rehearsal，但尚未执行 baseline apply。
@@ -82,3 +84,5 @@
 3. 修改端口、profile、schema、JWT claim、cookie 或回调地址时，同步更新相关 live guide。
 4. 只有本次实际运行的命令才能标记为已验证。
 5. 新增文档后更新本页或 `docs/drafts/README.md`，避免孤立文件。
+6. 外部 REST 依赖不能只记录 URL/端口；还要记录责任边界、接口和数据契约、鉴权、
+   成功语义、超时/重试以及默认门禁是否覆盖真实外部行为。

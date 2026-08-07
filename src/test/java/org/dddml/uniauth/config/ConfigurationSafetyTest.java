@@ -65,7 +65,8 @@ class ConfigurationSafetyTest {
     }
 
     @Test
-    void runtimeClasspathContainsOnlyThePostgreSqlFlywayMigration() throws IOException {
+    void runtimeClasspathContainsOnlyTheApprovedPostgreSqlFlywayMigrations()
+            throws IOException {
         for (String retiredResource : List.of(
                 "schema-postgresql.sql",
                 "schema-sqlite.sql",
@@ -86,8 +87,12 @@ class ConfigurationSafetyTest {
             assertThat(files
                     .filter(path -> path.getFileName().toString().endsWith(".sql"))
                     .map(path -> path.getFileName().toString())
+                    .sorted()
                     .toList())
-                    .containsExactly("V1__baseline_uniauth_auth_schema.sql");
+                    .containsExactly(
+                            "V1__baseline_uniauth_auth_schema.sql",
+                            "V2__harden_login_method_invariants.sql"
+                    );
         }
     }
 
