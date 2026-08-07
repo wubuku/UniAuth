@@ -140,7 +140,7 @@ export class AuthService {
   /**
    * 删除一个登录方式
    */
-  static async removeLoginMethod(methodId: number): Promise<any> {
+  static async removeLoginMethod(methodId: string): Promise<any> {
     try {
       const accessToken = localStorage.getItem('accessToken');
       const response = await axios.delete(`${API_BASE_URL}/api/user/login-methods/${methodId}`, {
@@ -159,10 +159,14 @@ export class AuthService {
   /**
    * 设置主登录方式
    */
-  static async setPrimaryLoginMethod(methodId: number): Promise<any> {
+  static async setPrimaryLoginMethod(methodId: string): Promise<any> {
     try {
+      const accessToken = localStorage.getItem('accessToken');
       const response = await axios.put(`${API_BASE_URL}/api/user/login-methods/${methodId}/primary`, {}, {
-        withCredentials: true
+        withCredentials: true,
+        headers: {
+          ...(accessToken && { 'Authorization': `Bearer ${accessToken}` })
+        }
       });
       return response.data;
     } catch (error) {
@@ -176,12 +180,16 @@ export class AuthService {
    */
   static async addLocalLoginMethod(username: string, password: string, passwordConfirm: string): Promise<any> {
     try {
+      const accessToken = localStorage.getItem('accessToken');
       const response = await axios.post(`${API_BASE_URL}/api/user/login-methods/add-local-login`, {
         username,
         password,
         passwordConfirm
       }, {
-        withCredentials: true
+        withCredentials: true,
+        headers: {
+          ...(accessToken && { 'Authorization': `Bearer ${accessToken}` })
+        }
       });
       return response.data;
     } catch (error) {
@@ -325,8 +333,12 @@ export class AuthService {
   }): Promise<{
     success: boolean;
     message: string;
-    userId?: string;
-    username?: string;
+    user: {
+      id: string;
+      username: string;
+      email: string;
+      displayName?: string;
+    };
     accessToken?: string;
     refreshToken?: string;
   }> {

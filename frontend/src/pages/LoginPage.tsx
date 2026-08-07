@@ -144,7 +144,7 @@ interface RegisterResponse {
 }
 
 export default function LoginPage() {
-  const { user, oauthLogin, localLogin, loading, error } = useAuth();
+  const { user, oauthLogin, localLogin, web3Login, loading, error } = useAuth();
   const navigate = useNavigate();
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -272,9 +272,10 @@ export default function LoginPage() {
         }
 
         const userData = {
-          id: response.userId || '',
-          username: response.username || verificationEmail,
-          email: verificationEmail,
+          id: response.user.id,
+          username: response.user.username,
+          email: response.user.email,
+          displayName: response.user.displayName,
           provider: 'local' as const
         };
         localStorage.setItem('auth_user', JSON.stringify(userData));
@@ -672,7 +673,7 @@ export default function LoginPage() {
             Twitter 登录
           </button>
 
-          <Web3LoginButton onError={setWeb3Error} />
+          <Web3LoginButton onError={setWeb3Error} onLogin={web3Login} />
         </div>
 
         <a

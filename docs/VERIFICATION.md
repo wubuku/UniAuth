@@ -25,8 +25,9 @@ mvn test
 
 - 需要启动应用验证时，必须显式选择 profile 和隔离、可丢弃的数据库；禁止裸跑默认配置。
 - 启动脚本被修改时，至少执行 Shell 语法检查，并在隔离配置下验证受影响的启动路径。
-- 根启动脚本必须保持可启动：默认路径只允许隔离 `dev` SQLite；`test`/`prod`
-  必须显式提供数据库参数，`test` 还必须使用明显的 test/demo 数据库名。
+- 根启动脚本必须保持可启动：未设置 profile 时只默认选择 `dev`，但不会提供数据库
+  回退；它只接受 `dev`、`test` 或 `prod`，并要求完整 PostgreSQL 连接参数。`dev`、
+  `test` 还必须使用符合 runtime guard 规则的 dev/test/demo 数据库名。
 - 对 OAuth、邮件、Web3 或其他外部服务的真实调用，必须先确认凭据、费用和副作用；
   未经用户允许不得发起高成本或不可逆的真实调用。
 
@@ -113,49 +114,36 @@ while counter < 3:
 
 L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 
-## 2026-08-07 Phase 0 当前门禁
+## 2026-08-07 当前加固门禁
 
-> 状态：Verified。仅覆盖 H0.1-H0.3，不代表 H1-H8、完整认证正确性或生产就绪。
+> 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3 和本轮修复触达路径；
+> 不代表 H1.4-H8、完整认证正确性或生产就绪。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
-| `mvn clean compile test-compile` | 通过 | 55 个 main source、8 个 test source 编译成功 |
-| `mvn test` | 通过 | 28 tests，0 failures/errors/skips |
-| Python 干净 venv | 通过 | requirements 安装成功，5/5 离线 RSA/JWKS/Flask tests |
+| `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
+| `mvn test` | 通过 | 42 tests，0 failures/errors/skips |
+| `scripts/test-http-e2e.sh` | 通过 | 10/10；真实应用、PostgreSQL、Flyway、JWT、Web3、email |
+| Flyway fresh/baseline integration | 通过 | fresh V1、existing-schema baseline、Hibernate validate、Session round-trip |
+| `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npx tsc --noEmit` | 通过 | 无 TypeScript 错误 |
-| `npm run build` | 通过 | Vite 生产构建成功；主 JS 526.59 kB，保留 chunk warning |
-| `npm run test:e2e` | 通过 | 1/1 Chrome-channel Mock Playwright test |
-| `start.sh` | 通过 | `dev`、临时 SQLite/key、dummy OAuth、端口 `18085` 启动 |
-| `start-with-frontend.sh` | 通过 | 前端 build + 后端在同类隔离配置、端口 `18083` 启动 |
-| Shell/Python 静态检查 | 通过 | root/scripts `bash -n` 与 Python compile 检查 |
-| 文档链接 | 通过 | 42 个 Markdown 文件的相对链接全部解析 |
+| `npm run build` | 通过 | Vite 生产构建成功，保留 chunk warning |
+| `npm run test:e2e` | 通过 | 12/12 Chrome-channel Mock Playwright tests |
+| Python | 通过 | 5/5 离线 RSA/JWKS/Flask tests |
+| Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 
-隔离 HTTP 验证使用 `dev` profile、临时 SQLite、`SPRING_SESSION_STORE_TYPE=none`、
-临时 RSA key、dummy OAuth 配置且关闭 demo data。观察结果：
+Shell HTTP E2E 使用 `test` profile、disposable PostgreSQL、临时 RSA key、dummy OAuth
+和不可达邮件服务地址。它验证：
 
-```text
-root=200
-jwks=200
-check_user=403
-auth_user=403
-current_user=401
-generate_hash=403
-create_test_user=403
-reset_password=403
-validate_google=403
-validate_github=403
-validate_x=403
-introspect_test=404
-oauth_validate=404
-delete_nonce=403
-unknown_auth=403
-users=0
-key_mode=0600
-```
+- Flyway V1 和自定义 history table。
+- `/api/auth/**` allowlist 与资源服务器拒绝边界。
+- 本地注册/登录、JWT claims、cookie 和持久化。
+- refresh rotation 与 access/refresh type confusion。
+- 本地签名 Web3 登录、replay 拒绝和钱包绑定。
+- 邮箱注册、持久化验证码、密码重置。
+- logout cookie 清理和最终数据库不变量。
 
-`403` 表示 `/api/auth/**` 的公开 allowlist 在 controller 映射前 fail closed；
-`401` 表示 canonical `/api/user` 需要有效认证；
-`404` 表示 OAuth2 诊断路由不存在。未执行真实 OAuth provider、邮件或 Web3 外部调用。
+未执行真实 OAuth provider、真实邮件或共享开发库写操作。
 
 ## 2026-08-07 实施前基线
 
@@ -237,18 +225,20 @@ git diff --check
 ### P0
 
 - 初始化器在未显式授权时不能清空数据库。
-- schema 与 entity 在 PostgreSQL/SQLite 上一致。
-- 邮箱发送 code 与持久化 code 完全相同。
-- 密码重置只生成并发送一个真实 code。
-- access/refresh token 的 type、issuer、audience、expiry 验证。
+- PostgreSQL schema 与 entity 一致，SQLite 运行与测试入口保持退役。
+- Flyway checksum、缺表、未知 auth 漂移和 baseline guard 失败矩阵。
+- access/refresh token 的 type、issuer、audience、expiry 和 header/cookie 冲突。
 - blacklist/revoke/logout 能阻止旧 token。
+- OAuth2 登录/绑定、redirect allowlist 和 provider subject mock 集成测试。
+- 邮箱发送失败、频控、重试和并发 challenge。
+- Web3 完整 SIWE message 篡改与并发 replay。
 
 ### P1
 
 - 四条 SecurityFilterChain 的 matcher 和权限边界。
 - cookie Secure/HttpOnly/SameSite 在 profile 间一致。
-- 多登录方式唯一性、最后方式保护和 primary 不变量。
-- Web3 nonce 一次性、过期、消息绑定、`isNewUser` 和 bind 返回值。
+- 多登录方式唯一性、最后方式保护和 primary 并发不变量。
+- Web3 nonce 一次性、过期、消息绑定和覆盖语义。
 - `/api/user` 的 provider 和 claim 映射。
 - Python 资源服务器的 `sub`/`username` 契约。
 
@@ -278,3 +268,4 @@ git diff --check
 - [配置基线](CONFIGURATION.md)
 - [历史异构资源服务器验证记录](../VERIFICATION_CHECKLIST.md)
 - [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md)
+- [下一轮加固实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md)

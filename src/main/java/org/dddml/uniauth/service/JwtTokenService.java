@@ -6,6 +6,13 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtException;
+import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.stereotype.Service;
 
@@ -341,11 +348,13 @@ public class JwtTokenService {
      */
     public boolean validateRefreshToken(String token) {
         try {
-            Jwts.parserBuilder()
+            var claims = Jwts.parserBuilder()
                     .setSigningKey(publicKey)
                     .build()
-                    .parseClaimsJws(token);
-            return true;
+                    .parseClaimsJws(token)
+                    .getBody();
+            return "refresh".equals(claims.get("type", String.class))
+                    && this.token.getIssuer().equals(claims.getIssuer());
         } catch (Exception e) {
             return false;
         }
@@ -396,12 +405,57 @@ public class JwtTokenService {
         }
     }
 
+    public String getUserIdFromAccessToken(String tokenValue) {
+        Jwt jwt = jwtDecoder().decode(tokenValue);
+        String userId = jwt.getClaimAsString("userId");
+        if (userId == null || userId.isBlank()) {
+            userId = jwt.getSubject();
+        }
+        if (userId == null || userId.isBlank()) {
+            throw new JwtException("Access token does not identify a user");
+        }
+        return userId;
+    }
+
     /**
      * 获取 JWT 解码器
      * 用于 OAuth2 资源服务器验证 JWT Token
      */
     public org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder() {
-        return NimbusJwtDecoder.withPublicKey((java.security.interfaces.RSAPublicKey) publicKey).build();
+        NimbusJwtDecoder decoder =
+                NimbusJwtDecoder.withPublicKey((java.security.interfaces.RSAPublicKey) publicKey)
+                        .build();
+
+        OAuth2TokenValidator<Jwt> issuerValidator =
+                JwtValidators.createDefaultWithIssuer(token.getIssuer());
+        OAuth2TokenValidator<Jwt> audienceValidator = jwt -> {
+            if (jwt.getAudience() != null
+                    && jwt.getAudience().contains(token.getAudience())) {
+                return OAuth2TokenValidatorResult.success();
+            }
+            return OAuth2TokenValidatorResult.failure(new OAuth2Error(
+                    "invalid_token",
+                    "The required audience is missing",
+                    null
+            ));
+        };
+        OAuth2TokenValidator<Jwt> accessTypeValidator = jwt -> {
+            if ("access".equals(jwt.getClaimAsString("type"))) {
+                return OAuth2TokenValidatorResult.success();
+            }
+            return OAuth2TokenValidatorResult.failure(new OAuth2Error(
+                    "invalid_token",
+                    "Only access tokens are accepted",
+                    null
+            ));
+        };
+
+        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                issuerValidator,
+                audienceValidator,
+                accessTypeValidator
+        ));
+        return decoder;
     }
 
     // Getter和Setter方法

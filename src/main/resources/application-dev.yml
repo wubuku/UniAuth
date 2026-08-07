@@ -1,36 +1,35 @@
 # Development Environment Configuration
-# 使用SQLite数据库进行快速开发和测试
-# 演示数据默认关闭。显式启用时请将数据库文件改为符合 demo/test 命名规则的可丢弃目标。
+# 使用显式提供的 PostgreSQL；不提供数据库连接时启动失败。
 
 spring:
   datasource:
-    url: jdbc:sqlite:./dev-database.db
-    driver-class-name: org.sqlite.JDBC
-    username:
-    password:
+    url: jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DATABASE}
+    driver-class-name: org.postgresql.Driver
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 20000
 
   jpa:
-    database-platform: org.hibernate.community.dialect.SQLiteDialect
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
-      ddl-auto: none  # 不自动创建表，由schema.sql处理
+      ddl-auto: validate
     show-sql: false
     properties:
       hibernate:
-        dialect: org.hibernate.community.dialect.SQLiteDialect
+        dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
 
   sql:
     init:
-      mode: always  # 总是执行初始化脚本
-      data-locations: classpath:data-sqlite.sql
-      schema-locations: classpath:schema-sqlite.sql
+      mode: never
 
-  # Spring Session JDBC 配置 - 在 dev 环境也使用 JDBC 持久化
-  # 这样即使重启应用，session 也会保留在数据库中
   session:
     store-type: jdbc
     jdbc:
-      initialize-schema: always
+      initialize-schema: never
     timeout: 1800
 
 logging:

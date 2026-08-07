@@ -5,12 +5,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.dddml.uniauth.entity.EmailVerificationCode.VerificationPurpose;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
-import org.dddml.uniauth.service.email.EmailService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.Map;
 
 @Slf4j
 @Service
@@ -19,10 +16,7 @@ public class ForgotPasswordService {
 
     private final EmailVerificationCodeService verificationCodeService;
     private final UserLoginMethodRepository loginMethodRepository;
-    private final EmailService emailService;
     private final PasswordEncoder passwordEncoder;
-
-    private static final String PASSWORD_RESET_TEMPLATE = "email/password-reset";
 
     @Transactional
     public boolean sendPasswordResetCode(String email) {
@@ -33,26 +27,6 @@ public class ForgotPasswordService {
         if (!emailExists) {
             log.info("Password reset request did not match a local account");
             return false;
-        }
-
-        if (emailService.isAvailable()) {
-            String result = emailService.sendTemplateEmail(
-                email,
-                "重置您的密码",
-                PASSWORD_RESET_TEMPLATE,
-                Map.of(
-                    "username", email,
-                    "verificationCode", "123456",
-                    "expiryMinutes", 10
-                ),
-                "PASSWORD_RESET"
-            ).name();
-
-            if (result.equals("FAILED") || result.equals("RATE_LIMITED")) {
-                log.warn("Email service did not accept the password reset request");
-            }
-        } else {
-            log.warn("Email service is unavailable, verification code will still be created");
         }
 
         verificationCodeService.sendVerificationCode(email, VerificationPurpose.PASSWORD_RESET, null);

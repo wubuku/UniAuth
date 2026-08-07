@@ -1,0 +1,526 @@
+#!/usr/bin/env bash
+
+# Self-contained HTTP/PostgreSQL end-to-end regression harness.
+# It starts a disposable PostgreSQL container and the real start.sh process,
+# then exercises authentication, Flyway, persistence, cookies, JWT, and Web3.
+
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uniauth-http-e2e.XXXXXX")"
+RUN_ID="$(date +%s)-$$"
+CONTAINER_NAME="uniauth-http-e2e-${RUN_ID}"
+DATABASE_NAME="uniauth_http_e2e_test"
+DATABASE_USER="uniauth"
+DATABASE_PASSWORD="uniauth-e2e-${RUN_ID}"
+DATABASE_PORT=""
+APP_PID=""
+APP_LOG="$TEMP_DIR/application.log"
+COOKIE_JAR="$TEMP_DIR/cookies.txt"
+SERVER_PORT="${UNIAUTH_E2E_SERVER_PORT:-}"
+
+fail() {
+    echo "FAIL: $1" >&2
+    if [ -s "$APP_LOG" ]; then
+        echo "Last application log lines:" >&2
+        tail -80 "$APP_LOG" >&2
+    fi
+    exit 1
+}
+
+terminate_process_tree() {
+    local process_id="$1"
+    local child
+
+    if ! kill -0 "$process_id" >/dev/null 2>&1; then
+        return
+    fi
+
+    while IFS= read -r child; do
+        if [ -n "$child" ]; then
+            terminate_process_tree "$child"
+        fi
+    done < <(pgrep -P "$process_id" 2>/dev/null || true)
+
+    kill -TERM "$process_id" >/dev/null 2>&1 || true
+}
+
+cleanup() {
+    local exit_code=$?
+    set +e
+
+    if [ -n "$APP_PID" ]; then
+        terminate_process_tree "$APP_PID"
+        wait "$APP_PID" >/dev/null 2>&1 || true
+    fi
+
+    if docker ps -a --format '{{.Names}}' 2>/dev/null \
+        | grep -Fxq "$CONTAINER_NAME"; then
+        docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    fi
+
+    rm -rf "$TEMP_DIR"
+    exit "$exit_code"
+}
+trap cleanup EXIT INT TERM
+
+for command_name in curl docker grep jq mvn node pg_isready pgrep psql python3; do
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        fail "required command is unavailable: $command_name"
+    fi
+done
+
+if ! docker info >/dev/null 2>&1; then
+    fail "Docker is unavailable"
+fi
+
+if [ -z "$SERVER_PORT" ]; then
+    SERVER_PORT="$(
+        python3 - <<'PY'
+import socket
+
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+    )"
+fi
+
+BASE_URL="http://127.0.0.1:${SERVER_PORT}"
+
+db_value() {
+    local sql="$1"
+    PGPASSWORD="$DATABASE_PASSWORD" psql \
+        -X -qAt -v ON_ERROR_STOP=1 \
+        -h 127.0.0.1 \
+        -p "$DATABASE_PORT" \
+        -U "$DATABASE_USER" \
+        -d "$DATABASE_NAME" \
+        -c "$sql"
+}
+
+post_json() {
+    local path="$1"
+    local payload="$2"
+    curl -sS -X POST "${BASE_URL}${path}" \
+        -H "Content-Type: application/json" \
+        --data "$payload"
+}
+
+request_status() {
+    local method="$1"
+    local path="$2"
+    shift 2
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -X "$method" \
+        "$@" \
+        "${BASE_URL}${path}"
+}
+
+create_wallet() {
+    (
+        cd "$PROJECT_DIR/frontend"
+        node --input-type=module <<'NODE'
+import { Wallet } from 'ethers';
+
+const wallet = Wallet.createRandom();
+process.stdout.write(JSON.stringify({
+  address: wallet.address.toLowerCase(),
+  privateKey: wallet.privateKey
+}));
+NODE
+    )
+}
+
+signed_challenge() {
+    local wallet_json="$1"
+    local address
+    local private_key
+    local nonce_response
+    local nonce_file
+
+    address="$(jq -er '.address' <<<"$wallet_json")"
+    private_key="$(jq -er '.privateKey' <<<"$wallet_json")"
+    nonce_response="$(curl -sS "${BASE_URL}/api/auth/web3/nonce/${address}")"
+    nonce_file="$(mktemp "$TEMP_DIR/web3-nonce.XXXXXX")"
+    printf '%s' "$nonce_response" > "$nonce_file"
+
+    (
+        cd "$PROJECT_DIR/frontend"
+        PRIVATE_KEY="$private_key" NONCE_FILE="$nonce_file" \
+            node --input-type=module <<'NODE'
+import fs from 'node:fs';
+import { Wallet } from 'ethers';
+
+const wallet = new Wallet(process.env.PRIVATE_KEY);
+const challenge = JSON.parse(fs.readFileSync(process.env.NONCE_FILE, 'utf8'));
+const signature = await wallet.signMessage(challenge.message);
+
+process.stdout.write(JSON.stringify({
+  walletAddress: wallet.address.toLowerCase(),
+  message: challenge.message,
+  signature,
+  nonce: challenge.nonce,
+  chainId: 1
+}));
+NODE
+    )
+}
+
+echo "HTTP E2E: starting disposable PostgreSQL"
+docker run -d --rm \
+    --name "$CONTAINER_NAME" \
+    -e "POSTGRES_DB=$DATABASE_NAME" \
+    -e "POSTGRES_USER=$DATABASE_USER" \
+    -e "POSTGRES_PASSWORD=$DATABASE_PASSWORD" \
+    -p 127.0.0.1::5432 \
+    postgres:16 >/dev/null
+
+DATABASE_PORT="$(
+    docker port "$CONTAINER_NAME" 5432/tcp \
+        | awk -F: 'NR == 1 {print $NF}'
+)"
+
+for _ in $(seq 1 60); do
+    if PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
+        -h 127.0.0.1 \
+        -p "$DATABASE_PORT" \
+        -U "$DATABASE_USER" \
+        -d "$DATABASE_NAME" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+if ! PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
+    -h 127.0.0.1 \
+    -p "$DATABASE_PORT" \
+    -U "$DATABASE_USER" \
+    -d "$DATABASE_NAME" >/dev/null 2>&1; then
+    fail "disposable PostgreSQL did not become ready"
+fi
+
+echo "HTTP E2E: starting the real application through start.sh"
+(
+    export SPRING_PROFILES_ACTIVE=test
+    export POSTGRES_HOST=127.0.0.1
+    export POSTGRES_PORT="$DATABASE_PORT"
+    export POSTGRES_DATABASE="$DATABASE_NAME"
+    export POSTGRES_USER="$DATABASE_USER"
+    export POSTGRES_PASSWORD="$DATABASE_PASSWORD"
+    export SERVER_PORT
+    export JWT_RSA_KEY_FILE="$TEMP_DIR/signing-key.ser"
+    export GOOGLE_CLIENT_ID=e2e-google
+    export GOOGLE_CLIENT_SECRET=e2e-google-secret
+    export GITHUB_CLIENT_ID=e2e-github
+    export GITHUB_CLIENT_SECRET=e2e-github-secret
+    export TWITTER_CLIENT_ID=e2e-x
+    export TWITTER_CLIENT_SECRET=e2e-x-secret
+    export APP_DEMO_DATA_ENABLED=false
+    export APP_DEMO_DATA_DISPOSABLE=false
+    export APP_EMAIL_SERVICE_URL=http://127.0.0.1:1
+    export APP_FRONTEND_URL="$BASE_URL"
+    export APP_WEB3_DOMAIN="127.0.0.1:${SERVER_PORT}"
+    exec "$PROJECT_DIR/start.sh"
+) >"$APP_LOG" 2>&1 &
+APP_PID=$!
+
+for _ in $(seq 1 150); do
+    if curl -fsS "${BASE_URL}/oauth2/jwks" >/dev/null 2>&1; then
+        break
+    fi
+    if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
+        fail "application process exited before becoming ready"
+    fi
+    sleep 1
+done
+if ! curl -fsS "${BASE_URL}/oauth2/jwks" >/dev/null 2>&1; then
+    fail "application did not become ready"
+fi
+
+echo "1/10 Verify Flyway-owned PostgreSQL startup"
+[ "$(db_value "
+    SELECT count(*)
+    FROM uniauth_flyway_schema_history
+    WHERE version = '1' AND type = 'SQL' AND success = true;
+")" = "1" ] || fail "Flyway V1 was not recorded as a successful SQL migration"
+[ "$(db_value "
+    SELECT count(*)
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = ANY (ARRAY[
+        'users',
+        'user_login_methods',
+        'web3_nonces',
+        'email_verification_codes',
+        'user_authorities',
+        'token_blacklist',
+        'spring_session',
+        'spring_session_attributes'
+      ]);
+")" = "8" ] || fail "Flyway did not create all eight managed tables"
+[ "$(db_value "SELECT to_regclass('public.flyway_schema_history') IS NULL;")" = "t" ] \
+    || fail "the default Flyway history table was unexpectedly created"
+
+echo "2/10 Verify fail-closed HTTP security boundaries"
+[ "$(request_status GET /api/user)" = "401" ] \
+    || fail "anonymous current-user request did not return 401"
+[ "$(request_status GET /api/auth/check-user)" = "403" ] \
+    || fail "removed auth route was not denied"
+[ "$(request_status POST /api/auth/not-allowlisted)" = "403" ] \
+    || fail "unknown auth route was not denied"
+[ "$(request_status GET /api/auth/web3/nonce/not-a-wallet)" = "400" ] \
+    || fail "invalid Web3 address did not return 400"
+
+jwks_response="$(curl -sS "${BASE_URL}/oauth2/jwks")"
+[ "$(jq -er '.keys[0].kty' <<<"$jwks_response")" = "RSA" ] \
+    || fail "JWKS did not expose an RSA key"
+[ "$(jq -er '.keys[0].alg' <<<"$jwks_response")" = "RS256" ] \
+    || fail "JWKS did not expose RS256"
+
+echo "3/10 Register and authenticate a local account"
+local_username="shell-user-${RUN_ID}"
+local_email="${local_username}@example.invalid"
+local_password="initial-password-${RUN_ID}"
+local_new_password="updated-password-${RUN_ID}"
+
+register_payload="$(
+    jq -cn \
+        --arg username "$local_username" \
+        --arg email "$local_email" \
+        --arg password "$local_password" \
+        '{
+          username: $username,
+          email: $email,
+          password: $password,
+          displayName: "Shell E2E User"
+        }'
+)"
+register_response="$(post_json /api/auth/register "$register_payload")"
+local_user_id="$(jq -er '.id' <<<"$register_response")"
+[ -n "$local_user_id" ] || fail "local registration did not return a user id"
+
+duplicate_status="$(
+    curl -sS -o "$TEMP_DIR/duplicate.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/register" \
+        -H "Content-Type: application/json" \
+        --data "$register_payload"
+)"
+[ "$duplicate_status" = "400" ] || fail "duplicate registration did not return 400"
+
+wrong_login_status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/login" \
+        --data-urlencode "username=$local_username" \
+        --data-urlencode "password=wrong-password"
+)"
+[ "$wrong_login_status" = "401" ] || fail "wrong password did not return 401"
+
+login_response="$(
+    curl -sS -c "$COOKIE_JAR" \
+        -X POST "${BASE_URL}/api/auth/login" \
+        --data-urlencode "username=$local_username" \
+        --data-urlencode "password=$local_password"
+)"
+[ "$(jq -er '.authenticated' <<<"$login_response")" = "true" ] \
+    || fail "local login was not authenticated"
+access_token="$(jq -er '.accessToken' <<<"$login_response")"
+refresh_token="$(jq -er '.refreshToken' <<<"$login_response")"
+
+echo "4/10 Verify protected APIs, persistence, and JWT contracts"
+current_user="$(
+    curl -sS \
+        -H "Authorization: Bearer $access_token" \
+        "${BASE_URL}/api/user"
+)"
+[ "$(jq -er '.userId' <<<"$current_user")" = "$local_user_id" ] \
+    || fail "current-user response did not match the registered account"
+
+cookie_user_status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -b "$COOKIE_JAR" \
+        "${BASE_URL}/api/user"
+)"
+[ "$cookie_user_status" = "200" ] \
+    || fail "access-token cookie did not authenticate the current-user endpoint"
+
+login_methods="$(
+    curl -sS \
+        -H "Authorization: Bearer $access_token" \
+        "${BASE_URL}/api/user/login-methods"
+)"
+[ "$(jq -er '.count' <<<"$login_methods")" = "1" ] \
+    || fail "new local account did not have exactly one login method"
+[ "$(jq -er '.loginMethods[0].authProvider' <<<"$login_methods")" = "local" ] \
+    || fail "local login method contract changed unexpectedly"
+
+introspection="$(
+    curl -sS -X POST "${BASE_URL}/oauth2/introspect" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        --data-urlencode "token=$access_token"
+)"
+[ "$(jq -er '.active' <<<"$introspection")" = "true" ] \
+    || fail "access token introspection was not active"
+[ "$(jq -er '.sub' <<<"$introspection")" = "$local_user_id" ] \
+    || fail "access token subject did not match the user id"
+[ "$(jq -er '.aud' <<<"$introspection")" = "resource-server" ] \
+    || fail "access token audience changed unexpectedly"
+
+[ "$(db_value "
+    SELECT count(*)
+    FROM user_login_methods
+    WHERE user_id = '$local_user_id'
+      AND auth_provider = 'LOCAL'
+      AND last_used_at IS NOT NULL;
+")" = "1" ] || fail "successful login did not persist last_used_at"
+
+echo "5/10 Refresh tokens and reject token type confusion"
+refresh_response="$(
+    curl -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+        -X POST "${BASE_URL}/api/auth/refresh"
+)"
+new_access_token="$(jq -er '.accessToken' <<<"$refresh_response")"
+new_refresh_token="$(jq -er '.refreshToken' <<<"$refresh_response")"
+[ "$new_access_token" != "$access_token" ] \
+    || fail "refresh did not rotate the access token"
+[ "$new_refresh_token" != "$refresh_token" ] \
+    || fail "refresh did not rotate the refresh token"
+
+refresh_as_bearer_status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -H "Authorization: Bearer $refresh_token" \
+        "${BASE_URL}/api/user"
+)"
+[ "$refresh_as_bearer_status" = "401" ] \
+    || fail "refresh token was accepted as an access token"
+
+access_as_refresh_status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/refresh" \
+        -H "Cookie: refreshToken=$access_token"
+)"
+[ "$access_as_refresh_status" = "401" ] \
+    || fail "access token was accepted as a refresh token"
+
+echo "6/10 Authenticate a new Web3 account with a local signature"
+web3_wallet="$(create_wallet)"
+web3_address="$(jq -er '.address' <<<"$web3_wallet")"
+web3_challenge="$(signed_challenge "$web3_wallet")"
+web3_login="$(post_json /api/auth/web3/verify "$web3_challenge")"
+[ "$(jq -er '.walletAddress' <<<"$web3_login")" = "$web3_address" ] \
+    || fail "Web3 login returned the wrong wallet address"
+[ "$(jq -er '.isNewUser' <<<"$web3_login")" = "true" ] \
+    || fail "first Web3 login was not marked as a new user"
+web3_user_id="$(jq -er '.userId' <<<"$web3_login")"
+
+replay_status="$(
+    curl -sS -o "$TEMP_DIR/web3-replay.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/web3/verify" \
+        -H "Content-Type: application/json" \
+        --data "$web3_challenge"
+)"
+[ "$replay_status" = "401" ] || fail "consumed Web3 nonce was replayable"
+
+wallet_status="$(curl -sS "${BASE_URL}/api/auth/web3/status/${web3_address}")"
+[ "$(jq -er '.isBound' <<<"$wallet_status")" = "true" ] \
+    || fail "Web3 wallet status was not persisted"
+
+repeat_web3_challenge="$(signed_challenge "$web3_wallet")"
+repeat_web3_login="$(post_json /api/auth/web3/verify "$repeat_web3_challenge")"
+[ "$(jq -er '.userId' <<<"$repeat_web3_login")" = "$web3_user_id" ] \
+    || fail "repeat Web3 login created a different user"
+[ "$(jq -er '.isNewUser' <<<"$repeat_web3_login")" = "false" ] \
+    || fail "repeat Web3 login was incorrectly marked as new"
+
+echo "7/10 Bind one Web3 wallet to the local account"
+binding_wallet="$(create_wallet)"
+binding_challenge="$(signed_challenge "$binding_wallet")"
+missing_binding_token_status="$(
+    curl -sS -o "$TEMP_DIR/missing-binding-token.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/web3/bind" \
+        -H "Content-Type: application/json" \
+        --data "$binding_challenge"
+)"
+[ "$missing_binding_token_status" = "401" ] \
+    || fail "Web3 wallet binding without an access token did not return 401"
+
+refresh_binding_status="$(
+    curl -sS -o "$TEMP_DIR/refresh-binding.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/web3/bind" \
+        -H "Authorization: Bearer $new_refresh_token" \
+        -H "Content-Type: application/json" \
+        --data "$binding_challenge"
+)"
+[ "$refresh_binding_status" = "401" ] \
+    || fail "a refresh token was accepted for Web3 wallet binding"
+
+binding_response="$(
+    curl -sS -X POST "${BASE_URL}/api/auth/web3/bind" \
+        -H "Authorization: Bearer $new_access_token" \
+        -H "Content-Type: application/json" \
+        --data "$binding_challenge"
+)"
+[ "$(jq -er '.errorCode' <<<"$binding_response")" = "SUCCESS" ] \
+    || fail "authenticated local account could not bind a Web3 wallet"
+
+second_binding_wallet="$(create_wallet)"
+second_binding_challenge="$(signed_challenge "$second_binding_wallet")"
+second_binding_status="$(
+    curl -sS -o "$TEMP_DIR/second-binding.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/web3/bind" \
+        -H "Authorization: Bearer $new_access_token" \
+        -H "Content-Type: application/json" \
+        --data "$second_binding_challenge"
+)"
+[ "$second_binding_status" = "400" ] \
+    || fail "a second Web3 wallet was accepted for the same user"
+
+[ "$(db_value "
+    SELECT count(*)
+    FROM user_login_methods
+    WHERE user_id = '$local_user_id';
+")" = "2" ] || fail "Web3 binding was not persisted as a second login method"
+
+echo "8/10 Run the email registration and password-reset HTTP flow"
+if ! DISPOSABLE_TEST_ENVIRONMENT=true \
+    BASE_URL="$BASE_URL" \
+    EMAIL="shell-email-${RUN_ID}@example.invalid" \
+    PASSWORD="$local_password" \
+    NEW_PASSWORD="$local_new_password" \
+    POSTGRES_HOST=127.0.0.1 \
+    POSTGRES_PORT="$DATABASE_PORT" \
+    POSTGRES_DATABASE="$DATABASE_NAME" \
+    POSTGRES_USER="$DATABASE_USER" \
+    POSTGRES_PASSWORD="$DATABASE_PASSWORD" \
+        "$PROJECT_DIR/scripts/test-email-registration.sh"; then
+    fail "email registration/password-reset subflow failed"
+fi
+
+echo "9/10 Verify logout cookie clearing"
+logout_headers="$TEMP_DIR/logout-headers.txt"
+logout_response="$(
+    curl -sS -D "$logout_headers" \
+        -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+        -X POST "${BASE_URL}/api/auth/logout"
+)"
+[ "$(jq -er '.message' <<<"$logout_response")" = "Logged out successfully" ] \
+    || fail "logout did not return the success contract"
+grep -qi 'set-cookie: accessToken=.*Max-Age=0' "$logout_headers" \
+    || fail "logout did not clear the access-token cookie"
+grep -qi 'set-cookie: refreshToken=.*Max-Age=0' "$logout_headers" \
+    || fail "logout did not clear the refresh-token cookie"
+
+echo "10/10 Verify final database invariants"
+[ "$(db_value "SELECT count(*) FROM web3_nonces;")" = "0" ] \
+    || fail "consumed Web3 nonces remained in the database"
+[ "$(db_value "
+    SELECT count(*)
+    FROM users
+    WHERE id = '$local_user_id' OR id = '$web3_user_id';
+")" = "2" ] || fail "expected local and Web3 users were not persisted"
+[ "$(db_value "
+    SELECT count(*)
+    FROM email_verification_codes
+    WHERE is_used = true;
+")" -ge "2" ] || fail "email verification and reset codes were not consumed"
+
+echo "PASS: HTTP/PostgreSQL/Flyway/Web3/email end-to-end checks completed"

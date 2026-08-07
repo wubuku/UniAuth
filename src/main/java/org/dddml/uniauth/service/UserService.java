@@ -120,7 +120,7 @@ public class UserService {
     /**
      * 本地用户登录 - 验证用户名和密码
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public UserDto login(String username, String password) {
         // 从登录方式表查找本地登录方式
         UserLoginMethod loginMethod = loginMethodService.findByLocalUsername(username);

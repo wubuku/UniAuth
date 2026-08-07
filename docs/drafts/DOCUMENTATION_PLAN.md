@@ -1,6 +1,6 @@
 # UniAuth 文档体系建设计划
 
-> 状态：执行中
+> 状态：执行中；PostgreSQL/Flyway 实施后的事实校准进行中
 > 基线日期：2026-08-07
 > 原则：已有文档不移动；新文档链接已有内容；当前事实以代码、配置和可执行验证为准。
 
@@ -15,14 +15,15 @@
 
 ## 当前库存
 
-审计范围内共有 36 份项目 Markdown：
+当前审计范围内共有 42 份项目 Markdown（不含技能包）：
 
 | 区域 | 数量 | 当前角色 |
 |------|------|----------|
 | 根目录及 `.gemini/` | 4 | 项目入口、代理上下文、历史验证记录 |
-| `docs/` 顶层 | 2 | 大型契约/集成规划，内容混合且存在漂移 |
+| `docs/` 顶层 | 7 | live guides、导航和大型历史契约 |
 | `docs/Perplexity/` | 8 | 2026 年 1 月生成的架构与实现参考，整体按历史材料处理 |
-| `docs/drafts/` | 20 | 规划、调查、集成指南、进度记录，状态差异较大 |
+| `docs/drafts/` | 21 | 规划、调查、集成指南、进度记录，状态差异较大 |
+| `docs/archive/` | 2 | database/legacy SQL 归档索引 |
 | 组件 README | 2 | 前端与 Python 示例说明，均存在端口或契约漂移 |
 
 技能包 `.agents/skills/project-docs/` 中的文档不计入项目文档库存。
@@ -33,7 +34,7 @@
 |------|--------------|
 | Java 版本、依赖、构建 | `pom.xml` |
 | 后端端口、profile、OAuth2、JWT、CORS | `src/main/resources/application*.yml` |
-| 数据库启动行为 | profile 配置、初始化器和 `schema-*.sql` |
+| 数据库启动行为 | profile 配置、Flyway migration、初始化器和 runtime guard |
 | 安全链和认证边界 | `src/main/java/org/dddml/uniauth/config/` |
 | API 行为 | controller、service、repository 和 entity |
 | 前端端口、代理、构建输出 | `frontend/vite.config.ts`、`frontend/package.json` |
@@ -74,7 +75,8 @@
 | P0 | 修复 live 文档、脚本和组件 README 的端口漂移 | 已完成 |
 | P0 | 为历史“已完成/生产就绪”声明增加明确状态说明 | 已完成 |
 | P1 | 更新根 README、AGENTS 和组件文档入口 | 已完成 |
-| P1 | 编写不增加新功能的全面加固实施规划 | 首版已完成，严格审查中 |
+| P1 | 编写不增加新功能的全面加固实施规划 | 已完成首版；持续按实施状态校准 |
+| P1 | 编写下一轮测试优先实施切片 | 已完成首版，严格审查中 |
 | P1 | 修复新增/修改文档的相对链接 | 待执行 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
@@ -100,18 +102,19 @@
 
 ## 已知事实与待修复项
 
-- 默认 `test` profile 指向 PostgreSQL，并在应用启动时删除全部用户和登录方式。
-- `dev` profile 同样会清空 SQLite 用户数据。
-- `db/migration/V*.sql` 当前没有 Flyway/Liquibase 执行器。
-- SQLite schema 缺少当前实体所需的部分表和列。
-- `mvn clean test` 成功，但仓库没有 Java 测试源码。
-- 前端 build 成功；lint 因缺少 ESLint 配置失败。
-- 邮箱验证码发送值与持久化值可能不同；密码重置模板仍含硬编码验证码。
+- `dev`、`test`、`prod` 已统一为显式 PostgreSQL，SQLite runtime 已退役。
+- Flyway V1 已接管 8 张认证/Session 表；旧 SQL 已归档到 runtime classpath 外。
+- Java 已有 PostgreSQL/Testcontainers 集成测试，当前完整门禁为 42 tests。
+- HTTP Shell E2E 当前 10/10，Mock Playwright 当前 12 tests，Python 当前 5 tests。
+- 前端 build 成功；lint 仍因缺少 ESLint 配置失败。
+- 邮箱验证码发送值已与持久化值一致；失败、频控和并发语义仍待修复。
 - token blacklist 尚未接入验证、刷新和登出流程。
-- Web3 的 `isNewUser`、bind 返回处理和 SIWE 消息绑定需要测试覆盖。
+- Web3 的 `isNewUser`、bind 返回处理和 EIP-191 字节长度已修复；
+  SIWE 字段绑定、nonce 原子消费和并发重放仍待修复。
+- `blacksheep_dev` 只读 baseline rehearsal 已通过，但 baseline apply 尚未执行。
 
-这些问题的实施顺序和验收门槛将在
-`HARDENING_IMPLEMENTATION_PLAN.md` 中定义。
+这些问题的总路线图见 `HARDENING_IMPLEMENTATION_PLAN.md`，下一轮实际顺序见
+`NEXT_HARDENING_IMPLEMENTATION_PLAN.md`。
 
 ## 验证计划
 

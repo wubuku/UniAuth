@@ -1,6 +1,7 @@
 # UniAuth 全面加固实施规划
 
-> 状态：In progress；Phase 0 的 H0.1-H0.3 已通过 2026-08-07 交付门禁，H1-H8 未实施
+> 状态：In progress；Phase 0 H0.1-H0.3 与 PostgreSQL/Flyway H1.1-H1.3
+> 已通过 2026-08-07 门禁；下一轮先扩充现有功能测试覆盖，再进入 H1.4+
 > 事实基线：2026-08-07
 > 实施范围：只修复、约束和验证现有能力，不增加新的用户功能
 > 安全前提：任何会启动 Spring 的验证都必须使用明确隔离、可丢弃的数据库
@@ -12,10 +13,34 @@
 | H0.1 关闭默认破坏性启动 | Verified | 无默认 profile；演示数据显式 opt-in、disposable 数据库名保护、无全表删除 |
 | H0.2 删除危险调试端点 | Verified | controller/caller 已删除；`/api/auth/**` 使用 method/path allowlist 和默认拒绝 |
 | H0.3 收紧敏感配置和日志 | Verified | secret fallback/输出已移除；Python JWT/JWKS 收紧；历史 RSA key 退出索引 |
-| H1-H8 | Not implemented | 仍按本文后续 phase 执行，不得从 Phase 0 的通过推断为已完成 |
+| H1.1 disposable PostgreSQL 测试基座 | Verified | Testcontainers PostgreSQL；自动化测试不读取 `.env` 或共享数据库 |
+| H1.2 schema 事实与迁移布局 | Verified | dev-derived 8 表 V1、legacy SQL runtime 外归档、结构指纹 |
+| H1.3 可执行 migration 链 | Verified | Flyway fresh/baseline、Hibernate validate、Session JDBC、SQLite 退役 |
+| H1.4-H8 | Not implemented | 仍按本文后续 phase 执行，不得从前述门禁推断为已完成 |
 
-本批次自动化和隔离 HTTP 证据见 [验证指南](../VERIFICATION.md)。H1-H8 必须分别完成
-其工作项和 release gate，不能从 Phase 0 的 Verified 状态推断为已完成。
+本批次自动化和隔离 HTTP 证据见 [验证指南](../VERIFICATION.md)。H1.4-H8 必须分别完成
+其工作项和 release gate。下一轮的实际顺序和测试矩阵见
+[下一轮加固实施计划](NEXT_HARDENING_IMPLEMENTATION_PLAN.md)。
+
+### 已完成实施批次：H1.1-H1.3
+
+本批建立 PostgreSQL 数据与迁移基础，没有把后续 JWT、邮箱或 Web3 正确性问题伪装成已完成：
+
+| 顺序 | 工作 | 退出条件 |
+|------|------|----------|
+| 1 | 用 Testcontainers PostgreSQL 替换 SQLite 集成测试基座 | 已完成 |
+| 2 | 固化实际 dev schema 基线并归档旧迁移 | 已完成 |
+| 3 | 引入 Flyway并切换唯一 schema 所有权 | 已完成 |
+| 4 | 退役 SQLite 运行与测试入口 | 已完成 |
+
+`blacksheep_dev` 已完成只读 rehearsal，但尚未执行 baseline apply。创建 Flyway history
+仍是独立、需要显式授权和精确 confirmation token 的操作，不属于普通测试门禁。
+
+### 下一轮实施批次：测试基础优先
+
+在 H1.4 或认证行为修复前，先补齐 OAuth2、JWT、refresh/logout、CORS/CSRF/cookie、
+email 并发、Web3 tamper/replay、Shell E2E 和 Playwright 覆盖。详细工作包、退出条件
+和连续三轮检查规则见 [下一轮加固实施计划](NEXT_HARDENING_IMPLEMENTATION_PLAN.md)。
 
 ## 1. 目标与边界
 
@@ -25,7 +50,8 @@
 本轮只处理现有能力的正确性、安全性、可测试性和可运维性：
 
 - 阻止默认启动清空数据，隔离演示数据初始化。
-- 建立可执行、可升级、可回滚演练的数据库迁移与测试基线。
+- 将 PostgreSQL 设为唯一受支持数据库，建立可执行、可升级、可回滚演练的
+  Flyway 迁移与 Testcontainers 测试基线。
 - 修复 JWT 密钥、校验、刷新、撤销、登出和内省链路。
 - 收敛 SecurityFilterChain、CSRF、CORS、cookie 和 OAuth2 redirect。
 - 修复邮箱验证码、注册、密码重置和 Web3/SIWE 的正确性缺口。
@@ -39,6 +65,7 @@
 - 不扩展授权模型、计费、审计产品能力或用户画像。
 - 不以 UI 重设计、性能优化或大规模架构重写替代安全修复。
 - 不直接把现有 `db/migration/V*.sql` 接入 Flyway 后启动应用。
+- 不继续维护 SQLite 运行时、schema parity 或 SQLite 测试兼容性。
 - 不在缺少发布证据时恢复“生产级”“生产就绪”“全部通过”等声明。
 
 ## 2. 实施前事实快照
@@ -50,17 +77,23 @@
 |------|----------|----------|------|
 | 默认启动 | `application.yml` 默认激活 `test` | `src/main/resources/application.yml` | 裸跑应用会连接 PostgreSQL |
 | 数据清空 | `dev`、`test` 初始化器都执行两个 `deleteAll()` | `DevEnvironmentInitializer`、`TestEnvironmentInitializer` | 每次启动删除用户和登录方式 |
-| 测试数据库 | `test` 默认回退到 `blacksheep_dev` 和密码 `123456` | `application-test.yml` | 容易误连共享库且弱凭据进入配置 |
-| 迁移 | `db/migration/V1-V8` 没有执行器 | `pom.xml`、`src/main/resources/db/migration/` | 新增 migration 文件不会生效 |
+| 测试数据库 | `test` 曾默认回退到 `blacksheep_dev` 和硬编码弱口令 | 历史 `application-test.yml` | 容易误连共享库且弱凭据进入配置 |
+| 迁移 | `db/migration` 中的 V1-V4、V6-V8 没有执行器，V5 缺失 | `pom.xml`、`src/main/resources/db/migration/` | 新增 migration 文件不会生效 |
 | 迁移一致性 | 旧 migration 混合 PostgreSQL/SQLite、旧字段和不同 ID 类型 | `V2`、`V3`、`V4`、`V6` | 不能通过添加 Flyway 依赖直接启用 |
-| PostgreSQL schema | 缺少 `email_verification_codes`，含实体未映射的 Web3 列 | `schema-postgresql.sql`、entity | fresh schema 与运行模型不一致 |
-| SQLite schema | 缺少邮箱验证码、Web3 nonce 和部分登录方式列 | `schema-sqlite.sql` | `dev` 无法覆盖完整现有功能 |
-| SQLite 外键 | schema 声明 FK，但连接未显式执行 `PRAGMA foreign_keys=ON` | SQLite datasource/schema | 外键与级联约束可能只存在于文本中 |
+| 仓库 PostgreSQL schema | `schema-postgresql.sql` 缺少 `email_verification_codes`，含实体未映射的 Web3 列 | tracked SQL、entity | 不能作为 Flyway 基线 |
+| 实际 dev PostgreSQL | 2026-08-07 只读核验确认 8 张 UniAuth 表完整存在，含 email code 与 Spring Session | `blacksheep_dev` schema-only export | 获准作为新 V1 基线的权威输入 |
+| 实际 dev 数据不变量 | UUID/user FK/provider/purpose/primary/token type 定向检查均为 0 异常；存在 1 组重复的未使用 email code `(email,purpose)` | 2026-08-07 只读聚合 SQL | 可 baseline；H1.4 上唯一约束前必须显式修复重复 challenge |
+| 实际 dev 类型/nullability | `UserLoginMethod.linkedAt/lastUsedAt` 是 `Instant`，实际列仍是无时区 timestamp；多项 entity 非空字段在数据库允许 null | entity、实际 dev PostgreSQL | V1 保留事实，H1.4 必须用 V2+ 显式对齐 |
+| 实际 dev 索引 | email code 只有主键索引；users email/username、blacklist jti/expires 存在重复索引 | `pg_indexes`、repository 查询 | V1 保留事实，H1.4 补查询索引并清理冗余 |
+| 共享 schema | `blacksheep_dev.public` 同时包含大量非 UniAuth 表，且没有 Flyway history table | `information_schema`、`to_regclass` | Flyway history/clean 必须与其他系统隔离 |
+| Flyway 版本 | Spring Boot 3.3.4 管理 Flyway `10.10.0`；当前未声明依赖 | effective POM、`pom.xml` | 应使用 Boot 管理版本和 PostgreSQL database module |
+| SQLite | 当前 `dev`、启动脚本和一项 HTTP 集成测试仍依赖 SQLite；schema 不完整 | profile、script、test、schema | 已决定退役，不能先删后测 |
 | Session | `prod` 不自动创建 Spring Session 表 | `application-prod.yml` | 部署依赖外部建表但无统一迁移证明 |
-| Schema 导出 | 未导出 `email_verification_codes`，含密码回退 | `scripts/export-schema-pg.sh` | 备份/核对不完整，凭据策略不安全 |
+| Schema 导出 | 当前脚本要求显式 `POSTGRES_*`、覆盖 8 张表、拒绝部分导出并原子落盘 | `scripts/export-schema-pg.sh`、2026-08-07 实际执行 | 可作为基线采集器，仍需补充结构指纹与 restore 验证 |
+| 基线导出证据 | 临时 schema-only 导出为 173 行，SHA-256 为 `a82eb9af8043f6049b8765af945aa2fbac6a76388e4a32e558a04e08b68bb69c` | 2026-08-07 实际导出 | 实施时须重新导出并把受审查版本纳入 V1 |
 | Schema 资产边界 | PostgreSQL schema 文件尾部的块注释含 DELETE/UPDATE 运维示例 | `schema-postgresql.sql` | 当前不会执行，但可执行 schema 资产混入运维指令，后续编辑/导出时容易误启用 |
 | Schema 管理重叠 | `test` 同时启用 SQL init、Hibernate `update`、Spring Session JDBC init；`dev` 同时启用 SQL init 与 Session init | `application-test.yml`、`application-dev.yml` | 多个机制可能并行创建或修改同一 schema，无法证明唯一演进来源 |
-| Schema 工具失败语义 | export 使用 `set -e` + `((count++))`，并用 `pg_dump ... || true` | `scripts/export-schema-pg.sh` | 可能提前退出或把部分导出报告为成功 |
+| Schema 工具失败语义 | export 已使用临时文件、严格错误传播和缺表拒绝策略 | `scripts/export-schema-pg.sh`、2026-08-07 实际执行 | H1 需保持该行为并增加恢复闭环 |
 | 公共认证边界 | `/api/auth/**` 全部 `permitAll` 且禁用 CSRF | `AuthApiConfig` | 公开与需认证端点混在同一 matcher |
 | 调试端点 | check-user、generate-hash、create-test-user、reset-password 可达 | `AuthController` | 用户枚举、明文回显、任意建号/改密 |
 | Provider token 诊断 | `/api/validate-*-token` 及 `JwtValidationService` 仍被前端/模板调用 | `ApiAuthController`、frontend、templates | 暴露无核心流程依赖的 provider token/用户信息诊断面 |
@@ -73,8 +106,8 @@
 | Provider email | OAuth 建号统一设置 `emailVerified=true`，Google/X 未执行明确可信度策略 | `SecurityConfig`、`UserService` | 未验证/合成 email 可能被误作可信身份属性 |
 | Provider 主体标识 | OAuth user-info 的稳定用户 ID 未统一校验非空、类型和长度 | `SecurityConfig`、`UserService` | 畸形 provider 响应可能进入建号/绑定，且并发首次登录的失败语义不可证明 |
 | Provider 来源 | 部分逻辑通过 user-info 属性名猜测 Google/GitHub/X | `SecurityConfig`、`ApiAuthController` | 属性重叠或畸形响应可能造成 provider 命名空间混淆 |
-| Canonical email schema | `users.email` 为 `NOT NULL UNIQUE`，无邮箱的 OAuth/Web3 账户只能写合成地址 | entity、PostgreSQL/SQLite schema | 合成标识与已验证邮箱混在同一身份字段，和邮箱信任规则冲突 |
-| ORM/schema nullability | `UserLoginMethod.user` 声明 `nullable=true`，两套 schema 的 `user_id` 都是 `NOT NULL` | `UserLoginMethod.java`、PostgreSQL/SQLite schema | ORM 元数据与数据库身份不变量冲突，后续迁移可能只修一侧 |
+| Canonical email schema | `users.email` 为 `NOT NULL UNIQUE`，无邮箱的 OAuth/Web3 账户只能写合成地址 | entity、实际 dev PostgreSQL | 合成标识与已验证邮箱混在同一身份字段，和邮箱信任规则冲突 |
+| ORM/schema nullability | `UserLoginMethod.user` 声明 `nullable=true`，实际 dev PostgreSQL 的 `user_id` 是 `NOT NULL` | entity、实际 dev PostgreSQL | ORM 元数据与数据库身份不变量冲突 |
 | CORS | YAML 与三个 Java 配置重复 | `application.yml`、`CorsConfig`、`WebConfig`、`WebMvcConfig` | 实际策略依赖覆盖顺序 |
 | Cookie | local、OAuth2、refresh、Web3 的 Secure 设置不同 | 多个 controller、`SecurityConfig` | 本地不可用或生产降级，行为不一致 |
 | Session cookie 配置 | cookie 属性写在不存在的 `spring.session.cookie.*` 前缀 | `application.yml`、`application-prod.yml`、Boot 3.3.4 metadata | Secure/SameSite 等声明实际可能未生效 |
@@ -155,7 +188,8 @@
 15. OAuth2 账户绑定只能由已认证用户显式发起的、服务端保存且单次消费的绑定意图触发；
     access cookie、Referer 或普通登录入口都不能隐式改变账户关联。
 16. 每个用户必须恰好有一个 primary 登录方式；数据库约束负责“至多一个”，
-    受锁保护的事务负责创建、切换和删除后的“至少一个”。
+    条件更新/CAS 事务优先负责创建、切换和删除后的“至少一个”。只有在所选隔离级别下
+    无法证明 CAS 方案维持不变量时，才允许使用范围严格受限的单用户锁。
 17. 绑定、增加、删除或切换登录方式等敏感账户操作必须要求最近认证；
     最近认证依据是初次认证时记录且 refresh 时保持不变的 `auth_time`，不能使用新 token 的 `iat` 冒充。
 18. email 身份在所有入口使用同一规范化规则，数据库唯一性与查询语义必须一致。
@@ -171,7 +205,8 @@
 24. 外部邮件投递必须由可恢复、幂等的持久化状态机协调，不能把数据库事务和网络调用伪装成原子操作。
 25. migration 是 schema 的唯一写入者；启用后 SQL init/Hibernate update 必须关闭，
     且版本化 migration 遇到未知漂移必须失败，不能用宽泛 `IF NOT EXISTS` 静默掩盖。
-26. SQLite 测试必须实际启用外键并验证约束；文本中存在 FOREIGN KEY 不算 parity。
+26. PostgreSQL 是唯一受支持数据库；`dev`、`test`、`prod`、集成测试和 migration
+    不得保留 SQLite 旁路或双 schema 写入路径。
 27. readiness 只有在 migration、数据库、Session 和签名密钥全部可用后才成功；
     备份、日志和代理不得泄露认证中间态或凭据。
 28. refresh token reuse 必须撤销整条 token family，包括已经轮换出的后继 token；
@@ -245,7 +280,7 @@ Phase 2/3 联合批次（H2.5 token transport + H3 HTTP 安全）
 | Gate | 必须满足的条件 | 未满足时 |
 |------|----------------|----------|
 | G0 止损 | 默认不清库；危险测试端点不可达；无默认共享库密码 | 不允许启动集成环境 |
-| G1 数据 | 空库建表、升级、回滚演练、PostgreSQL/SQLite parity 和最小持久安全审计测试通过 | 不允许合入业务修复 |
+| G1 数据 | PostgreSQL 空库 migrate、既有库 baseline/upgrade、回滚恢复、SQLite 退役和最小持久安全审计测试通过 | 不允许合入业务修复 |
 | G2 Token/HTTP | JWT 矩阵、刷新重放、撤销、CSRF、CORS、redirect 测试通过 | 不允许外部联调 |
 | G3 认证流程 | email/password/Web3 成功与失败路径通过并发和重放测试 | 不允许候选发布 |
 | G4 跨端 | React build/lint/test、Python test、契约测试全部通过 | 不允许发布 |
@@ -429,6 +464,8 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 
 ### H1.1 建立 disposable 测试数据库
 
+> 实施状态：Verified，2026-08-07。
+
 **涉及文件**
 
 - `pom.xml`
@@ -444,22 +481,24 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 **实施**
 
 1. 使用 Testcontainers PostgreSQL 为集成测试提供随机、一次性数据库。
-2. SQLite 测试优先使用临时文件；若使用 memory mode，必须配置共享连接语义或单连接池，
-   避免每个 JDBC connection 得到不同数据库。
-3. 测试 profile 禁止 runtime demo initializer 和外部 OAuth/mail 调用。
-4. 为外部邮件和 provider 使用 stub/mock server。
-5. Maven 输出必须包含真实 test count。
-6. 每个 SQLite connection 显式启用 `PRAGMA foreign_keys=ON`，并设置经过测试的 busy timeout；
-   datasource checkout 后通过查询断言 pragma 生效。
+2. 引入 Boot 管理的 Testcontainers 依赖，不声明独立版本；抽取可复用的
+   PostgreSQL container/service-connection 基座，避免每个测试自行拼接固定连接串。
+3. 把现有 `AuthApiSecurityIntegrationTest` 从 `@ActiveProfiles("dev")` + 临时 SQLite
+   迁移到 PostgreSQL container，先保持其 HTTP 安全断言不变。
+4. 测试 profile 禁止 runtime demo initializer 和外部 OAuth/mail 调用。
+5. 为外部邮件和 provider 使用 stub/mock server。
+6. Maven 输出必须包含真实 test count。
 7. 本地缺少容器时只允许通过显式命令跳过标记清楚的 PostgreSQL 集成组；
    CI 和 release gate 缺少容器能力必须失败，不能以 skip 变绿。
+8. 集成测试不得读取仓库 `.env`，不得连接 `blacksheep_dev` 或任何固定数据库。
 
 **测试**
 
 - 并行运行两次测试不会共享数据库。
-- 测试完成后容器/临时文件被清理。
+- 测试完成后容器及其 volume 被清理。
 - 未安装容器环境时不会回退到 `blacksheep_dev`。
-- SQLite orphan insert、parent delete cascade 和并发写入按预期失败/成功。
+- 现有 HTTP 安全集成测试在 PostgreSQL 上保持原断言。
+- PostgreSQL foreign key、cascade、unique、timestamp/JSONB 和 Spring Session 基础行为可执行。
 - CI 强制执行 PostgreSQL 集成组并报告非零数量。
 
 **回滚**
@@ -472,40 +511,66 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 
 ### H1.2 冻结当前 schema 事实并选择迁移布局
 
+> 实施状态：Verified，2026-08-07。
+
 **涉及文件**
 
 - `schema-postgresql.sql`
 - `schema-sqlite.sql`
+- `data-postgresql.sql`
+- `data-sqlite.sql`
 - `src/main/resources/db/migration/V*.sql`
 - `scripts/schema-blacksheep_dev-*.sql`
-- 新增 migration 说明/ADR
+- `scripts/export-schema-pg.sh`
+- 新增 baseline provenance/迁移说明
 
 **前置条件**
 
 - H1.1 完成。
-- 获得每类已部署 PostgreSQL schema 的只读导出；没有真实环境时明确记录未知。
+- 使用获准的实际 `blacksheep_dev` 做只读 schema 导出；不得读取或复制用户明细。
+- 获得其他已部署 PostgreSQL schema 的只读导出；没有其他真实环境时明确记录未知。
 
 **实施**
 
-1. 对 entity、PostgreSQL schema、SQLite schema、历史 migration 和数据库导出建立列级矩阵。
-2. 确认哪些列仍被代码读写，哪些只是历史遗留。
-3. 选择 vendor-specific migration 目录，推荐：
-   `db/migration/postgresql/` 与 `db/migration/sqlite/`。
-4. 现有 `V1-V8` 标记为 legacy 输入，不把其目录直接配置为执行位置。
-5. PostgreSQL 作为生产 canonical schema；SQLite 必须覆盖同一现有功能，
-   允许类型表达不同，不允许缺表/缺业务列。
-6. 明确已有数据库 baseline/version 标记策略和空库安装策略。
-7. 从可执行 schema 资产移除块注释中的 DELETE/UPDATE/诊断查询等运维示例；
+1. 将 2026-08-07 实际 dev 导出的以下 8 张表定义为 V1 权威输入：
+   `users`、`user_login_methods`、`web3_nonces`、`email_verification_codes`、
+   `user_authorities`、`token_blacklist`、`spring_session`、
+   `spring_session_attributes`。
+2. 重新执行 schema-only 导出，记录来源、PostgreSQL server version、导出时间、
+   表清单、脚本版本和 SHA-256；导出物不得包含数据、owner、grant 或凭据。
+3. 对 entity、实际 dev 导出、tracked PostgreSQL schema、Spring Session 3.3.2
+   官方 PostgreSQL DDL 和历史 migration 建立列级矩阵；实际 dev 导出决定 V1，
+   差异进入 V2+，不得为了“清理”偷偷改写 baseline。
+4. 确认哪些列仍被代码读写，哪些只是历史遗留。当前实际 dev 表中的
+   `chain_id`、`web3_nonce`、`wallet_metadata` 未被 entity 完整映射，只作为
+   baseline 事实保留，后续通过 expand/contract 处理。
+5. 唯一 runtime location 固定为 `classpath:db/migration/postgresql`。
+6. 将现有 V1-V4/V6-V8（V5 缺失）及四份手写 SQL init schema/data 作为 legacy
+   输入归档到 `docs/archive/database/legacy-sql/` 等 runtime classpath 之外的位置，
+   保留 Git 历史和说明，不删除其 provenance，也不让 Flyway 扫描。
+7. PostgreSQL 是唯一 canonical schema；`schema-sqlite.sql`、`data-sqlite.sql`、
+   SQLite driver/dialect、SQLite 查看脚本和 SQLite 测试入口进入 H1.3 退役清单。
+8. `blacksheep_dev.public` 包含其他系统表，因此 Flyway 使用专用
+   `uniauth_flyway_schema_history`，禁止使用 `clean`，migration 只操作明确列出的
+   UniAuth 对象。
+9. 空库通过 V1 创建 8 张表；已有库只有在 8 张表结构指纹和必要数据不变量完全匹配时，
+   才允许显式 baseline 到 version `1`。`baseline-on-migrate` 保持关闭，
+   未识别 schema 必须失败。
+10. 从可执行 schema 资产移除块注释中的 DELETE/UPDATE/诊断查询等运维示例；
    当前这些语句不会执行，但仍应迁入文档。清理任务进入受测的应用 job/运维命令，
    示例 SQL 只放文档且默认不可执行。
-8. 记录每个 legacy migration 的 vendor、前置 schema 和破坏性风险，
+11. 记录每个 legacy migration 的 vendor、前置 schema 和破坏性风险，
    特别标明 V3 的 SQLite integer ID 重建与 PostgreSQL UUID 模型不兼容。
 
 **测试**
 
-- 自动 schema diff 报告能识别缺表、缺列、nullability、unique/index 和枚举值差异。
+- 自动 schema diff 报告能识别缺表、缺列、类型、nullability、default、
+  primary/foreign key、unique/check/index 和 enum 字符串差异。
 - legacy migrations 不在运行时 location 中。
 - schema/migration 可执行目录不含示例用户 UPDATE、清理 DELETE 或未审查 DML。
+- V1 内容可追溯到受审查的 dev schema-only 导出，且不包含 8 张表之外的共享对象。
+- 不匹配 8 表指纹、缺表、额外未识别 auth 列或已经存在其他 Flyway history 的库
+  均被 baseline guard 拒绝。
 
 **回滚**
 
@@ -517,71 +582,94 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 
 ### H1.3 建立可执行 migration 链
 
+> 实施状态：Verified，2026-08-07；`blacksheep_dev` baseline apply 尚未执行。
+
 **涉及文件**
 
 - `pom.xml`
 - `application-dev.yml`
 - `application-test.yml`
 - `application-prod.yml`
+- `scripts/runtime-guard.sh`
+- `start.sh`
+- `start-with-frontend.sh`
+- `src/test/java/**`
+- `DemoDataInitializer.java`
 - `UserEntity.java`
 - `UserLoginMethod.java`
-- 新 vendor-specific migration 文件
-- legacy `db/migration/V*.sql`
+- `src/main/resources/db/migration/postgresql/V1__baseline_uniauth_auth_schema.sql`
+- legacy SQL 的 runtime 外归档目录
 
 **前置条件**
 
 - H1.2 schema 矩阵和 baseline 策略通过评审。
-- 候选迁移工具及锁实现必须在本项目选定版本上证明同时支持 PostgreSQL 和 SQLite；
-  若单一工具不能满足两者，则先记录 vendor-specific runner/替代方案，不因现有文件名
-  默认假设 Flyway 可直接执行两套 migration。
+- 实际 dev 导出的 V1 候选已在一次性 PostgreSQL 上恢复并通过结构 diff。
+- 不直接对 `blacksheep_dev` 创建 history table；先完成 fresh 和 existing-schema rehearsal。
 
 **实施**
 
-1. 采用经兼容性测试选定的 migration runner；基于现有命名可优先评估 Flyway，
-   但必须使用新 location，并记录 PostgreSQL/SQLite 的工具版本、DDL 事务边界、
-   checksum、repair 和 lock 语义。单一工具不能可靠覆盖两种数据库时，允许使用
-   vendor-specific runner，但每个 profile 仍只能有一个 schema 写入者和一条版本链。
-2. 建立全新空库 baseline，包含 users、login methods、authorities、email code、
-   Web3 nonce、token blacklist 和 Spring Session。
-3. 为已存在数据库编写带显式 precondition/assertion 的 upgrade migration，不依赖 Hibernate `update`；
-   对未知列型、约束或重复数据 fail fast，不用 blanket `IF NOT EXISTS` 把漂移当成功。
-4. 统一 `TWITTER`/`X`：数据库持久化值保持 `TWITTER`，外部 registration id 保持 `x`。
-5. 统一 timestamp 时区类型、token_type 值、UUID 长度、nullability 和唯一约束。
-   `users.email` 改为可空且只允许已验证值；使用数据库约束或等价事务不变量保证
-   `email IS NULL OR email_verified = true`，非空 canonical email 继续保持规范化唯一。
-   同步把 `UserEntity.email` 的 JPA 映射改为可空，并把 `UserLoginMethod.user` 映射改为
-   非空；entity、PostgreSQL 和 SQLite 对同一字段的 nullability、长度和关系约束必须一致。
-6. 所有共享环境设置 `ddl-auto: validate`；schema 修改只来自 migration。
-7. migration 在应用接收流量前执行，失败时应用不得继续启动。
-8. migration 启用后所有 profile 关闭 `spring.sql.init` schema/data 写入，
+1. 在 `pom.xml` 增加 Boot 3.3.4 管理的 `flyway-core` 和
+   `flyway-database-postgresql`，不单独覆盖 Flyway `10.10.0` 版本。
+2. 新建 PostgreSQL-only runtime location，并用受审查的实际 dev 导出生成
+   `V1__baseline_uniauth_auth_schema.sql`。V1 精确复现当前可用结构，不夹带 H1.4
+   的约束重塑；所有改进从 V2 开始。
+3. Flyway 固定使用 `uniauth_flyway_schema_history`、`baseline-on-migrate=false`、
+   `clean-disabled=true`、`validate-on-migrate=true`、`out-of-order=false`。
+4. 为已有库提供 guarded baseline 工具：先做 schema-only 备份、8 表结构指纹、
+   必要数据不变量和 history 冲突检查，再要求显式确认，把匹配库标记到 version `1`。
+   guard 失败不得建议 `repair` 或强制插入 history row。
+5. fresh 数据库执行 V1；匹配的已有数据库只执行显式 baseline，不重放 V1。
+   后续 V2+ 同时服务 fresh 和已 baseline 的数据库。
+6. `dev`、`test`、`prod` 全部切换到 PostgreSQL；交互启动脚本要求显式
+   `POSTGRES_*`，`dev` 只接受显式 allowlist 中的 dev/test/demo 目标，
+   包括已批准的 `blacksheep_dev`。自动化测试只用 container。
+7. 移除 `sqlite-jdbc`、`hibernate-community-dialects`、SQLite datasource/profile
+   配置、四份已归档的 SQL init schema/data、`view-db.sh`、`DemoDataInitializer`
+   的 SQLite target 分支和 SQLite-specific test setup；历史说明只在 archive/index
+   中保留。
+8. 所有 profile 设置 `ddl-auto: validate`；schema 修改只来自 Flyway。
+9. Flyway 在 JPA、repository、Session 和 HTTP listener 可用前完成 migration；
+   migration 失败时应用不得继续启动或报告 readiness。
+10. Flyway 启用后所有 profile 关闭 `spring.sql.init` schema/data 写入，
    Hibernate 仅使用 `validate`，并关闭 `spring.session.jdbc.initialize-schema`；
    不允许 SQL init、Hibernate update、Spring Session JDBC init 和 migration
    并行管理同一表。
-9. 多实例部署使用 migration lock/独立 migration job；SQLite 不支持事务 DDL 的步骤
-   采用临时表、校验、原子 rename 和备份恢复策略。
+11. Spring Session 表采用实际 dev 导出且与 Spring Session 3.3.2 官方 PostgreSQL DDL
+    交叉验证，切换后用真实 session create/read/delete 证明可用。
+12. 多实例部署依赖 Flyway PostgreSQL lock 或独立 migration job；同一版本只允许一个
+    migration owner，失败实例不得绕过校验继续启动。
+13. `TWITTER`/`X`、timestamp、email nullability、login-method shape、primary 约束等
+    结构改进保留到 H1.4 的 V2+，避免 baseline 与 hardening 变更混在同一不可审查脚本。
 
 **测试**
 
-- PostgreSQL/SQLite 空库 migrate -> validate。
-- 从代表性旧 schema migrate -> validate。
-- 在 CI 使用锁定的实际工具版本分别执行 PostgreSQL/SQLite migration，证明不是只依据
-  文档或文件命名推断兼容；工具升级时重复该矩阵。
+- PostgreSQL 空库 Flyway migrate -> Hibernate validate。
+- 把 V1 导出恢复到一次性 PostgreSQL，执行 guarded baseline -> validate。
+- 从 baseline clone 执行 V2+ upgrade -> validate；下一轮没有 V2 时也必须证明
+  baseline 后应用可启动且 migration info/validate 正常。
 - 重复启动不重复改表。
-- migration 中途失败后的恢复/重跑演练。
+- checksum 被修改、未知 auth 列/约束、缺表、错误 history table 和中途失败时
+  启动必须失败；恢复/forward-fix 流程完成演练。
 - Spring Session 表可被框架实际读写。
-- 人为制造未知列型/缺约束时 migration 失败而不是因 `IF NOT EXISTS` 通过。
 - 启动日志和数据库审计证明只有 migration 写 schema，SQL init、Hibernate update
   和 Spring Session JDBC init 没有旁路。
+- repository/HTTP 集成测试确认用户、登录方式、邮箱 code、Web3 nonce 和 token blacklist
+  至少完成代表性 insert/read/update/delete，不调用真实 OAuth、邮件或 Web3 外部服务。
+- `mvn clean compile test-compile`、完整 `mvn test`、脚本语法检查通过；
+  frontend 与 Python 基线验证不得因数据库基础改动回归。
 
 **回滚**
 
 - 应用版本应兼容 expand 阶段 schema；数据库优先 forward-fix。
 - migration 已进入共享环境后不得改写 checksum。
+- SQLite 删除只能通过回滚整个 H1.1-H1.3 批次恢复；不能让 PostgreSQL 与 SQLite
+  两套 schema owner 长期并存。
 
 **完成定义**
 
 - `db/migration` 不再是“看起来存在但不会执行”的目录。
-- fresh 和 upgrade 两条路径都有自动化证据。
+- fresh、existing-schema baseline 和后续 upgrade 三条路径都有自动化证据。
+- SQLite 不再是可启动、可测试或文档承诺的受支持路径。
 
 ### H1.4 修复 schema 工具与约束
 
@@ -600,56 +688,70 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 
 **实施**
 
-1. export 脚本包含 `email_verification_codes` 和所有实际表。
-2. 脚本只读环境变量，不解析/回退弱密码；不在输出中打印密码。
-3. 表清单从受版本控制的 canonical inventory 生成或校验，覆盖后续新增的
+1. 保持 export 脚本当前的显式环境变量、完整 8 表、临时文件和 fail-fast 行为，
+   增加与 Flyway migration/schema history 的一致性检查。
+2. 表清单从受版本控制的 canonical inventory 生成或校验，覆盖后续新增的
    security audit event、refresh family、binding intent、email outbox/rate-limit 表，
    不维护静默过期的手写子集。
-4. export 使用临时输出文件和严格错误传播；修复 `set -e` 下算术返回码，
-   禁止 `pg_dump || true`，任一表导出失败时删除临时文件并返回非零。
-5. restore 使用 `ON_ERROR_STOP`/事务或等价 fail-fast 选项，只有完整恢复并通过 schema
+3. restore 使用 `ON_ERROR_STOP`/事务或等价 fail-fast 选项，只有完整恢复并通过 schema
    校验后才把导出物标记为成功。
-6. 为“每用户单一 primary”“每用户每 provider 唯一”“nonce 唯一”
+4. 为“每用户单一 primary”“每用户每 provider 唯一”“nonce 唯一”
    等不变量增加数据库约束和可验证事务策略：
-   PostgreSQL 使用 `WHERE is_primary = true` 的 partial unique index 保证至多一个；
-   SQLite 使用目标版本支持并经集成测试验证的等价 partial unique index。
-7. primary 创建、切换、删除在同一事务中锁定所属 user（或专用 invariant row）；
+   PostgreSQL 使用 `WHERE is_primary = true` 的 partial unique index 保证至多一个。
+5. primary 创建、切换、删除优先使用带预期状态的条件更新/CAS，并在同一事务内完成；
    清除旧 primary、设置新 primary 任一步失败均整体回滚，禁止先提交为零再补写。
-8. 删除登录方式也使用同一把锁，在锁内重新计数并拒绝删除最后一个；
-   不能依赖 controller 预检查或一次无锁 `findByUserId`。
-9. 上约束前扫描并显式修复零个/多个 primary、零登录方式用户和重复规范化 email；
-   修复规则、报告和回滚点
-   必须留痕，不按查询返回顺序静默选择。
-10. email 存储前执行统一 trim/canonicalization；PostgreSQL/SQLite 通过规范化存储值
+   若并发测试和隔离级别分析证明 CAS 无法维持“至少一个”，才使用范围严格受限的
+   单用户行或专用 invariant row 锁；不得锁表或把宽泛悲观锁作为默认路径。
+6. 删除登录方式使用带预期计数/primary 状态的条件删除或等价 CAS，在数据库内重新确认
+   仍有替代方式并拒绝删除最后一个；若写偏斜在所选隔离级别下仍不可避免，才复用前述
+   单用户锁。不能依赖 controller 预检查或一次无锁 `findByUserId`。
+7. 上约束前扫描并显式修复零个/多个 primary、零登录方式用户、重复规范化 email
+   和同一 `(email,purpose)` 的多条未使用 verification code。修复规则、报告和回滚点
+   必须留痕，不按查询返回顺序静默选择；对 transient code 只能按明确的创建时间/
+   过期规则保留一条并失效其余记录。
+8. email 存储前执行统一 trim/canonicalization；PostgreSQL 通过规范化存储值
    和唯一约束保证大小写语义一致，email 型 local username 使用同一规则。
-11. 清理 entity 未映射但 schema 宣称在用的 Web3 列；采用 expand/contract。
-12. 为过期 email code、nonce、blacklist 建立明确清理策略和测试。
-13. 对非 LOCAL 登录方式要求规范化后的 `provider_user_id` 非空且长度受限；
+9. 清理 entity 未映射但 schema 宣称在用的 Web3 列；采用 expand/contract。
+10. 为过期 email code、nonce、blacklist 建立明确清理策略和测试。
+11. 对非 LOCAL 登录方式要求规范化后的 `provider_user_id` 非空且长度受限；
     数据库保持 `(auth_provider, provider_user_id)` 唯一，应用不能用 null、display name、
     email 或可变 username 代替 provider 稳定主体标识。
-14. PostgreSQL/SQLite 增加等价的 login-method shape constraints：
+12. PostgreSQL 增加 login-method shape constraints：
     LOCAL 必须有规范化 `local_username` 和非空、可识别版本的 `local_password_hash`，
     且不得携带 provider subject；GOOGLE/GITHUB/TWITTER/WEB3 必须有 provider subject，
     且不得携带 local username/hash。`auth_provider`、token type 和 purpose 使用允许值约束，
     迁移期脏数据先报告并显式处置，不用放宽最终约束。
-15. 定义单一 username canonicalizer。普通非 email local username 先 trim、Unicode NFKC、
+13. 定义单一 username canonicalizer。普通非 email local username 先 trim、Unicode NFKC、
     `Locale.ROOT` 小写，再按明确 ASCII allowlist 和长度约束校验；原展示名放 `display_name`，
     不用大小写变体创建不同登录身份。email 型 local username 继续使用 email canonicalizer。
     email 型 local username 还必须等于所属 user 的 canonical verified email；
     迁移前报告规范化冲突、email 所有权不一致和缺失 canonical email 的记录并人工处置，
     不能静默合并账户或把 local username 反向提升为可信 email。
-16. 为无用户选择 username 的 OAuth/Web3 账户生成保留前缀加至少 128-bit CSPRNG 的
+14. 为无用户选择 username 的 OAuth/Web3 账户生成保留前缀加至少 128-bit CSPRNG 的
     opaque canonical username；公开注册/add-local 拒绝该前缀。生成值不包含 provider、
     email、subject、wallet 或 display name，唯一冲突只允许重新生成。
-17. 建立 entity/schema mapping 校验，至少覆盖 `users.email`、`user_login_methods.user_id`、
+15. 建立 entity/schema mapping 校验，至少覆盖 `users.email`、`user_login_methods.user_id`、
     provider/local 字段形状、UUID 长度、enum 和时间类型；不能只证明 migration SQL 自洽，
     却让 JPA 注解继续描述另一套约束。
+16. 明确时间类型映射：Java `Instant` 对应 PostgreSQL `TIMESTAMP WITH TIME ZONE`，
+    `LocalDateTime` 对应 `TIMESTAMP WITHOUT TIME ZONE`。至少把
+    `user_login_methods.linked_at/last_used_at` 转为带时区类型，并核对
+    `nonce_expires_at`、email code、Web3 nonce、users 与 blacklist；不得照搬旧 V6
+    把所有时间列一律改成带时区。
+17. 用 V2+ 对齐 entity 声明与数据库 nullability/default，至少覆盖 users 的状态/时间列、
+    login method 的 `user_id/is_primary/is_verified/linked_at`、Web3 nonce `created_at`、
+    email code 的 `is_used/retry_count` 和 blacklist 的 `token_type/blacklisted_at`。
+    先扫描并填补现存 null，再添加约束；不能让 primitive/非空 entity 继续依赖偶然数据。
+18. 根据 repository 查询补充 email code 的 `(email,created_at)`、`expires_at` 索引，
+    并在清理现有重复记录后增加 `(email,purpose) WHERE is_used=false` 的 partial
+    unique index；审计并删除 users email/username、token blacklist jti/expires
+    的重复非必要索引。索引变更必须保留唯一约束，并记录写放大与锁时间。
 
 **测试**
 
 - 导出后在空库恢复并通过 migration/validate。
 - 故意让一个 `pg_dump` 子命令失败，脚本必须非零退出且不留下“成功”文件。
-- PostgreSQL 与 SQLite 都拒绝同一用户的第二个 primary。
+- PostgreSQL 拒绝同一用户的第二个 primary。
 - 并发 bind、set-primary、remove-primary 结束后始终恰好一个 primary，
   违反唯一性时得到可预测业务错误且不留下部分更新。
 - 仅有两个登录方式时并发删除二者，最多一个成功且最终仍保留一个 primary。
@@ -657,13 +759,18 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 - 非 LOCAL 记录缺失/超长 provider subject 时 migration 或写入失败；
   同一 provider subject 的并发首次登录最多创建一个用户和一个登录方式。
 - LOCAL null/未知 hash、OAuth/Web3 缺 subject、混合 local/provider 字段和未知 enum 值
-  在 PostgreSQL/SQLite 均被拒绝，正常 credential upgrade 仍可通过。
+  在 PostgreSQL 被拒绝，正常 credential upgrade 仍可通过。
 - 普通 username 的大小写、空白和 Unicode compatibility 变体落到同一登录 key；
   非允许字符、保留前缀和迁移期规范化冲突失败关闭。
 - OAuth/Web3 生成 username 不泄露 provider subject/wallet/email，不能被普通注册抢占，
   并发创建仍只留下一个 canonical user。
-- entity mapping 与 PostgreSQL/SQLite schema 的关键 nullability、长度和关系约束矩阵一致；
+- entity mapping 与 PostgreSQL schema 的关键 nullability、长度和关系约束矩阵一致；
   `users.email=null` 可加载保存，`user_login_methods.user_id=null` 在 ORM 与数据库两层都失败。
+- `Instant` 字段写入、读取和时区切换保持同一时刻；`LocalDateTime` 字段不发生隐式时区偏移，
+  旧 V6 的 blanket timestamp 转换不会进入新链。
+- email code 的发送频控、最新未使用 code、过期清理查询通过 EXPLAIN/行为测试使用合理索引；
+  同一 `(email,purpose)` 的第二条未使用 code 被拒绝；删除重复索引后 users/blacklist
+  唯一性和 lookup/cleanup 行为不变。
 
 **回滚**
 
@@ -678,7 +785,7 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 **涉及文件**
 
 - 新 security audit event entity/repository/service
-- 新 vendor-specific migration
+- 新 PostgreSQL migration
 - append-only 数据库权限与 retention job
 - 应用外密钥操作的受控 audit sink/runbook 模板
 
@@ -699,10 +806,8 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
    或 outbox，审计持久化失败时整个安全变更回滚，不能先提交业务状态再异步补记。
    不可变 audit event 与可领取/确认的 outbox delivery state 使用分离表和权限；
    worker 只能更新 delivery state，不能改写已提交事件正文。
-4. 按数据库能力实现 append-only 边界，不宣称两种数据库提供等价的角色隔离：
-   PostgreSQL 使用独立 runtime/retention role 和显式 GRANT，业务账户只允许插入及必要读取，
-   不允许更新或任意删除；SQLite 通过受限 repository/API、独立 maintenance path、
-   数据库文件/目录 OS 权限和必要 trigger/完整性测试限制普通运行路径。
+4. 使用 PostgreSQL 实现 append-only 边界：独立 runtime/retention role 和显式 GRANT，
+   业务账户只允许插入及必要读取，不允许更新或任意删除。
    到期清理只能由独立最小权限任务或 maintenance path 执行，并按事件类别定义保留期、
    完整性校验和删除证据。
 5. 为应用外执行的密钥 publish/切换/吊销建立同一字段语义的受控 audit sink/runbook：
@@ -714,8 +819,7 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 
 **测试**
 
-- PostgreSQL migration、append、查询、role/GRANT 拒绝和 retention role 测试；
-  SQLite migration、受限 repository、maintenance path、文件权限、必要 trigger 和保留清理测试。
+- PostgreSQL migration、append、查询、role/GRANT 拒绝、retention role 和保留清理测试。
 - 同事务业务变更注入 audit insert 失败时，业务状态不变；事务提交后事件不可更新。
 - outbox 重复领取、worker 崩溃和幂等投递不会丢失或重复产生不同语义的事件；
   delivery state 可推进但对应 audit event 正文始终不可变。
@@ -915,7 +1019,7 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
    都提交一个不可变 issuance context，包含 userId、canonical username、verified email、
    authorities、security version、auth_time、sid/family 与 token TTL；access/refresh 从同一快照签发。
    controller/success handler 不得分别直接调用 access/refresh signer，遗留 `generateToken` 和
-   合成 email helper 删除或收为不可达内部实现。服务在锁定/版本校验下确认 user enabled，
+   合成 email helper 删除或收为不可达内部实现。服务通过条件更新/CAS 与版本校验确认 user enabled，
    持久化 family/generation/audit 与 pair claim 一致后才允许响应返回；事务失败时已生成 token
    不得离开进程。
 8. 密码修改、账户禁用等安全状态变化必须撤销该用户现有 refresh family，
@@ -1635,7 +1739,9 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
     到期或终态后销毁加密 code material，保留最小状态至 retention 到期后清理。
 11. resend 使用新的 challenge/delivery id，并原子使旧 challenge 不可验证；
     旧 outbox 若已进入 provider 的不可取消队列，后续到达的旧 code 仍必须失败。
-12. 所有 verify/register/reset 请求都携带 challenge id，并按该 id 精确锁定记录；
+12. 所有 verify/register/reset 请求都携带 challenge id，并按该 id 使用带预期状态/版本的
+    条件更新或 CAS 精确取得处理权；只有条件 DML 无法在所选隔离级别维持不变量时，
+    才允许使用范围严格受限的单 challenge 行锁。
     不再按 `email + purpose` 查询“最新一条”。purpose 由具体 endpoint 在服务端固定，
     challenge 中的 canonical email 与客户端字段必须一致；错 id、跨 purpose、跨 email、
     旧 resend id 和猜测 id 均失败关闭且不影响其他 challenge。
@@ -1751,8 +1857,9 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
    而应使用与新 email 相同的外部响应和有界 decoy 状态，后续错误 code 也不可区分。
    email-shaped username 只有在规范化后等于本次 challenge 验证的 canonical email 时才允许；
    不能验证邮箱 A 后把邮箱 B 注册为 local username。
-7. 将成功验证码的锁定、校验、单次消费与 user/login method 创建放进一个 service 事务；
-   controller 不再二次调用 `markAsUsed()`，事务内只有一个 consume 操作，后续写入失败时全部回滚。
+7. 将成功验证码的校验、CAS 单次消费与 user/login method 创建放进一个 service 事务；
+   controller 不再二次调用 `markAsUsed()`，事务内只有一个条件 consume 操作，后续写入失败时
+   全部回滚；不得在密码哈希计算期间持有数据库锁。
 8. 统一成功响应为 canonical auth response。
 9. 已存在 OAuth2 用户邮箱的处理必须显式定义：
    匿名注册/verify 不得给任何已有用户绑定 LOCAL 登录方式、覆盖密码或签发该账户 token，
@@ -1840,8 +1947,8 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
    decoy 不得触发外部邮件，也不能无限增长。
    send 对真实与 decoy 请求都返回同 shape 的 opaque challenge id；reset 必须携带该 id，
    不能退回按 email 查询最新 challenge。
-4. 成功 code 的锁定/消费、密码 hash 更新、token security version 递增和该用户现有
-   refresh session/family 撤销在一个明确事务中完成；任一步失败全部回滚，
+4. 成功 code 通过条件更新/CAS 取得单次消费权，并与密码 hash 更新、token security version
+   递增和该用户现有 refresh session/family 撤销在一个明确事务中完成；任一步失败全部回滚，
    不能出现密码已改但旧 token 仍有效，或 code 已消费但密码未改。
 5. 前端不再显示“该邮箱未注册”分支。
 6. 前后端密码长度统一为 8-128 或统一配置值。
@@ -1992,8 +2099,11 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 
 **实施**
 
-1. 使用悲观锁、条件 DELETE 或 compare-and-set 原子消费 challenge。
-2. verify 成功前锁定记录；只有一个事务能消费。
+1. 优先使用单条条件 `UPDATE`/`DELETE` 或 compare-and-set 原子取得并消费 challenge；
+   只有在隔离级别分析和并发测试证明条件 DML 无法维持不变量时，才允许使用范围严格
+   受限的行锁。
+2. `verify` 在签名解析前通过原子状态转换取得消费权；受影响行数必须恰好为一，
+   并且不得在密码学计算期间持有数据库锁或长事务。
 3. 过期记录清理不能在 readOnly transaction 中执行写操作。
 4. 新 challenge 不覆盖其他客户端仍有效的 challenge；通过每 wallet/client 有界数量、
    最短创建间隔、过期清理和 H3.6 统一限流控制资源，不允许匿名请求使受害者已有挑战失效。
@@ -2194,7 +2304,8 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
    local login 只允许一个密码认证决策：由 `AuthenticationManager`/统一 credential service
    完成一次 hash 校验，再以已认证 principal 执行审计和签发；不得在 controller/service
    中对同一请求重复调用 `passwordEncoder.matches`。
-7. set-primary、删除 primary 和首次创建登录方式复用 H1.4 的锁与事务策略；
+7. set-primary、删除 primary 和首次创建登录方式复用 H1.4 的条件更新/CAS 事务策略，
+   以及仅在经证明必要时使用的单用户锁后备；
    repository 不再以 `Optional` 掩盖多个 primary 的脏数据。
 8. add-local、remove、set-primary、OAuth2 bind 和 Web3 bind 统一使用敏感操作守卫，
    校验最近 `auth_time`；不能由 refresh 延长该窗口。
@@ -2388,8 +2499,9 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 2. 会触发发送邮件、写数据库、生成报告的脚本默认 dry-run 或要求显式确认。
 3. 文档只记录实际验证的命令和结果。
 4. 历史文档保持原路径，只更新状态提示或链接。
-5. `view-db.sh` 等数据库脚本只查询当前真实列，表名参数使用 allowlist/安全 quoting，
-   不继续读取已移除的 `users.auth_provider`。
+5. PostgreSQL export/restore/baseline/诊断脚本只操作 canonical inventory，
+   对数据库目标和对象名使用 allowlist/安全 quoting，不重新引入 SQLite 查看脚本，
+   也不继续读取已移除的 `users.auth_provider`。
 6. start 脚本使用结构化 JSON/YAML parser 或纯环境变量，不用 grep 提取 secret，
    不打印 client id/secret 片段，并显式传入安全 profile。
 
@@ -2745,16 +2857,17 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 
 | 批次 | 工作项 | 预估 | 合入条件 |
 |------|--------|------|----------|
-| 1 | H0.1-H0.3 | 1-2 工程日 | G0 |
-| 2 | H1.1-H1.2 | 2-4 工程日 | disposable harness + schema matrix |
-| 3 | H1.3-H1.5 | 4-7 工程日 | G1 |
-| 4 | H2.1-H2.4 | 5-8 工程日 | strict JWT + rotation/replay + revocation 预部署，不激活共享流量 |
-| 5 | H2.5-H3.7 | 6-10 工程日 | H2.5/H3.1/H3.2 原子切换 + G2 |
-| 6 | H4.1-H4.5 | 4-8 工程日 | email/password matrix |
-| 7 | H5.1-H5.4 | 3-6 工程日 | SIWE tamper/replay matrix |
-| 8 | H6.1-H6.5 | 3-6 工程日 | cross-client 行为与契约测试通过 |
-| 9 | H7.1-H7.4 | 2-5 工程日 | G4 + CI gates |
-| 10 | H8.1-H8.4 | 2-5 工程日 | G5 rehearsal |
+| 1（已完成） | H0.1-H0.3 | - | G0 |
+| 2（已完成） | H1.1-H1.3 | - | PostgreSQL Testcontainers + dev-derived V1 + Flyway + SQLite 退役 |
+| 3（下一轮） | 现有功能测试基础扩充 | 3-6 工程日 | Java/Shell/Playwright/Python P0 覆盖矩阵 |
+| 4 | H1.4-H1.5 | 4-7 工程日 | schema hardening + persistent audit + G1 |
+| 5 | H2.1-H2.4 | 5-8 工程日 | strict JWT + rotation/replay + revocation 预部署，不激活共享流量 |
+| 6 | H2.5-H3.7 | 6-10 工程日 | H2.5/H3.1/H3.2 原子切换 + G2 |
+| 7 | H4.1-H4.5 | 4-8 工程日 | email/password matrix |
+| 8 | H5.1-H5.4 | 3-6 工程日 | SIWE tamper/replay matrix |
+| 9 | H6.1-H6.5 | 3-6 工程日 | cross-client 行为与契约测试通过 |
+| 10 | H7.1-H7.4 | 2-5 工程日 | G4 + CI gates |
+| 11 | H8.1-H8.4 | 2-5 工程日 | G5 rehearsal |
 
 预估只用于排序和资源安排，不是完成承诺。数据库现状、真实部署数量、
 OAuth provider 凭据和邮件服务可用性可能改变工期。
@@ -2766,11 +2879,30 @@ OAuth provider 凭据和邮件服务可用性可能改变工期。
 - 变更说明与受影响契约。
 - 定向测试、完整测试和实际 test count。
 - 数据库目标、profile 和外部依赖说明。
-- migration 的 fresh/upgrade 结果，若该批涉及 schema。
+- migration 的 fresh/baseline/upgrade 结果，若该批涉及 schema。
 - 安全失败路径证据。
 - rollback 或 forward-fix 步骤。
 - 更新后的 live guide 和脚本。
 - 未解决风险，不使用“全部完成”掩盖剩余问题。
+
+已完成的 H1.1-H1.3 已提交以下证据：
+
+- 受审查的 8 表 schema-only 基线、来源元数据和 SHA-256；不得提交真实数据。
+- legacy migration/runtime schema 的归档清单和 Flyway location 扫描证明。
+- 空库 V1 migrate、existing-schema baseline、重复启动、checksum/drift 失败测试。
+- Spring Session JDBC 真实 create/read/delete 和核心 repository/HTTP PostgreSQL 集成测试。
+- `mvn clean compile test-compile`、完整 Maven tests、前端类型/构建/Mock Playwright、
+  Python 离线测试及 shell 语法检查结果。
+- 连续三轮固定范围、无修改的实现检查记录；任一轮修改后计数归零。
+
+下一轮测试基础扩充必须提交：
+
+- 现有 endpoint/flow 的覆盖矩阵与 P0 缺口清单。
+- OAuth2 mock、JWT 失败矩阵、并发登录方式、email/Web3 tamper/replay 集成测试。
+- 扩展后的 Shell HTTP E2E 与 baseline guard 负向测试。
+- Web3 wallet、refresh/logout、OAuth callback 和登录方式管理 Playwright。
+- ESLint 配置和统一验证入口。
+- 基础门禁通过后的连续三轮无修改检查记录。
 
 ## 17. 规划完成条件
 

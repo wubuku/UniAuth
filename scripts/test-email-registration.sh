@@ -55,12 +55,15 @@ fail() {
 json_value() {
   local response="$1"
   local filter="$2"
-  jq -er "${filter}" <<<"${response}" 2>/dev/null
+  jq -r "(${filter}) | if . == null then empty else . end" \
+    <<<"${response}" 2>/dev/null || true
 }
 
 get_verification_code() {
   local purpose="$1"
   PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+    -X \
+    -q \
     -h "${POSTGRES_HOST}" \
     -p "${POSTGRES_PORT}" \
     -U "${POSTGRES_USER}" \
@@ -68,13 +71,15 @@ get_verification_code() {
     -v ON_ERROR_STOP=1 \
     -v "email=${EMAIL}" \
     -v "purpose=${purpose}" \
-    -Atc "SELECT verification_code
-          FROM email_verification_codes
-          WHERE email = :'email'
-            AND purpose = :'purpose'
-            AND is_used = false
-          ORDER BY created_at DESC
-          LIMIT 1;" 2>/dev/null | tr -d '[:space:]'
+    -At 2>/dev/null <<'SQL' | tr -d '[:space:]'
+SELECT verification_code
+FROM email_verification_codes
+WHERE email = :'email'
+  AND purpose = :'purpose'
+  AND is_used = false
+ORDER BY created_at DESC
+LIMIT 1;
+SQL
 }
 
 post_json() {

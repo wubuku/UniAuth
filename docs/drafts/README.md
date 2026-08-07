@@ -19,15 +19,16 @@
 
 | 文档 | 状态 | 用途 |
 |------|------|------|
-| [DOCUMENTATION_PLAN.md](DOCUMENTATION_PLAN.md) | Draft | 本次文档体系建设范围、顺序和验收标准 |
-| [HARDENING_IMPLEMENTATION_PLAN.md](HARDENING_IMPLEMENTATION_PLAN.md) | In progress | 现有能力全面加固实施规划；Phase 0 H0.1-H0.3 已通过 2026-08-07 门禁，H1-H8 未实施 |
+| [DOCUMENTATION_PLAN.md](DOCUMENTATION_PLAN.md) | In progress | 文档体系范围、维护规则和当前校准状态 |
+| [HARDENING_IMPLEMENTATION_PLAN.md](HARDENING_IMPLEMENTATION_PLAN.md) | In progress | 总加固路线图；H0.1-H0.3、H1.1-H1.3 已验证 |
+| [NEXT_HARDENING_IMPLEMENTATION_PLAN.md](NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Draft | 下一轮测试优先实施切片和验收矩阵 |
 
 ## 邮箱与密码
 
 | 文档 | 状态 | 说明 |
 |------|------|------|
-| [EMAIL-AUTH-PLAN.md](EMAIL-AUTH-PLAN.md) | Needs verification | 邮箱注册/验证规划；部分代码已存在，但发送与持久化验证码不一致 |
-| [PASSWORD-RESET-PLAN.md](PASSWORD-RESET-PLAN.md) | Needs verification | 密码重置规划；当前实现仍有硬编码模板验证码和重复发送问题 |
+| [EMAIL-AUTH-PLAN.md](EMAIL-AUTH-PLAN.md) | Needs verification | 邮箱注册/验证历史规划；当前发送值已与持久化值一致，失败/并发语义仍待加固 |
+| [PASSWORD-RESET-PLAN.md](PASSWORD-RESET-PLAN.md) | Needs verification | 密码重置历史规划；硬编码模板验证码已移除，失败/枚举/并发语义仍待加固 |
 
 ## 多登录方式
 
@@ -67,8 +68,8 @@
 
 | 文档 | 状态 | 说明 |
 |------|------|------|
-| [MULTI-DATABASE-SETUP.md](MULTI-DATABASE-SETUP.md) | Needs verification | 将默认环境写成 dev，与当前默认 test profile 冲突 |
-| [SESSION-PERSISTENCE-GUIDE.md](SESSION-PERSISTENCE-GUIDE.md) | Historical | Spring Session JDBC 的实施背景；部分内容已落地，生产建表仍需外部处理 |
+| [MULTI-DATABASE-SETUP.md](MULTI-DATABASE-SETUP.md) | Historical | 多数据库历史方案；当前只支持 PostgreSQL |
+| [SESSION-PERSISTENCE-GUIDE.md](SESSION-PERSISTENCE-GUIDE.md) | Historical | Spring Session JDBC 实施背景；当前表由 Flyway V1 管理 |
 
 ## 调查与进度记录
 

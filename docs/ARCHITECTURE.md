@@ -55,7 +55,7 @@ Authorization Server 协议已经完整接通。
 ### API 认证
 
 1. `ResourceServerConfig` 从 `Authorization: Bearer` 或 `accessToken` cookie 取 token。
-2. `JwtDecoder` 使用当前 RSA 公钥验证签名。
+2. `JwtDecoder` 使用当前 RSA 公钥验证签名、时间、issuer、audience 和 `type=access`。
 3. `authorities` claim 转换为 Spring Security authority。
 4. `/api/user` 和其他 `/api/**` 受资源服务器链保护。
 
@@ -100,7 +100,8 @@ Authorization Server 协议已经完整接通。
 - 不能移除最后一个登录方式。
 - 每个用户预期只有一个 primary 登录方式。
 
-这些约束一部分由 service 检查，一部分由数据库唯一索引保证；当前没有自动化测试证明并发场景。
+这些约束一部分由 service 检查，一部分由数据库唯一索引保证；顺序行为已有
+PostgreSQL 集成测试，并发场景仍是下一轮 P0 覆盖缺口。
 
 ## JWT 模型
 
@@ -129,16 +130,17 @@ access token 默认 1 小时，refresh token 默认 7 天。
 
 | Profile | 数据库 | schema 行为 |
 |---------|--------|-------------|
-| `dev` | SQLite | SQL init 执行 `schema-sqlite.sql` 和 `data-sqlite.sql`；Hibernate `none` |
-| `test` | PostgreSQL | SQL init 执行 `schema-postgresql.sql`；Hibernate `update` |
-| `prod` | PostgreSQL | SQL init 关闭；Hibernate `validate` |
+| `dev` | PostgreSQL | Flyway migrate/validate；Hibernate `validate` |
+| `test` | PostgreSQL | Flyway migrate/validate；Hibernate `validate` |
+| `prod` | PostgreSQL | Flyway migrate/validate；Hibernate `validate` |
 
 当前问题：
 
 - 演示数据默认关闭；显式启用时只允许 disposable test/demo 数据库并只 upsert 受管账户。
-- `src/main/resources/db/migration/V*.sql` 没有迁移工具执行。
-- SQLite schema 缺少 `web3_nonces`、`email_verification_codes` 和部分登录方式列。
-- Spring Session 生产表需要外部预置。
+- Flyway 当前只有 dev-derived V1；结构加固必须通过 V2+，不得修改 V1。
+- V1 保留了实际 dev 中的 nullability、时间类型和冗余索引，H1.4 尚未实施。
+- Spring Session 表由 Flyway V1 管理，框架自动建表关闭。
+- `blacksheep_dev` 已通过只读 baseline rehearsal，尚未执行 baseline apply。
 
 详细启动风险见 [配置基线](CONFIGURATION.md)。
 
@@ -162,12 +164,14 @@ access token 默认 1 小时，refresh token 默认 7 天。
 - JWT claim 变更：同步后端 decoder/introspection、前端、Python 示例和文档。
 - API 响应变更：同步前端 service、types、页面和脚本。
 - provider 命名变更：同时处理 registration id `x` 与 enum `TWITTER`。
-- schema/entity 变更：同时检查 PostgreSQL、SQLite、profile init 和导出脚本。
+- schema/entity 变更：同时检查 PostgreSQL migration、三个 profile、baseline guard、
+  schema fingerprint、导出脚本和 Testcontainers 集成测试。
 - CORS/cookie/callback 变更：检查全部安全链、YAML、前端代理和部署配置。
 
 ## 相关历史材料
 
 - [前后端契约](FRONTEND_BACKEND_CONTRACT.md)
+- [下一轮加固实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md)
 - [多登录方式设计与实施记录](drafts/README.md#多登录方式)
 - [异构资源服务器材料](drafts/README.md#异构资源服务器与微服务)
 - [Perplexity 历史架构](Perplexity/01-Architecture-Design.md)

@@ -15,7 +15,7 @@ spring:
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
-      ddl-auto: update  # 由schema-postgresql.sql处理
+      ddl-auto: validate
     show-sql: false
     properties:
       hibernate:
@@ -26,16 +26,12 @@ spring:
 
   sql:
     init:
-      mode: always  # 总是执行初始化脚本
-      schema-locations: classpath:schema-postgresql.sql
-      # 演示数据默认关闭；仅在 disposable 数据库上显式启用。
+      mode: never
 
-  # Spring Session JDBC 配置 - 在 test 环境使用 PostgreSQL 持久化
-  # 演示多个 test 实例共享同一个 session 存储
   session:
     store-type: jdbc
     jdbc:
-      initialize-schema: always
+      initialize-schema: never
     timeout: 1800
 
   security:

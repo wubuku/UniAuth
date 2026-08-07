@@ -70,9 +70,14 @@ public class Web3SignatureUtils {
         BigInteger rBI = new BigInteger(1, r);
         BigInteger sBI = new BigInteger(1, s);
 
-        // EIP-191 message prefix
-        String prefix = "\u0019Ethereum Signed Message:\n" + message.length();
-        byte[] msgHash = Hash.sha3((prefix + message).getBytes(StandardCharsets.UTF_8));
+        byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
+        byte[] prefixBytes = (
+                "\u0019Ethereum Signed Message:\n" + messageBytes.length
+        ).getBytes(StandardCharsets.UTF_8);
+        byte[] payload = new byte[prefixBytes.length + messageBytes.length];
+        System.arraycopy(prefixBytes, 0, payload, 0, prefixBytes.length);
+        System.arraycopy(messageBytes, 0, payload, prefixBytes.length, messageBytes.length);
+        byte[] msgHash = Hash.sha3(payload);
 
         // Use v value to calculate recovery ID
         int recId = v - 27;

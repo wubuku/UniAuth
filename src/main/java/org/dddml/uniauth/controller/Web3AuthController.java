@@ -21,6 +21,7 @@ import org.dddml.uniauth.service.Web3AuthService;
 import org.dddml.uniauth.util.Web3SignatureUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -122,6 +123,7 @@ public class Web3AuthController {
                                 .build());
             }
 
+            boolean isNewUser = !web3AuthService.isWalletBound(normalizedAddress);
             UserEntity user = web3AuthService.findOrCreateUser(normalizedAddress);
 
             String accessToken = jwtTokenService.generateAccessToken(
@@ -142,7 +144,7 @@ public class Web3AuthController {
                     .expiresIn(expiresIn)
                     .walletAddress(normalizedAddress)
                     .userId(user.getId())
-                    .isNewUser(!web3AuthService.isWalletBound(normalizedAddress))
+                    .isNewUser(isNewUser)
                     .build();
 
             log.info("Web3 login completed");
@@ -171,7 +173,7 @@ public class Web3AuthController {
         @ApiResponse(responseCode = "401", description = "User not authenticated")
     })
     public ResponseEntity<?> bindWallet(
-            @RequestHeader("Authorization") String authHeader,
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
             @Valid @RequestBody Web3LoginRequest request) {
         try {
             if (authHeader == null || !authHeader.startsWith("Bearer ")) {
@@ -185,7 +187,7 @@ public class Web3AuthController {
             }
 
             String token = authHeader.substring(7);
-            String userId = jwtTokenService.getUserIdFromToken(token);
+            String userId = jwtTokenService.getUserIdFromAccessToken(token);
 
             String normalizedAddress = Web3SignatureUtils.normalizeAddress(request.getWalletAddress());
 
@@ -206,7 +208,11 @@ public class Web3AuthController {
                                 .build());
             }
 
-            web3AuthService.bindWalletToUser(userId, normalizedAddress);
+            if (!web3AuthService.bindWalletToUser(userId, normalizedAddress)) {
+                throw new IllegalStateException(
+                        "Wallet is already bound or the user already has a Web3 wallet"
+                );
+            }
 
             log.info("Web3 wallet binding completed");
 
@@ -215,6 +221,14 @@ public class Web3AuthController {
                             .status(200)
                             .errorCode("SUCCESS")
                             .message("Wallet bound successfully")
+                            .timestamp(LocalDateTime.now())
+                            .build());
+        } catch (JwtException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(ErrorResponse.builder()
+                            .status(401)
+                            .errorCode("INVALID_TOKEN")
+                            .message("A valid access token is required")
                             .timestamp(LocalDateTime.now())
                             .build());
         } catch (IllegalStateException e) {

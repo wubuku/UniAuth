@@ -2,15 +2,19 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Web3Auth } from '../utils/web3Auth';
 import { AuthService } from '../services/authService';
-import { useAuth } from '../hooks/useAuth';
 
 interface Web3LoginButtonProps {
   onError?: (message: string) => void;
+  onLogin: (data: {
+    walletAddress: string;
+    message: string;
+    signature: string;
+    nonce: string;
+  }) => Promise<unknown>;
 }
 
-export default function Web3LoginButton({ onError }: Web3LoginButtonProps) {
+export default function Web3LoginButton({ onError, onLogin }: Web3LoginButtonProps) {
   const [loading, setLoading] = useState(false);
-  const { web3Login } = useAuth();
   const navigate = useNavigate();
 
   const handleLogin = async () => {
@@ -30,7 +34,7 @@ export default function Web3LoginButton({ onError }: Web3LoginButtonProps) {
       console.log('Message signed');
 
       // 4. 执行登录
-      await web3Login({
+      await onLogin({
         walletAddress: address,
         message,
         signature,

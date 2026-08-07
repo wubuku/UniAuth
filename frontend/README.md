@@ -193,10 +193,20 @@ try {
    cd frontend
    npm run build  # 构建并自动复制到 ../src/main/resources/static/
    cd ..
-   # dev 仍应使用隔离、可丢弃的 SQLite；演示初始化器默认关闭且不会全表清理
-   SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
+
+   set -a
+   source .env
+   set +a
+
+   # 使用符合 runtime guard 规则的独立 PostgreSQL 开发库
+   POSTGRES_DATABASE=uniauth_local_dev \
+   SPRING_PROFILES_ACTIVE=dev \
+   ./start.sh
    ```
 4. **访问地址**：前端和后端都在 `http://localhost:8081`
+
+完整的 PostgreSQL 建库、环境加载和安全启动步骤见
+[开发指南](../docs/DEVELOPMENT.md#spring-应用启动)。
 
 **传统分离开发模式**（可选）：
 

@@ -294,7 +294,7 @@ public class SecurityConfig {
 
                     // 尝试提取userId，异常则返回null（不是登录状态）
                     try {
-                        return jwtTokenService.getUserIdFromToken(accessToken);
+                        return jwtTokenService.getUserIdFromAccessToken(accessToken);
                     } catch (RuntimeException e) {
                         log.debug("OAuth2 binding cookie was invalid or expired");
                         return null;

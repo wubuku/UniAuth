@@ -1,12 +1,31 @@
 # UniAuth - 统一身份认证系统
 
-> 状态：Needs verification。Phase 0 H0.1-H0.3 已完成加固验证，但项目尚无生产就绪证明。仓库不再默认激活 Spring profile，
-> 演示数据默认关闭且不执行全表清理；`test` profile 仍会初始化/更新 schema，只能指向隔离数据库。
+> 状态：Needs verification。H0.1-H0.3 与 PostgreSQL/Flyway H1.1-H1.3 已完成加固验证，
+> 但项目尚无生产就绪证明。仓库不默认激活 Spring profile，所有 profile 只支持显式 PostgreSQL，
+> Flyway 是唯一 schema owner，演示数据默认关闭且不执行全表清理。
 > 开始开发或启动前，请先阅读 [文档导航](docs/README.md)、
 > [配置基线](docs/CONFIGURATION.md)、[开发指南](docs/DEVELOPMENT.md) 和
 > [验证指南](docs/VERIFICATION.md)。
-> 下文保留了较多设计目标、部署示例和历史说明；除非链接的 live guide 或当前代码明确确认，
-> 不应把这些内容视为已完成能力或发布证明。
+> 下文保留了较多设计目标、部署示例和历史说明，包括已经退役的 SQLite 路径。
+> 当前操作只使用上述 live guides；不要执行下文的 SQLite、手工 schema init 或旧域名示例。
+
+## 当前可执行基线
+
+| 项目 | 当前状态 |
+|------|----------|
+| 后端 | Spring Boot 3.3.4 / Java 17，默认端口 `8081` |
+| 前端 | React 18 / Vite，开发端口 `5173` |
+| 资源服务器 | Flask，默认端口 `5002` |
+| 数据库 | PostgreSQL-only |
+| Migration | Flyway V1，history `uniauth_flyway_schema_history` |
+| Java 验证 | 42 tests |
+| HTTP E2E | 10/10 |
+| Playwright | 12 tests |
+| Python | 5 tests |
+
+安全启动、测试和 baseline 操作见 [开发指南](docs/DEVELOPMENT.md) 与
+[验证指南](docs/VERIFICATION.md)。`blacksheep_dev` 只完成了只读 rehearsal，
+尚未执行 Flyway baseline apply。
 
 ## 目录
 
@@ -30,8 +49,8 @@
 
 UniAuth 是一个正在加固的统一身份认证项目，包含本地认证、Google/GitHub/X
 OAuth2、多登录方式、自定义 JWT、邮箱验证、Web3 和异构资源服务器示例。
-系统采用 Spring Boot 3.3.4 + React 18，`dev` 使用 SQLite，`test`/`prod`
-使用 PostgreSQL；这些环境目前并非无缝等价。
+系统采用 Spring Boot 3.3.4 + React 18，`dev`、`test`、`prod` 均使用 PostgreSQL。
+schema 由 Flyway 管理，SQLite runtime 已退役。
 
 | 属性 | 说明 |
 |------|------|
@@ -40,7 +59,7 @@ OAuth2、多登录方式、自定义 JWT、邮箱验证、Web3 和异构资源�
 | **Java 版本** | 17+ |
 | **Spring Boot** | 3.3.4 |
 | **前端框架** | React 18 + TypeScript |
-| **数据库** | SQLite（开发）/ PostgreSQL（生产） |
+| **数据库** | PostgreSQL |
 | **构建工具** | Maven |
 | **许可证** | MIT |
 
@@ -68,11 +87,12 @@ OAuth2、多登录方式、自定义 JWT、邮箱验证、Web3 和异构资源�
 
 ### JWT 令牌管理
 
-自定义 `JwtTokenService` 使用 RSA-2048/RS256 签发 access token 和 refresh token，并通过 JWKS 暴露公钥。当前默认密钥文件位于 ignored 的 `.local/uniauth/rsa-keys.ser`，仍不是生产密钥库；历史提交中的根目录私钥必须视为已暴露。issuer、audience、token type、撤销和刷新轮换也尚未形成完整验证链。
+自定义 `JwtTokenService` 使用 RSA-2048/RS256 签发 access token 和 refresh token，并通过 JWKS 暴露公钥。当前 access token 已验证时间、issuer、audience 和 type；blacklist、logout 撤销和 refresh replay detection 尚未完成。默认密钥文件位于 ignored 的 `.local/uniauth/rsa-keys.ser`，仍不是生产密钥库。
 
 ### 会话持久化
 
-项目启用了 Spring Session JDBC，默认会话超时为 30 分钟。`dev` 会话落在 SQLite，`test` 落在 PostgreSQL，`prod` 要求外部预置 Session 表；多实例共享和负载均衡行为尚无当前回归证据。
+项目启用了 Spring Session JDBC，默认会话超时为 30 分钟。Session 表由 Flyway V1
+管理，集成测试已覆盖 create/read/delete；多实例和负载均衡行为仍无发布级证据。
 
 ### 细粒度权限控制
 
@@ -276,6 +296,9 @@ uni-auth/
 ---
 
 ## 快速开始
+
+> 本节以下长篇步骤保留历史背景，其中 SQLite、手工 schema init 和旧环境变量示例
+> 已失效。当前启动命令以 [开发指南](docs/DEVELOPMENT.md) 为准。
 
 ### 环境准备
 

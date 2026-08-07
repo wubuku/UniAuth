@@ -11,12 +11,46 @@ uniauth_require_env() {
 }
 
 uniauth_require_oauth_credentials() {
-    uniauth_require_env GOOGLE_CLIENT_ID
-    uniauth_require_env GOOGLE_CLIENT_SECRET
-    uniauth_require_env GITHUB_CLIENT_ID
-    uniauth_require_env GITHUB_CLIENT_SECRET
-    uniauth_require_env TWITTER_CLIENT_ID
-    uniauth_require_env TWITTER_CLIENT_SECRET
+    uniauth_require_env GOOGLE_CLIENT_ID || return 1
+    uniauth_require_env GOOGLE_CLIENT_SECRET || return 1
+    uniauth_require_env GITHUB_CLIENT_ID || return 1
+    uniauth_require_env GITHUB_CLIENT_SECRET || return 1
+    uniauth_require_env TWITTER_CLIENT_ID || return 1
+    uniauth_require_env TWITTER_CLIENT_SECRET || return 1
+}
+
+uniauth_require_postgres() {
+    uniauth_require_env POSTGRES_HOST || return 1
+    uniauth_require_env POSTGRES_PORT || return 1
+    uniauth_require_env POSTGRES_DATABASE || return 1
+    uniauth_require_env POSTGRES_USER || return 1
+    uniauth_require_env POSTGRES_PASSWORD || return 1
+}
+
+uniauth_require_nonproduction_database_name() {
+    local database_name="$1"
+
+    case "$database_name" in
+        dev|dev_*|dev-*|*_dev|*-dev|test|test_*|test-*|*_test|*-test|demo|demo_*|demo-*|*_demo|*-demo|uniauth_test|uniauth_demo)
+            ;;
+        *)
+            echo "Error: profile requires an explicitly named dev/test/demo PostgreSQL database" >&2
+            return 1
+            ;;
+    esac
+}
+
+uniauth_require_disposable_database_name() {
+    local database_name="$1"
+
+    case "$database_name" in
+        test|test_*|test-*|*_test|*-test|demo|demo_*|demo-*|*_demo|*-demo|uniauth_test|uniauth_demo)
+            ;;
+        *)
+            echo "Error: test profile requires an explicitly disposable test/demo PostgreSQL database" >&2
+            return 1
+            ;;
+    esac
 }
 
 uniauth_prepare_runtime() {
@@ -25,34 +59,19 @@ uniauth_prepare_runtime() {
 
     case "$profile" in
         dev)
+            uniauth_require_postgres || return 1
+            uniauth_require_nonproduction_database_name "$POSTGRES_DATABASE" || return 1
             export SPRING_PROFILES_ACTIVE=dev
-            export SPRING_DATASOURCE_URL="${SPRING_DATASOURCE_URL:-jdbc:sqlite:${project_dir}/uniauth-demo.db}"
-            export SPRING_SESSION_STORE_TYPE="${SPRING_SESSION_STORE_TYPE:-none}"
-            echo "Runtime profile: dev (isolated SQLite target)"
+            echo "Runtime profile: dev (explicit PostgreSQL target)"
             ;;
         test)
-            uniauth_require_env POSTGRES_HOST
-            uniauth_require_env POSTGRES_PORT
-            uniauth_require_env POSTGRES_DATABASE
-            uniauth_require_env POSTGRES_USER
-            uniauth_require_env POSTGRES_PASSWORD
-            case "$POSTGRES_DATABASE" in
-                test|test_*|test-*|demo|demo_*|demo-*|uniauth_test|uniauth_test_*|uniauth-test|uniauth-test-*|uniauth_demo|uniauth_demo_*|uniauth-demo|uniauth-demo-*)
-                    ;;
-                *)
-                    echo "Error: test profile requires a clearly disposable test/demo database name" >&2
-                    return 1
-                    ;;
-            esac
+            uniauth_require_postgres || return 1
+            uniauth_require_disposable_database_name "$POSTGRES_DATABASE" || return 1
             export SPRING_PROFILES_ACTIVE=test
             echo "Runtime profile: test (explicit disposable PostgreSQL target)"
             ;;
         prod)
-            uniauth_require_env POSTGRES_HOST
-            uniauth_require_env POSTGRES_PORT
-            uniauth_require_env POSTGRES_DATABASE
-            uniauth_require_env POSTGRES_USER
-            uniauth_require_env POSTGRES_PASSWORD
+            uniauth_require_postgres || return 1
             export SPRING_PROFILES_ACTIVE=prod
             echo "Runtime profile: prod (explicit PostgreSQL target)"
             ;;

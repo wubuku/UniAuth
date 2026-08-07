@@ -6,7 +6,10 @@ import org.springframework.core.env.PropertySource;
 import org.springframework.core.io.ClassPathResource;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -27,6 +30,65 @@ class ConfigurationSafetyTest {
                 .isEqualTo("${POSTGRES_USER}");
         assertThat(property("application-test.yml", "spring.datasource.password"))
                 .isEqualTo("${POSTGRES_PASSWORD}");
+    }
+
+    @Test
+    void developmentDatabaseRequiresExplicitPostgreSqlConnectionSettings() throws IOException {
+        assertThat(property("application-dev.yml", "spring.datasource.url"))
+                .isEqualTo("jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DATABASE}");
+        assertThat(property("application-dev.yml", "spring.datasource.username"))
+                .isEqualTo("${POSTGRES_USER}");
+        assertThat(property("application-dev.yml", "spring.datasource.password"))
+                .isEqualTo("${POSTGRES_PASSWORD}");
+    }
+
+    @Test
+    void supportedProfilesDelegateSchemaOwnershipToFlyway() throws IOException {
+        assertThat(property("application.yml", "spring.flyway.enabled")).isEqualTo(true);
+        assertThat(property("application.yml", "spring.flyway.locations"))
+                .isEqualTo("classpath:db/migration/postgresql");
+        assertThat(property("application.yml", "spring.flyway.table"))
+                .isEqualTo("uniauth_flyway_schema_history");
+        assertThat(property("application.yml", "spring.flyway.baseline-on-migrate"))
+                .isEqualTo(false);
+        assertThat(property("application.yml", "spring.flyway.clean-disabled"))
+                .isEqualTo(true);
+
+        for (String profile : List.of("dev", "test", "prod")) {
+            assertThat(property("application-" + profile + ".yml", "spring.jpa.hibernate.ddl-auto"))
+                    .isEqualTo("validate");
+            assertThat(property("application-" + profile + ".yml", "spring.sql.init.mode"))
+                    .isEqualTo("never");
+            assertThat(property("application-" + profile + ".yml",
+                    "spring.session.jdbc.initialize-schema")).isEqualTo("never");
+        }
+    }
+
+    @Test
+    void runtimeClasspathContainsOnlyThePostgreSqlFlywayMigration() throws IOException {
+        for (String retiredResource : List.of(
+                "schema-postgresql.sql",
+                "schema-sqlite.sql",
+                "data-postgresql.sql",
+                "data-sqlite.sql",
+                "db/migration/V1__Create_user_login_methods_table.sql",
+                "db/migration/V8__Create_email_verification_codes_table.sql"
+        )) {
+            assertThat(getClass().getClassLoader().getResource(retiredResource))
+                    .as(retiredResource)
+                    .isNull();
+        }
+
+        Path migrationDirectory = Path.of(
+                "src/main/resources/db/migration/postgresql"
+        );
+        try (var files = Files.list(migrationDirectory)) {
+            assertThat(files
+                    .filter(path -> path.getFileName().toString().endsWith(".sql"))
+                    .map(path -> path.getFileName().toString())
+                    .toList())
+                    .containsExactly("V1__baseline_uniauth_auth_schema.sql");
+        }
     }
 
     @Test
@@ -67,6 +129,37 @@ class ConfigurationSafetyTest {
     void rsaKeyUsesAnIgnoredConfigurablePath() throws IOException {
         assertThat(property("application.yml", "jwt.rsa.key-file"))
                 .isEqualTo("${JWT_RSA_KEY_FILE:.local/uniauth/rsa-keys.ser}");
+    }
+
+    @Test
+    void runtimeGuardKeepsTestProfileOffDevelopmentDatabases() throws IOException {
+        assertThat(runRuntimeGuard("test", "blacksheep_dev")).isNotZero();
+        assertThat(runRuntimeGuard("test", "uniauth_http_e2e_test")).isZero();
+        assertThat(runRuntimeGuard("dev", "blacksheep_dev")).isZero();
+    }
+
+    private int runRuntimeGuard(String profile, String databaseName) throws IOException {
+        ProcessBuilder processBuilder = new ProcessBuilder(
+                "bash",
+                "-c",
+                "source scripts/runtime-guard.sh && uniauth_prepare_runtime ."
+        );
+        Map<String, String> environment = processBuilder.environment();
+        environment.put("SPRING_PROFILES_ACTIVE", profile);
+        environment.put("POSTGRES_HOST", "127.0.0.1");
+        environment.put("POSTGRES_PORT", "5432");
+        environment.put("POSTGRES_DATABASE", databaseName);
+        environment.put("POSTGRES_USER", "uniauth");
+        environment.put("POSTGRES_PASSWORD", "test-only");
+        processBuilder.redirectErrorStream(true);
+
+        Process process = processBuilder.start();
+        try {
+            return process.waitFor();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while testing runtime guard", e);
+        }
     }
 
     private Object property(String resourceName, String propertyName) throws IOException {

@@ -6,6 +6,7 @@ docs/client_secret_*.json
 !.env.example
 !frontend/.env.example
 !frontend/.env.local.example
+.local/
 temp_aoconnect
 AES-Shamir-Demo/target
 target

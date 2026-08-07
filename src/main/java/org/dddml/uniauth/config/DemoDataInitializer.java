@@ -11,10 +11,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.sql.DataSource;
-import java.nio.file.Path;
 import java.sql.Connection;
 import java.util.HashSet;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -80,23 +78,6 @@ public class DemoDataInitializer implements CommandLineRunner {
             String withoutQuery = jdbcUrl.split("\\?", 2)[0];
             int separator = withoutQuery.lastIndexOf('/');
             return separator >= 0 ? withoutQuery.substring(separator + 1) : null;
-        }
-
-        if (jdbcUrl.startsWith("jdbc:sqlite:")) {
-            String target = jdbcUrl.substring("jdbc:sqlite:".length()).split("\\?", 2)[0];
-            if (":memory:".equalsIgnoreCase(target)) {
-                return "test";
-            }
-            if (target.startsWith("file:")) {
-                target = target.substring("file:".length());
-            }
-            Path fileName = Path.of(target).getFileName();
-            if (fileName == null) {
-                return null;
-            }
-            String name = fileName.toString().toLowerCase(Locale.ROOT);
-            int extension = name.lastIndexOf('.');
-            return extension > 0 ? name.substring(0, extension) : name;
         }
 
         return null;

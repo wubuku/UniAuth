@@ -10,7 +10,8 @@
 - Maven
 - Node.js/npm
 - Python 3（仅 Python 示例和脚本）
-- PostgreSQL（仅显式使用 `test`/`prod` 或数据库脚本时）
+- PostgreSQL 16（交互启动）
+- Docker（Testcontainers、Shell E2E 和 Flyway rehearsal）
 
 ## 安全规则
 
@@ -64,17 +65,26 @@ UI 可以加载，但认证 API 会失败。
 
 ## Spring 应用启动
 
-仓库不再默认选择 profile。若使用 SQLite 开发，显式启动：
+仓库不默认选择 profile。先创建或选择一个非共享的 dev 数据库，再显式加载本地环境：
 
 ```bash
-SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
+createdb -h localhost -U postgres uniauth_local_dev
+
+set -a
+source .env
+set +a
+
+POSTGRES_DATABASE=uniauth_local_dev \
+SPRING_PROFILES_ACTIVE=dev \
+./start.sh
 ```
 
-根 `start.sh` 和 `start-with-frontend.sh` 默认将 `dev` 数据库覆盖为 ignored 的
-`uniauth-demo.db`，并关闭 JDBC Session 存储以保证本地启动路径可复现。
+`dev` 只接受 dev/test/demo 命名数据库；`test` 只接受明确 disposable 的 test/demo
+数据库。自动化验证优先使用 Testcontainers 或 `scripts/test-http-e2e.sh`，不要手工
+创建共享测试库。
 
-不要把 `test` profile 指向共享、生产或不可恢复的 PostgreSQL。必须使用 PostgreSQL
-集成验证时，先创建 test/demo 命名的隔离数据库并显式提供全部连接变量。
+`blacksheep_dev` 尚未执行 Flyway baseline apply，当前不能作为普通启动示例。
+需要 apply 时使用独立受控流程，不把 apply 放进启动脚本。
 
 ## 日常改动路径
 
@@ -102,15 +112,16 @@ SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
 
 entity 或 schema 变更至少核对：
 
-- `schema-postgresql.sql`
-- `schema-sqlite.sql`
+- `src/main/resources/db/migration/postgresql/`
 - `application-dev.yml`
 - `application-test.yml`
 - `application-prod.yml`
 - `scripts/export-schema-pg.sh`
-- 生产迁移机制
+- `scripts/flyway-baseline-existing.sh`
+- Flyway fresh/baseline 集成测试
+- schema fingerprint
 
-当前 `db/migration/` 不会自动执行，不能把它当作完成步骤。
+Flyway 是唯一 schema owner。已发布 migration 不得改写；新增结构修复必须使用 V2+。
 
 ## 外部集成
 
@@ -119,11 +130,11 @@ entity 或 schema 变更至少核对：
 - Google/GitHub/X OAuth2。
 - 邮件服务。
 - Web3 真实钱包签名。
-- PostgreSQL schema 导出。
+- PostgreSQL schema 导出或 baseline apply。
 - Python 从远端 JWKS 拉取密钥。
 
-仓库内测试脚本包含历史端口、数据库默认值和部署域名。运行前先读脚本，并通过
-环境变量覆盖目标。
+live 测试脚本默认使用当前端口和一次性数据库；历史脚本/文档仍可能包含旧目标，
+运行前先检查生命周期状态。
 
 ## 生成物与本地文件
 

@@ -4,7 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { TokenRefreshResult } from '../types';
 
 interface LoginMethod {
-  id: number;
+  id: string;
   authProvider: string;
   localUsername?: string;
   providerEmail?: string;
@@ -25,8 +25,8 @@ export default function TestPage() {
   const [loadingLoginMethods, setLoadingLoginMethods] = useState(true);
   const [bindingProvider, setBindingProvider] = useState<string | null>(null);
   const [bindingMessage, setBindingMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
-  const [removingMethodId, setRemovingMethodId] = useState<number | null>(null);
-  const [settingPrimaryId, setSettingPrimaryId] = useState<number | null>(null);
+  const [removingMethodId, setRemovingMethodId] = useState<string | null>(null);
+  const [settingPrimaryId, setSettingPrimaryId] = useState<string | null>(null);
 
   // 加载登录方式
   useEffect(() => {
@@ -62,7 +62,7 @@ export default function TestPage() {
     }
   };
 
-  const handleRemoveLoginMethod = async (methodId: number) => {
+  const handleRemoveLoginMethod = async (methodId: string) => {
     if (!confirm('确认删除这个登录方式吗？此操作不可撤销。')) {
       return;
     }
@@ -84,7 +84,7 @@ export default function TestPage() {
     }
   };
 
-  const handleSetPrimaryLoginMethod = async (methodId: number) => {
+  const handleSetPrimaryLoginMethod = async (methodId: string) => {
     setSettingPrimaryId(methodId);
     try {
       await AuthService.setPrimaryLoginMethod(methodId);
@@ -406,7 +406,7 @@ export default function TestPage() {
                     {method.authProvider}
                   </h4>
 
-                  {method.authProvider === 'LOCAL' ? (
+                  {method.authProvider === 'local' ? (
                     <div style={{ fontSize: '14px', color: '#666', marginBottom: '8px' }}>
                       👤 {method.localUsername}
                     </div>
@@ -492,7 +492,7 @@ export default function TestPage() {
           </p>
 
           {/* SSO用户添加本地密码 */}
-          {!loginMethods.find(m => m.authProvider === 'LOCAL') && (
+          {!loginMethods.find(m => m.authProvider === 'local') && (
             <div style={{
               marginBottom: '15px',
               padding: '15px',
@@ -613,7 +613,7 @@ export default function TestPage() {
             gap: '10px'
           }}>
             {/* Google 绑定按钮 */}
-            {!loginMethods.find(m => m.authProvider === 'GOOGLE') && (
+            {!loginMethods.find(m => m.authProvider === 'google') && (
               <button
                 onClick={() => handleBindLoginMethod('google')}
                 disabled={bindingProvider === 'google'}
@@ -635,7 +635,7 @@ export default function TestPage() {
             )}
 
             {/* GitHub 绑定按钮 */}
-            {!loginMethods.find(m => m.authProvider === 'GITHUB') && (
+            {!loginMethods.find(m => m.authProvider === 'github') && (
               <button
                 onClick={() => handleBindLoginMethod('github')}
                 disabled={bindingProvider === 'github'}
@@ -657,7 +657,7 @@ export default function TestPage() {
             )}
 
             {/* Twitter/X 绑定按钮 */}
-            {!loginMethods.find(m => m.authProvider === 'TWITTER') && (
+            {!loginMethods.find(m => m.authProvider === 'twitter') && (
               <button
                 onClick={() => handleBindLoginMethod('x')}
                 disabled={bindingProvider === 'x'}
@@ -680,9 +680,9 @@ export default function TestPage() {
           </div>
 
           {/* 已绑定提示 */}
-          {loginMethods.find(m => m.authProvider === 'GOOGLE') &&
-            loginMethods.find(m => m.authProvider === 'GITHUB') &&
-            loginMethods.find(m => m.authProvider === 'TWITTER') && (
+          {loginMethods.find(m => m.authProvider === 'google') &&
+            loginMethods.find(m => m.authProvider === 'github') &&
+            loginMethods.find(m => m.authProvider === 'twitter') && (
             <div style={{
               marginTop: '15px',
               padding: '12px',

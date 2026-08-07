@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthService } from '../services/authService';
 
@@ -8,8 +8,14 @@ import { AuthService } from '../services/authService';
  */
 const OAuth2CallbackPage = () => {
   const navigate = useNavigate();
+  const callbackHandled = useRef(false);
 
   useEffect(() => {
+    if (callbackHandled.current) {
+      return;
+    }
+    callbackHandled.current = true;
+
     const handleCallback = async () => {
       try {
         // 检查URL中是否有错误参数

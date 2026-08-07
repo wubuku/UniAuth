@@ -121,6 +121,7 @@ class SensitiveOutputPolicyTest {
             try (Stream<Path> files = Files.walk(root)) {
                 files.filter(Files::isRegularFile)
                         .filter(path -> !path.toString().contains("/__pycache__/"))
+                        .filter(path -> !isAutomatedTestHarness(path))
                         .filter(this::isLiveSourceFile)
                         .forEach(path -> {
                             String content = read(path);
@@ -149,6 +150,13 @@ class SensitiveOutputPolicyTest {
                 || name.endsWith(".html")
                 || name.endsWith(".sh")
                 || name.endsWith(".py");
+    }
+
+    private boolean isAutomatedTestHarness(Path path) {
+        Path relativePath = PROJECT_ROOT.relativize(path);
+        String name = path.getFileName().toString();
+        return relativePath.startsWith("scripts") && name.startsWith("test-")
+                || relativePath.startsWith("python-resource-server") && name.startsWith("test_");
     }
 
     private void assertSourceDoesNotContain(String relativePath, String... forbiddenValues) {

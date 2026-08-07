@@ -12,6 +12,8 @@
 - `docs/VERIFICATION.md`: 权威交付门槛、验证层级、2026-08-07 基线和测试缺口。
 - `docs/drafts/README.md`: 既有计划、调查和历史记录索引。
 - `docs/drafts/DOCUMENTATION_PLAN.md`: 文档体系建设计划。
+- `docs/drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md`: 下一轮测试优先实施切片。
+- `docs/archive/database/README.md`: 旧 SQL 的历史归档和当前替代路径。
 
 已有文档保持原路径。新指南链接历史材料，不通过搬迁或复制来“整理”目录。
 
@@ -38,8 +40,10 @@ UniAuth 是一个单仓库认证系统，包含三个可运行部分：
 - Vite 开发端口：`5173`，`/api` 和 `/oauth2` 代理到 `http://localhost:8081`。
 - Python 示例与组件 README 当前统一使用：`5002`。
 - 默认不激活任何 Spring profile；启动者必须显式选择 `dev`、`test` 或 `prod`。
-- `test` 使用 PostgreSQL；`dev` 使用 SQLite；`prod` 使用 PostgreSQL。
-- `test` PostgreSQL 的 host、port、database、user 和 password 都必须显式提供。
+- `dev`、`test`、`prod` 只支持 PostgreSQL。
+- 三个 profile 的 host、port、database、user 和 password 都必须显式提供。
+- Flyway 是唯一 schema owner；当前 runtime migration 是 PostgreSQL V1。
+- Hibernate 使用 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 外部邮件服务默认地址：`http://localhost:8095`。
 - React 生产构建直接写入 `src/main/resources/static/`，该目录是生成物并被 gitignore。
 - OAuth2 callback 和 `app.frontend.url` 当前包含部署域名硬编码；本地 OAuth2 流程需要显式覆盖配置。
@@ -53,8 +57,15 @@ UniAuth 是一个单仓库认证系统，包含三个可运行部分：
 `app.demo-data.enabled=true`、`app.demo-data.disposable=true` 且数据库名符合
 test/demo 安全规则时 upsert 三个受管账户；它不得执行全表删除。
 
-根启动脚本默认选择隔离的 `dev` SQLite 目标；直接运行 Maven 时仍必须显式选择 profile。
-`test` profile 的 SQL init/Hibernate 仍会改变 schema，只能指向明确可丢弃的 PostgreSQL。
+根启动脚本默认选择 `dev`，但不会提供数据库回退；必须显式设置 `POSTGRES_*`。
+`dev` 只接受 dev/test/demo 命名的非生产数据库，`test` 只接受明确可丢弃的
+test/demo 数据库。自动化测试必须使用 Testcontainers，不得读取 `.env`。
+
+Flyway V1 源自 2026-08-07 对 `blacksheep_dev` 的只读 schema 导出。
+该库已通过只读 rehearsal，但尚未执行 baseline apply。未经用户显式授权和精确
+confirmation token，不得对其创建 `uniauth_flyway_schema_history` 或执行 pending
+migrations。apply 前必须重新核对源 schema 指纹和 history table，不能沿用长时间
+rehearsal 开始时的旧状态；apply 后必须与 rehearsal 的 fresh 最新迁移结果一致。
 
 仓库根目录 `.env`、`jwt-secret.key`、OAuth2 凭据和数据库密码属于敏感信息。不要打印、提交或写入文档。
 历史提交中的 `rsa-keys.ser` 包含已暴露的 JWT 私钥材料，不能继续信任或恢复到版本控制。
@@ -123,27 +134,28 @@ JWKS、旧 token 和 Python 资源服务器；真实环境仍需外部密钥管�
 
 ## Database Reality
 
-启动时实际使用 Spring SQL init 和 Hibernate 配置：
+PostgreSQL 是唯一受支持数据库。Flyway 配置：
 
-- `dev`: `schema-sqlite.sql` + `data-sqlite.sql`, `ddl-auto: none`。
-- `test`: `schema-postgresql.sql`, `ddl-auto: update`。
-- `prod`: SQL init 关闭，`ddl-auto: validate`，需要外部预置 schema。
+- location: `classpath:db/migration/postgresql`
+- history: `uniauth_flyway_schema_history`
+- `baseline-on-migrate=false`
+- `clean-disabled=true`
+- `validate-on-migrate=true`
+- `out-of-order=false`
 
-`src/main/resources/db/migration/V*.sql` 看起来像 Flyway migration，但 `pom.xml` 没有 Flyway 依赖，当前不会自动执行。
-不要只新增 migration 文件就认为数据库已更新。
+当前 V1 精确复现获准的 8 张 dev auth/session 表。后续结构修复必须新增 V2+，
+不得修改已经发布或 baseline 的 V1 checksum。
 
 修改 entity/schema 时至少核对：
 
-- `schema-postgresql.sql`
-- `schema-sqlite.sql`
-- 相关 profile 的 `ddl-auto` / SQL init 行为
+- `src/main/resources/db/migration/postgresql/`
+- 三个 profile 的 Flyway/`ddl-auto`/SQL init/Session init 行为
 - `scripts/export-schema-pg.sh` 的表清单
-- 生产数据库的真实迁移方式
+- fresh migrate、existing-schema baseline、Hibernate validate 和 Session round-trip 测试
+- 生产/开发库的 preflight、备份、forward-fix 和显式 apply 流程
 
-当前 SQLite schema 明显落后于实体和 PostgreSQL 功能：缺少 `web3_nonces`、`email_verification_codes`，且 `user_login_methods` 缺少部分映射列。
-不要把 fresh `dev` profile 当作完整功能环境，除非先修复 schema。
-
-Spring Session 使用 JDBC。生产环境不会自动建 session 表。
+旧 V1-V4、V6-V8（V5 缺失）及旧 PostgreSQL/SQLite init SQL 已原样归档到
+`docs/archive/database/legacy-sql/`，不得恢复到 runtime classpath。
 
 ## Frontend Workflow
 
@@ -158,7 +170,8 @@ Vite 会清空并重建 Spring Boot 静态资源目录。当前构建成功，�
 
 `npm run lint` 当前不可用，因为仓库没有 ESLint 配置文件；不要报告 lint 通过。
 
-前端类型中仍有历史漂移，例如登录方式 id 在后端是 UUID string，但部分 service 方法参数声明为 `number`。跨端修改时核对真实 JSON，不要只信 TypeScript 现状。
+登录方式 id 的前端类型已统一为 UUID string。跨端修改时仍要核对真实 JSON，
+并同步 service、types、页面、Playwright 和 Shell contract。
 
 ## Verification Commands
 
@@ -173,14 +186,18 @@ python3 -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") fo
 (cd python-resource-server && python3 -m unittest -v test_app.py)
 ```
 
-已知状态：
+已知状态（2026-08-07 当前工作树）：
 
-- 2026-08-07 Phase 0 门禁执行了 28 个 Java tests、5 个 Python tests 和
-  1 个 Mock Playwright test；后续变更必须重新运行，不能继承该结果。
-- 前端已包含最小 Playwright Mock harness；`npm run test:e2e` 是触达认证页面时的门禁。
+- Maven：42 tests，0 failures/errors/skips。
+- Shell HTTP E2E：10/10。
+- Mock Playwright：12 tests。
+- Python：5 tests。
+- Flyway：fresh migration、existing-schema baseline integration 和
+  `blacksheep_dev` 只读 rehearsal 已通过。
+- 后续变更必须重新运行受影响门禁，不能继承该结果。
 - 前端 lint 当前失败，原因是缺少 ESLint 配置。
 - Python 资源服务器已有离线 RSA/JWKS/Flask 测试。
-- OAuth2、邮件、Web3、PostgreSQL 脚本属于外部依赖集成测试，运行前必须确认凭据、服务、数据库和副作用。
+- 真实 OAuth2、真实邮件和共享数据库写操作仍属于显式 opt-in 验证。
 
 `start.sh` 可读取显式环境变量或指定的 Google client JSON；
 `start-with-frontend.sh` 要求所有 OAuth2 环境变量。两者都经过
@@ -205,19 +222,26 @@ python3 -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") fo
 
 在依赖相关功能前先验证这些已知风险：
 
-- 邮箱验证码发送与持久化分别调用了两次随机码生成，邮件中的 code 可能与数据库中的 code 不同。
-- 密码重置邮件模板使用硬编码 `123456`，随后又创建独立随机验证码。
 - token blacklist 有 entity/repository/schema，但没有接入 token 验证或登出撤销流程。
 - OAuth2、local login、refresh、Web3 的 cookie `Secure` 设置不一致。
+- refresh token 仍出现在 JSON，前端多处写入 localStorage；header/cookie token 来源可能冲突。
+- CORS 有 YAML 和多个 Java 配置来源；OAuth2 redirect/Referer 缺少统一 allowlist。
 - `ApiAuthController` 对 JWT 用户把 provider 默认标成 `local`，不能反映真实主登录方式。
-- Web3 登录响应中的 `isNewUser` 和 bind 返回值处理需要重新核验。
-- live 文档、Nginx 和测试脚本已统一到后端 `8081`、Python `5002`；
-  历史材料仍保留旧端口，并在顶部标注其生命周期。
+- 邮件投递失败、频控、retry 和 challenge 并发消费尚未形成可靠状态机。
+- Web3 尚未严格绑定完整 SIWE message，nonce 也不是原子消费。
+- 登录方式 primary、最后一个方式删除和首次 provider bind 缺少并发数据库不变量。
+- live 端口已统一到后端 `8081`、Python `5002`；部署域名仍需外部化。
 
 这些条目是工作提示，不代替针对当前任务的代码阅读和测试。
 
 ## Change Discipline
 
+- 多步骤任务持续使用 plan 工具；关键提醒必须写入本文件或任务实施文档。
+- 当前总原则是先全面加固已有功能，不增加新功能。
+- 实施前先建立集成测试、Shell E2E 和 Playwright 保护；测试必须覆盖本次修改。
+- 基础门禁通过后执行连续三轮无修改检查；任何实质修改都将计数归零。
+- 并发修复优先数据库约束、条件更新和 CAS，不默认使用悲观锁，也不机械引入 `@Version`。
+- 未经用户允许，不运行真实高成本外部调用；真实 OAuth/mail 也不是默认门禁。
 - 保持改动紧贴请求，不顺手重写历史文档或大规模清理认证架构。
 - 安全、token、cookie、OAuth2 callback、CORS 和 schema 改动具有跨模块影响，必须同时检查后端、前端和 Python 示例。
 - API 响应变更要同步 `frontend/src/services/authService.ts`、类型、调用页面和相关脚本。

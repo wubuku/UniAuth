@@ -8,23 +8,26 @@
 
 | 文档 | 状态 | 适用场景 |
 |------|------|----------|
-| [项目 README](../README.md) | Needs verification | 项目概览；长篇正文仍含历史描述 |
+| [项目 README](../README.md) | Needs verification | 顶部为当前概览；长篇正文仍保留历史描述 |
 | [Agent Guide](../AGENTS.md) | Live | 编程代理的安全边界、模块入口和高风险事实 |
 | [当前架构](ARCHITECTURE.md) | Live | 模块、认证链、数据流和跨模块影响 |
 | [配置基线](CONFIGURATION.md) | Live | 端口、profile、数据库、外部服务和密钥 |
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
-| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | In progress | Phase 0 H0.1-H0.3 已验证；H1-H8 仍是未实施计划 |
+| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | In progress | H0.1-H0.3、H1.1-H1.3 已验证；H1.4-H8 待实施 |
+| [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Draft | 先扩充现有功能测试覆盖，再执行后续加固 |
 
 ## 当前关键结论
 
 - 默认不激活 Spring profile，后端端口是 `8081`。
 - 演示数据默认关闭且不再全表清理；显式启用仍只允许 test/demo 命名的 disposable 数据库。
 - Vite 使用 `5173`，Python 资源服务器代码实际使用 `5002`。
-- `db/migration/V*.sql` 当前没有 Flyway/Liquibase 执行器。
-- SQLite schema 落后于当前实体和 PostgreSQL schema。
-- 已建立 Phase 0 Java 回归测试、前端 Mock Playwright 和 Python 离线 JWT/JWKS 测试；
-  ESLint 配置仍缺失。
+- `dev`、`test`、`prod` 只支持显式 PostgreSQL；SQLite runtime 已退役。
+- Flyway 已接管 schema，当前 V1 来自实际 dev PostgreSQL 的 8 表结构。
+- Hibernate 只执行 `validate`；SQL init 和 Spring Session 自动建表均关闭。
+- 已建立 PostgreSQL Java 集成测试、真实 HTTP Shell E2E、Mock Playwright 和
+  Python 离线 JWT/JWKS 测试；ESLint 配置仍缺失。
+- `blacksheep_dev` 已通过只读 baseline rehearsal，但尚未执行 baseline apply。
 
 详细证据和操作限制见 [配置基线](CONFIGURATION.md) 与
 [验证指南](VERIFICATION.md)。

@@ -80,6 +80,7 @@ export function useAuth() {
       
       const accessToken = getCookie('accessToken');
       const refreshToken = getCookie('refreshToken');
+      const storedAccessToken = localStorage.getItem('accessToken');
       
       console.log('Access token from cookie:', accessToken ? 'Present' : 'Missing');
       console.log('Refresh token from cookie:', refreshToken ? 'Present' : 'Missing');
@@ -87,6 +88,8 @@ export function useAuth() {
       if (accessToken) {
         localStorage.setItem('accessToken', accessToken);
         console.log('Stored access token from cookie to localStorage');
+      } else if (storedAccessToken) {
+        console.log('Using access token already stored in localStorage');
       } else {
         console.log('No access token found in cookie');
         // 只在有refreshToken时才尝试刷新

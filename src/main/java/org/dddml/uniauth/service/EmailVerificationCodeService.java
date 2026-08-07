@@ -44,22 +44,40 @@ public class EmailVerificationCodeService {
     private int resendCooldownSeconds;
 
     private static final String EMAIL_VERIFY_TEMPLATE = "email/email-verify";
+    private static final String PASSWORD_RESET_TEMPLATE = "email/password-reset";
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     @Transactional
     public void sendVerificationCode(String email, VerificationPurpose purpose, Map<String, Object> metadata) {
         log.info("Sending verification code for purpose {}", purpose);
 
+        String verificationCode = generateVerificationCode();
         if (emailService.isAvailable()) {
-            String result = emailService.sendTemplateEmail(
-                email,
-                "Verify your email",
-                EMAIL_VERIFY_TEMPLATE,
-                Map.of("code", generateVerificationCode()),
-                "VERIFICATION"
-            ).name();
+            Map<String, Object> templateVariables = new HashMap<>();
+            templateVariables.put("code", verificationCode);
+            templateVariables.put("verificationCode", verificationCode);
+            templateVariables.put("username", email);
+            templateVariables.put("expiryMinutes", expiryMinutes);
 
-            if (result.equals("FAILED") || result.equals("RATE_LIMITED")) {
+            String template = purpose == VerificationPurpose.PASSWORD_RESET
+                    ? PASSWORD_RESET_TEMPLATE
+                    : EMAIL_VERIFY_TEMPLATE;
+            String subject = purpose == VerificationPurpose.PASSWORD_RESET
+                    ? "重置您的密码"
+                    : "Verify your email";
+            String emailType = purpose == VerificationPurpose.PASSWORD_RESET
+                    ? "PASSWORD_RESET"
+                    : "VERIFICATION";
+
+            EmailSendResult result = emailService.sendTemplateEmail(
+                email,
+                subject,
+                template,
+                templateVariables,
+                emailType
+            );
+
+            if (result == EmailSendResult.FAILED || result == EmailSendResult.RATE_LIMITED) {
                 log.warn("Email service did not accept the verification request");
             }
         } else {
@@ -69,7 +87,7 @@ public class EmailVerificationCodeService {
         EmailVerificationCode code = EmailVerificationCode.builder()
             .id(UUID.randomUUID().toString())
             .email(email)
-            .verificationCode(generateVerificationCode())
+            .verificationCode(verificationCode)
             .purpose(purpose)
             .metadata(serializeMetadata(metadata))
             .expiresAt(Instant.now().plus(expiryMinutes, ChronoUnit.MINUTES))
