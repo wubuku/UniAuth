@@ -152,6 +152,12 @@ grep -Fq "restored_v2_history_type=SQL" \
 grep -Fq "fresh_v2_history_type=SQL" \
     "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
     || fail "fresh rehearsal did not apply Flyway V2"
+grep -Fq "restored_v3_history_type=SQL" \
+    "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
+    || fail "existing-schema rehearsal did not apply Flyway V3"
+grep -Fq "fresh_v3_history_type=SQL" \
+    "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
+    || fail "fresh rehearsal did not apply Flyway V3"
 valid_fingerprint="$(awk '/^Schema fingerprint: / {print $3}' "$valid_output")"
 [ -n "$valid_fingerprint" ] || fail "rehearsal did not report a schema fingerprint"
 

@@ -30,6 +30,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
 @SpringBootTest
@@ -208,6 +209,114 @@ class LoginMethodConcurrencyIntegrationTest extends PostgreSqlIntegrationTest {
         }
     }
 
+    @Test
+    void concurrentRemovalOfBothMethodsReturnsStableConflictAndKeepsOnePrimary()
+            throws Exception {
+        UserDto user = registerUser("remove-race");
+        UserLoginMethod local = loginMethodRepository
+                .findByUserIdAndAuthProvider(
+                        user.getId(),
+                        UserLoginMethod.AuthProvider.LOCAL
+                )
+                .orElseThrow();
+        UserLoginMethod github = loginMethodService.bindOAuth2LoginMethod(
+                user.getId(),
+                UserLoginMethod.AuthProvider.GITHUB,
+                "remove-github-" + UUID.randomUUID(),
+                user.getEmail(),
+                "Remove GitHub"
+        );
+        String accessToken = accessToken(user);
+
+        installLoginMethodMutationDelayTrigger();
+        try {
+            List<MvcResult> results = runConcurrently(
+                    () -> remove(accessToken, local.getId()),
+                    () -> remove(accessToken, github.getId())
+            );
+
+            assertOneSuccessAndOneConflict(
+                    results,
+                    "登录方式已被并发修改，请重试"
+            );
+            assertLoginMethodInvariant(user.getId(), 1);
+        } finally {
+            removeDelayTrigger();
+        }
+    }
+
+    @Test
+    void concurrentPrimaryRemovalAndPrimarySwitchKeepsLoginMethodInvariant()
+            throws Exception {
+        UserDto user = registerUser("remove-primary-race");
+        UserLoginMethod local = loginMethodRepository
+                .findByUserIdAndAuthProvider(
+                        user.getId(),
+                        UserLoginMethod.AuthProvider.LOCAL
+                )
+                .orElseThrow();
+        UserLoginMethod github = loginMethodService.bindOAuth2LoginMethod(
+                user.getId(),
+                UserLoginMethod.AuthProvider.GITHUB,
+                "remove-primary-github-" + UUID.randomUUID(),
+                user.getEmail(),
+                "Remove Primary GitHub"
+        );
+        String accessToken = accessToken(user);
+
+        installLoginMethodMutationDelayTrigger();
+        try {
+            List<MvcResult> results = runConcurrently(
+                    () -> remove(accessToken, local.getId()),
+                    () -> setPrimary(accessToken, github.getId())
+            );
+
+            assertOneSuccessAndOneConflict(
+                    results,
+                    Set.of(
+                            "登录方式已被并发修改，请重试",
+                            "主登录方式已被并发修改，请重试"
+                    )
+            );
+            assertLoginMethodInvariant(user.getId(), null);
+        } finally {
+            removeDelayTrigger();
+        }
+    }
+
+    @Test
+    void concurrentTargetRemovalAndPrimarySwitchKeepsLoginMethodInvariant()
+            throws Exception {
+        UserDto user = registerUser("remove-target-race");
+        UserLoginMethod github = loginMethodService.bindOAuth2LoginMethod(
+                user.getId(),
+                UserLoginMethod.AuthProvider.GITHUB,
+                "remove-target-github-" + UUID.randomUUID(),
+                user.getEmail(),
+                "Remove Target GitHub"
+        );
+        String accessToken = accessToken(user);
+
+        installLoginMethodMutationDelayTrigger();
+        try {
+            List<MvcResult> results = runConcurrently(
+                    () -> remove(accessToken, github.getId()),
+                    () -> setPrimary(accessToken, github.getId())
+            );
+
+            assertOneSuccessAndOneConflict(
+                    results,
+                    Set.of(
+                            "登录方式已被并发修改，请重试",
+                            "主登录方式已被并发修改，请重试"
+                    )
+            );
+            assertLoginMethodInvariant(user.getId(), null);
+        } finally {
+            removeDelayTrigger();
+        }
+    }
+
     private BindResult bind(String userId, String providerSubject) {
         try {
             loginMethodService.bindOAuth2LoginMethod(
@@ -227,6 +336,52 @@ class LoginMethodConcurrencyIntegrationTest extends PostgreSqlIntegrationTest {
         return mockMvc.perform(put("/api/user/login-methods/{id}/primary", methodId)
                         .header("Authorization", "Bearer " + accessToken))
                 .andReturn();
+    }
+
+    private MvcResult remove(String accessToken, String methodId) throws Exception {
+        return mockMvc.perform(delete("/api/user/login-methods/{id}", methodId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andReturn();
+    }
+
+    private String accessToken(UserDto user) {
+        return jwtTokenService.generateAccessToken(
+                user.getUsername(),
+                user.getEmail(),
+                user.getId(),
+                Set.of("ROLE_USER")
+        );
+    }
+
+    private void assertOneSuccessAndOneConflict(
+            List<MvcResult> results,
+            String expectedMessage) throws Exception {
+        assertOneSuccessAndOneConflict(results, Set.of(expectedMessage));
+    }
+
+    private void assertOneSuccessAndOneConflict(
+            List<MvcResult> results,
+            Set<String> expectedMessages) throws Exception {
+        assertThat(results)
+                .extracting(result -> result.getResponse().getStatus())
+                .containsExactlyInAnyOrder(200, 409);
+
+        MvcResult conflict = results.stream()
+                .filter(result -> result.getResponse().getStatus() == 409)
+                .findFirst()
+                .orElseThrow();
+        JsonNode conflictBody =
+                objectMapper.readTree(conflict.getResponse().getContentAsByteArray());
+        assertThat(conflictBody.path("error").asText()).isIn(expectedMessages);
+    }
+
+    private void assertLoginMethodInvariant(String userId, Integer expectedCount) {
+        List<UserLoginMethod> methods = loginMethodRepository.findByUserId(userId);
+        assertThat(methods).isNotEmpty();
+        if (expectedCount != null) {
+            assertThat(methods).hasSize(expectedCount);
+        }
+        assertThat(methods).filteredOn(UserLoginMethod::isPrimary).hasSize(1);
     }
 
     private UserDto registerUser(String prefix) {
@@ -257,6 +412,10 @@ class LoginMethodConcurrencyIntegrationTest extends PostgreSqlIntegrationTest {
                 """, "UPDATE");
     }
 
+    private void installLoginMethodMutationDelayTrigger() {
+        installDelayFunction("PERFORM pg_sleep(0.75);", "UPDATE OR DELETE");
+    }
+
     private void installDelayFunction(String body, String event) {
         removeDelayTrigger();
         jdbcTemplate.execute("""
@@ -265,6 +424,9 @@ class LoginMethodConcurrencyIntegrationTest extends PostgreSqlIntegrationTest {
                 AS $$
                 BEGIN
                     %s
+                    IF TG_OP = 'DELETE' THEN
+                        RETURN OLD;
+                    END IF;
                     RETURN NEW;
                 END
                 $$

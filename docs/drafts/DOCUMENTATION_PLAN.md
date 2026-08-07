@@ -79,6 +79,7 @@
 | P1 | 编写下一轮测试优先实施切片 | 已完成；随 batch 状态持续更新 |
 | P1 | 修复新增/修改文档的相对链接 | 已纳入统一门禁 |
 | P1 | 说明邮箱认证对独立邮件服务的依赖、契约和验证边界 | 已完成 |
+| P1 | 纳入独立邮件服务参考实现并记录 Flyway、配置和 E2E | 已完成 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -104,9 +105,10 @@
 ## 已知事实与待修复项
 
 - `dev`、`test`、`prod` 已统一为显式 PostgreSQL，SQLite runtime 已退役。
-- Flyway V1 baseline + V2 已接管 8 张认证/Session 表并加固登录方式不变量；
+- Flyway V1 baseline + V2 + V3 已接管 8 张认证/Session 表，并加固登录方式
+  行形状、primary 和集合变更 CAS 不变量；
   旧 SQL 已归档到 runtime classpath 外。
-- Java 已有 PostgreSQL/Testcontainers 集成测试，当前完整门禁为 74 tests。
+- Java 已有 PostgreSQL/Testcontainers 集成测试，当前完整门禁为 77 tests。
 - HTTP Shell E2E 当前 13/13，Flyway baseline guard 10/10，
   Mock Playwright 18 tests，Python 9 tests。
 - 前端严格 `npm ci`、high/critical 依赖审计、lint、typecheck 和生产构建通过；
@@ -114,8 +116,9 @@
 - npm audit 仍有 2 个 React Router moderate advisories；当前客户端路由 pathname
   固定为同源值，OAuth 错误仅进入编码后的 query，不触达公告中的
   RSC/SSR data-router/外部输入决定目标 URL 路径；后续版本升级继续跟踪。
-- UniAuth 只包含外部邮件服务 HTTP 适配器；live guides 已明确邮箱注册/重置的
-  运行依赖、端点和模板契约、普通密码登录边界，以及默认门禁不证明真实投递。
+- UniAuth 主应用只包含外部邮件服务 HTTP 适配器；仓库已纳入独立参考实现。
+  live guides 已明确邮箱注册/重置的运行依赖、端点和模板契约、普通密码登录边界，
+  以及参考组件自己的 Flyway V1、独立数据库和完整 ApplicationContext E2E。
 - 邮箱验证码发送值已与持久化值一致；失败、频控和并发语义仍待修复。
 - token blacklist 尚未接入验证、刷新和登出流程。
 - Web3 的 `isNewUser`、bind 返回处理和 EIP-191 字节长度已修复；

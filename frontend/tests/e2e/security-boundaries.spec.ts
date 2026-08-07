@@ -295,7 +295,7 @@ test('refresh failure clears auth state without retrying the refresh endpoint', 
   }))).toEqual({ access: null, refresh: null });
 });
 
-test('login-method command errors remain visible and do not mutate the list', async ({ page }) => {
+test('login-method conflicts remain visible and do not mutate the list', async ({ page }) => {
   const githubId = '00000000-0000-0000-0000-000000000002';
 
   await page.addInitScript(() => {
@@ -325,9 +325,9 @@ test('login-method command errors remain visible and do not mutate the list', as
     expect(route.request().headers().authorization)
       .toBe('Bearer method.error.access.token');
     await route.fulfill({
-      status: 400,
+      status: 409,
       contentType: 'application/json',
-      body: JSON.stringify({ error: 'cannot set primary' }),
+      body: JSON.stringify({ error: '主登录方式已被并发修改，请重试' }),
     });
   });
   await page.route(/\/api\/user\/login-methods$/, async (route) => {
@@ -362,6 +362,6 @@ test('login-method command errors remain visible and do not mutate the list', as
   await expect(page.getByText('已绑定的登录方式 (2)')).toBeVisible();
   await page.getByRole('button', { name: '设为主登录' }).click();
 
-  await expect(page.getByText('设置失败: cannot set primary')).toBeVisible();
+  await expect(page.getByText('设置失败: 主登录方式已被并发修改，请重试')).toBeVisible();
   await expect(page.getByText('已绑定的登录方式 (2)')).toBeVisible();
 });

@@ -14,8 +14,8 @@
 | [配置基线](CONFIGURATION.md) | Live | 端口、profile、数据库、外部服务和密钥 |
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
-| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | In progress | H0.1-H0.3、H1.1-H1.3 已验证；H1.4-H8 待实施 |
-| [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Draft | 先扩充现有功能测试覆盖，再执行后续加固 |
+| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | In progress | H0.1-H0.3、H1.1-H1.3、H1.4 Batch B1/B2a 已验证；其余 H1.4-H8 待实施 |
+| [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Draft | Batch B2a 已完成；继续按测试优先切片执行后续加固 |
 
 ## 当前关键结论
 
@@ -23,10 +23,11 @@
 - 演示数据默认关闭且不再全表清理；显式启用仍只允许 test/demo 命名的 disposable 数据库。
 - Vite 使用 `5173`，Python 资源服务器代码实际使用 `5002`。
 - `dev`、`test`、`prod` 只支持显式 PostgreSQL；SQLite runtime 已退役。
-- Flyway 已接管 schema：V1 来自实际 dev PostgreSQL 的 8 表结构，V2 加固登录方式不变量。
+- Flyway 已接管 schema：V1 来自实际 dev PostgreSQL 的 8 表结构，V2 加固登录方式
+  行形状/primary 不变量，V3 增加登录方式集合 revision CAS。
 - Hibernate 只执行 `validate`；SQL init 和 Spring Session 自动建表均关闭。
-- 邮箱注册验证和密码重置依赖独立邮件服务；UniAuth 只提供 HTTP 客户端适配器，
-  不包含 SMTP/邮件供应商实现。普通邮箱加密码登录不需要每次发信。
+- 邮箱注册验证和密码重置依赖独立邮件服务；UniAuth 主应用只提供 HTTP 客户端适配器，
+  仓库另有不纳入根构建的参考实现。普通邮箱加密码登录不需要每次发信。
 - 已建立 PostgreSQL Java 集成测试、真实 HTTP Shell E2E、Mock Playwright 和
   Python 离线 JWT/JWKS 测试；ESLint 与统一验证入口已纳入门禁。
 - `blacksheep_dev` 已通过只读 baseline rehearsal，但尚未执行 baseline apply。
@@ -40,6 +41,7 @@
 |------|------|------|
 | [前端 README](../frontend/README.md) | Needs verification | React/Vite 使用说明；以 `vite.config.ts` 为端口和构建事实 |
 | [Python 资源服务器 README](../python-resource-server/README.md) | Needs verification | Flask 示例说明；以 `app.py` 为端口和 JWT claim 事实 |
+| [邮件服务参考实现](../reference/email-service/README.md) | Reference | 独立 Spring Boot REST/SMTP 组件；Flyway V1、PostgreSQL/GreenMail E2E |
 | [异构资源服务器验证记录](../VERIFICATION_CHECKLIST.md) | Historical | 2026-01-25 的历史验证快照，不是当前回归证明 |
 
 ## 契约与集成材料

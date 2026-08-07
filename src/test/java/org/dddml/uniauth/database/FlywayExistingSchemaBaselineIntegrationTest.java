@@ -49,9 +49,9 @@ class FlywayExistingSchemaBaselineIntegrationTest extends PostgreSqlIntegrationT
                 .load();
 
         adoptionFlyway.baseline();
-        assertThat(adoptionFlyway.migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(adoptionFlyway.migrate().migrationsExecuted).isEqualTo(2);
         assertThat(adoptionFlyway.info().current()).isNotNull();
-        assertThat(adoptionFlyway.info().current().getVersion().toString()).isEqualTo("2");
+        assertThat(adoptionFlyway.info().current().getVersion().toString()).isEqualTo("3");
 
         JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
         assertThat(jdbcTemplate.queryForObject(
@@ -62,6 +62,16 @@ class FlywayExistingSchemaBaselineIntegrationTest extends PostgreSqlIntegrationT
                 """,
                 String.class
         )).isEqualTo("BASELINE");
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                SELECT column_default
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'users'
+                  AND column_name = 'login_methods_revision'
+                """,
+                String.class
+        )).isEqualTo("0");
 
         Path keyDirectory = Files.createTempDirectory("uniauth-existing-schema-key-");
         Path keyFile = keyDirectory.resolve("signing-key.ser");
@@ -72,7 +82,7 @@ class FlywayExistingSchemaBaselineIntegrationTest extends PostgreSqlIntegrationT
             Flyway runtimeFlyway = context.getBean(Flyway.class);
             assertThat(runtimeFlyway.migrate().migrationsExecuted).isZero();
             assertThat(runtimeFlyway.info().current()).isNotNull();
-            assertThat(runtimeFlyway.info().current().getVersion().toString()).isEqualTo("2");
+            assertThat(runtimeFlyway.info().current().getVersion().toString()).isEqualTo("3");
             assertThat(context.getBean(JdbcTemplate.class)
                     .queryForObject("SELECT count(*) FROM users", Long.class))
                     .isZero();

@@ -138,7 +138,9 @@ public class LoginMethodService {
      */
     public void removeLoginMethod(String userId, String loginMethodId) {
         log.info("Removing login method");
-        
+
+        long expectedRevision = currentLoginMethodsRevision(userId);
+
         // 1. 检查登录方式是否属于该用户
         UserLoginMethod method = loginMethodRepository.findById(loginMethodId)
             .orElseThrow(() -> new IllegalArgumentException("登录方式不存在"));
@@ -152,19 +154,31 @@ public class LoginMethodService {
         if (methods.size() <= 1) {
             throw new IllegalStateException("不能移除最后一个登录方式");
         }
-        
+
+        boolean removingPrimary = method.isPrimary();
+        String replacementPrimaryId = null;
+
         // 3. 如果是主登录方式，需要先设置另一个为主登录方式
-        if (method.isPrimary()) {
-            UserLoginMethod newPrimary = methods.stream()
+        if (removingPrimary) {
+            replacementPrimaryId = methods.stream()
                 .filter(m -> !m.getId().equals(loginMethodId))
+                .map(UserLoginMethod::getId)
                 .findFirst()
                 .orElseThrow();
+        }
 
+        claimLoginMethodMutation(
+                userId,
+                expectedRevision,
+                "登录方式已被并发修改，请重试"
+        );
+
+        if (removingPrimary) {
             try {
                 loginMethodRepository.clearPrimaryForUser(userId);
                 if (loginMethodRepository.setPrimaryForUser(
                         userId,
-                        newPrimary.getId()
+                        replacementPrimaryId
                 ) != 1) {
                     throw new IllegalArgumentException("替代登录方式不存在");
                 }
@@ -185,7 +199,9 @@ public class LoginMethodService {
      */
     public void setPrimaryLoginMethod(String userId, String loginMethodId) {
         log.info("Setting primary login method");
-        
+
+        long expectedRevision = currentLoginMethodsRevision(userId);
+
         // 1. 验证登录方式属于该用户
         UserLoginMethod method = loginMethodRepository.findById(loginMethodId)
             .orElseThrow(() -> new IllegalArgumentException("登录方式不存在"));
@@ -193,7 +209,13 @@ public class LoginMethodService {
         if (!method.getUser().getId().equals(userId)) {
             throw new IllegalArgumentException("无权设置该登录方式");
         }
-        
+
+        claimLoginMethodMutation(
+                userId,
+                expectedRevision,
+                "主登录方式已被并发修改，请重试"
+        );
+
         try {
             // Bulk updates make the write order explicit and avoid relying on ORM flush ordering.
             loginMethodRepository.clearPrimaryForUser(userId);
@@ -305,6 +327,23 @@ public class LoginMethodService {
             return new LoginMethodConflictException("主登录方式已被并发修改，请重试");
         }
         return exception;
+    }
+
+    private long currentLoginMethodsRevision(String userId) {
+        return userRepository.findLoginMethodsRevision(userId)
+                .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+    }
+
+    private void claimLoginMethodMutation(
+            String userId,
+            long expectedRevision,
+            String conflictMessage) {
+        if (userRepository.compareAndIncrementLoginMethodsRevision(
+                userId,
+                expectedRevision
+        ) != 1) {
+            throw new LoginMethodConflictException(conflictMessage);
+        }
     }
 
     private String constraintName(Throwable exception) {

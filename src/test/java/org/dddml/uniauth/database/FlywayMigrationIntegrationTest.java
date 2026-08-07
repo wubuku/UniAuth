@@ -45,9 +45,9 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Test
-    void freshDatabaseMigratesToVersionTwoAndHibernateValidates() {
+    void freshDatabaseMigratesToVersionThreeAndHibernateValidates() {
         assertThat(flyway.info().current()).isNotNull();
-        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("2");
+        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("3");
         assertThat(flyway.migrate().migrationsExecuted).isZero();
 
         List<String> tables = jdbcTemplate.queryForList(
@@ -69,6 +69,26 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
 
     @Test
     void loginMethodSchemaEnforcesPrimaryAndProviderShapeInvariants() {
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                SELECT data_type
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'users'
+                  AND column_name = 'login_methods_revision'
+                """,
+                String.class
+        )).isEqualTo("bigint");
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                SELECT is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'users'
+                  AND column_name = 'login_methods_revision'
+                """,
+                String.class
+        )).isEqualTo("NO");
         assertThat(jdbcTemplate.queryForObject(
                 """
                 SELECT data_type
@@ -99,6 +119,20 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
                 "schema-" + userId + "@example.invalid"
         );
         try {
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT login_methods_revision FROM users WHERE id = ?",
+                    Long.class,
+                    userId
+            )).isZero();
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "UPDATE users SET login_methods_revision = -1 WHERE id = ?",
+                    userId
+            ))
+                    .hasRootCauseInstanceOf(SQLException.class)
+                    .hasMessageContaining(
+                            "ck_users_login_methods_revision_nonnegative"
+                    );
+
             jdbcTemplate.update(
                     """
                     INSERT INTO user_login_methods (

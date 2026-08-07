@@ -20,6 +20,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -47,6 +48,8 @@ import static org.awaitility.Awaitility.await;
         "spring.mail.properties.mail.smtp.starttls.enable=false",
         "spring.mail.properties.mail.smtp.starttls.required=false",
         "spring.mail.properties.mail.smtp.ssl.enable=false",
+        "spring.mail.properties.mail.smtp.connectiontimeout=500",
+        "spring.mail.properties.mail.smtp.timeout=500",
         "app.mail.from-email=no-reply@example.invalid",
         "app.mail.from-name=UniAuth Integration Test",
         "app.mail.rate-limit.enabled=false",
@@ -86,6 +89,9 @@ class EmailServiceEndToEndIntegrationTest {
 
     @Autowired
     private EmailLogRepository emailLogRepository;
+
+    @Autowired
+    private JavaMailSenderImpl mailSender;
 
     @BeforeEach
     void clearPersistentAndSmtpState() throws Exception {
@@ -221,6 +227,45 @@ class EmailServiceEndToEndIntegrationTest {
         assertThat(emailQueueRepository.count()).isZero();
         assertThat(emailLogRepository.count()).isZero();
         assertThat(SMTP.getReceivedMessages()).isEmpty();
+    }
+
+    @Test
+    void recordsSmtpFailureAndSchedulesRetryUsingRealBeans() {
+        int workingSmtpPort = mailSender.getPort();
+        mailSender.setPort(1);
+
+        try {
+            long queueId = enqueueTemplate(
+                "retry@example.test",
+                "Retry delivery",
+                "email/password-reset",
+                Map.of(
+                    "code", "161803",
+                    "verificationCode", "161803",
+                    "username", "retry@example.test",
+                    "expiryMinutes", 5
+                ),
+                "PASSWORD_RESET"
+            );
+
+            await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
+                EmailQueue queue = emailQueueRepository.findById(queueId).orElseThrow();
+                List<EmailLog> logs = emailLogRepository.findByQueueId(queueId);
+
+                assertThat(queue.getStatus()).isEqualTo("PENDING");
+                assertThat(queue.getRetryCount()).isEqualTo(1);
+                assertThat(queue.getNextRetryTime()).isNotNull();
+                assertThat(logs).singleElement().satisfies(log -> {
+                    assertThat(log.getStatus()).isEqualTo("FAILED");
+                    assertThat(log.getSendMethod()).isEqualTo("EVENT");
+                    assertThat(log.getErrorMessage()).isNotBlank();
+                });
+            });
+
+            assertThat(SMTP.getReceivedMessages()).isEmpty();
+        } finally {
+            mailSender.setPort(workingSmtpPort);
+        }
     }
 
     private long enqueueTemplate(String to, String subject, String templateName,

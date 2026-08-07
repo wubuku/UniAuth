@@ -19,7 +19,8 @@ Thymeleaf、PostgreSQL 和 `JavaMailSender`，把模板渲染后的邮件写入�
 
 - UniAuth 根 Maven 工程的一部分。
 - 经过生产安全、容量、多实例或灾难恢复验证的邮件平台。
-- 默认验证中会被启动或会发送真实邮件的服务。
+- 会由 UniAuth 根应用自动启动的内嵌模块。
+- 默认验证中会连接真实 SMTP 或向外部收件人发送邮件的服务。
 
 ## UniAuth 依赖关系
 
@@ -127,40 +128,70 @@ HTTP request
 | 发件人 | `EMAIL_FROM_ADDRESS`、`EMAIL_FROM_NAME` |
 | 队列 | `EMAIL_RATE_LIMIT_PER_MINUTE`、`EMAIL_RETRY_DELAY_MINUTES`、`EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES` |
 
+从来源目录复制的本机 `.env` 使用 Spring 标准变量
+`SPRING_MAIL_USERNAME`、`SPRING_MAIL_PASSWORD` 和 `APP_MAIL_FROM_EMAIL`；当前配置
+继续兼容这些名称。该文件被 gitignore 且不得提交，但它不包含完整运行配置：
+仍必须补充独立邮件数据库的 `EMAIL_POSTGRES_*`、`SMTP_HOST`、`SMTP_PORT` 和适用的
+TLS/SSL 设置。不要在文档或日志中打印变量值。
+
 Profile 行为：
 
 | Profile | Hibernate schema 行为 | 用途 |
 |---------|-----------------------|------|
-| `dev` | `update` | 独立、可丢弃的本地参考数据库 |
-| `prod` | `validate` | 只验证外部管理的 schema |
+| `dev` | `validate` | 独立、可丢弃的本地参考数据库 |
+| `prod` | `validate` | 部署环境的独立邮件数据库 |
 
-当前组件没有 Flyway migration。生产采用 `validate` 时，部署者必须另外提供并管理
-`email_queue` 和 `email_logs` schema。
+## 数据库与 Flyway
+
+Flyway 是本组件唯一的 schema owner：
+
+- location：`classpath:db/migration/postgresql`
+- history table：`email_service_flyway_schema_history`
+- 当前 migration：`V1__create_email_queue_and_logs.sql`
+- `baseline-on-migrate=false`
+- `clean-disabled=true`
+- `validate-on-migrate=true`
+- SQL init：`never`
+- Hibernate：所有 profile 均为 `ddl-auto=validate`
+
+V1 创建 `email_queue`、`email_logs`、检查约束和查询索引。已发布 migration 不得改写；
+后续 schema 变更必须新增 V2+。邮件服务必须使用独立数据库，不得把该 migration
+指向 UniAuth、`blacksheep_dev` 或其他共享 schema。
 
 ## 构建和测试
 
-离线行为测试使用 H2 和 mock，不会连接 PostgreSQL 或发送真实邮件：
+快速测试保留 H2 和 mock；组件级 E2E 使用完整 Spring ApplicationContext、随机真实
+HTTP 端口、Testcontainers PostgreSQL、Flyway、真实 repository/service/event Bean、
+Thymeleaf 和进程内 GreenMail SMTP。它不读取 `.env`，也不会连接真实邮件供应商。
 
 ```bash
 cd reference/email-service
-mvn test
+TESTCONTAINERS_RYUK_DISABLED=true mvn clean compile test-compile
+TESTCONTAINERS_RYUK_DISABLED=true mvn test
 ```
 
-只编译：
+E2E 覆盖：
 
-```bash
-cd reference/email-service
-mvn clean compile test-compile
-```
+- V1 migration、独立 history table 和 Hibernate `validate`。
+- `GET /api/email/health` 与必需模板列表的真实 HTTP 契约。
+- `email/email-verify` 和 `email/password-reset` 从 HTTP 入队到 SMTP 收件的完整链路。
+- 未知模板拒绝且不创建队列/日志。
+- SMTP 连接失败时写入失败日志并把队列安排为可重试状态。
+
+2026-08-07 当前基线：59 tests，0 failures/errors/skips，其中 5 个为上述组件级 E2E。
+
+测试需要 Docker。若本机下载依赖受限，只把机器代理临时注入当前命令，不要写入
+仓库配置、`.mvn/` 或可提交的环境文件。
 
 ## 安全启动
 
 不要复用 UniAuth 数据库，也不要连接共享开发库。先创建独立、明确可丢弃的数据库，
-再准备未提交的 `.env`：
+再补齐未提交的 `.env`。如果来源 `.env` 已存在，不要用示例文件覆盖其中的凭据；
+只合并缺失的变量：
 
 ```bash
 createdb -h 127.0.0.1 -U postgres uniauth_email_demo
-cp .env.example .env
+test -f .env || cp .env.example .env
 
 set -a
 source .env
@@ -204,17 +235,22 @@ EMAIL_SERVICE_URL=http://127.0.0.1:8095
 - 没有 API idempotency key，调用方重试可能创建重复邮件。
 - 限流计数保存在单进程内存中，多实例之间不共享。
 - 定时恢复每次最多处理 50 条，没有容量或积压恢复证明。
-- 没有 Flyway migration、生产 schema 发布流程或 PostgreSQL 集成测试。
-- 自动化测试使用 H2 和 mock，不证明 PostgreSQL 方言、SMTP TLS 或真实收件。
+- Flyway V1 和 PostgreSQL E2E 已存在，但没有生产 migration 发布/回滚演练。
+- GreenMail E2E 证明本地 SMTP 协议链，不证明供应商鉴权、TLS 策略、退信处理或
+  外部真实收件。
 - `/api/email/logs` 先加载全部匹配记录再在内存分页，不适合大数据量。
 - 邮件队列和发送日志会保存完整 HTML；验证码清理和数据保留策略尚未实现。
 
 ## 与来源版本的调整
 
-复制时没有带入源 `.env`、`target/`、机器专用数据库或字面量密码。仓库内版本另外：
+复制时没有带入 `target/`、机器专用数据库配置或可提交的字面量密码。来源 `.env`
+仅作为 ignored、owner-only 的本机文件复制，不进入版本控制。仓库内版本另外：
 
 - 使用显式环境变量和显式 profile。
 - 默认只监听 loopback。
+- 启用 Flyway V1 作为唯一 schema owner，并让所有 profile 使用 Hibernate `validate`。
+- 增加 PostgreSQL/Flyway/HTTP/GreenMail 的完整 ApplicationContext E2E。
+- 让异步发送事件在入队事务提交后、独立事务中处理。
 - 将 PostgreSQL 不支持的 `LONGTEXT` 列声明改为 `TEXT`。
 - 修正恢复扫描间隔的分钟换算。
 - 让模板列表包含 `email/email-verify`。

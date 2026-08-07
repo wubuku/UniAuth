@@ -441,6 +441,29 @@ if [ "$RESTORED_V2_HISTORY_TYPE" != "SQL" ] || [ "$FRESH_V2_HISTORY_TYPE" != "SQ
     exit 1
 fi
 
+RESTORED_V3_HISTORY_TYPE="$(
+    psql_value \
+        127.0.0.1 \
+        "$REHEARSAL_PORT" \
+        "$REHEARSAL_DATABASE" \
+        "$REHEARSAL_USER" \
+        "$REHEARSAL_PASSWORD" \
+        "SELECT type FROM uniauth_flyway_schema_history WHERE version = '3';"
+)"
+FRESH_V3_HISTORY_TYPE="$(
+    psql_value \
+        127.0.0.1 \
+        "$REHEARSAL_PORT" \
+        "$FRESH_DATABASE" \
+        "$REHEARSAL_USER" \
+        "$REHEARSAL_PASSWORD" \
+        "SELECT type FROM uniauth_flyway_schema_history WHERE version = '3';"
+)"
+if [ "$RESTORED_V3_HISTORY_TYPE" != "SQL" ] || [ "$FRESH_V3_HISTORY_TYPE" != "SQL" ]; then
+    echo "ERROR: Flyway V3 was not applied in both rehearsal paths" >&2
+    exit 1
+fi
+
 REPORT_FILE="$ARTIFACT_DIR/rehearsal-result.txt"
 {
     echo "timestamp=$RUN_TIMESTAMP"
@@ -453,6 +476,8 @@ REPORT_FILE="$ARTIFACT_DIR/rehearsal-result.txt"
     echo "fresh_history_type=$FRESH_HISTORY_TYPE"
     echo "restored_v2_history_type=$RESTORED_V2_HISTORY_TYPE"
     echo "fresh_v2_history_type=$FRESH_V2_HISTORY_TYPE"
+    echo "restored_v3_history_type=$RESTORED_V3_HISTORY_TYPE"
+    echo "fresh_v3_history_type=$FRESH_V3_HISTORY_TYPE"
     echo "source_dump=$SOURCE_DUMP"
 } > "$REPORT_FILE"
 

@@ -274,6 +274,11 @@ echo "1/13 Verify Flyway-owned PostgreSQL startup"
 ")" = "1" ] || fail "Flyway V2 was not recorded as a successful SQL migration"
 [ "$(db_value "
     SELECT count(*)
+    FROM uniauth_flyway_schema_history
+    WHERE version = '3' AND type = 'SQL' AND success = true;
+")" = "1" ] || fail "Flyway V3 was not recorded as a successful SQL migration"
+[ "$(db_value "
+    SELECT count(*)
     FROM information_schema.tables
     WHERE table_schema = 'public'
       AND table_name = ANY (ARRAY[
@@ -300,6 +305,21 @@ echo "1/13 Verify Flyway-owned PostgreSQL startup"
 [ "$(db_value "SELECT to_regclass('public.uk_login_methods_one_primary');")" \
     = "uk_login_methods_one_primary" ] \
     || fail "Flyway V2 did not create the primary login-method unique index"
+[ "$(db_value "
+    SELECT data_type || ':' || is_nullable || ':' || column_default
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'users'
+      AND column_name = 'login_methods_revision';
+")" = "bigint:NO:0" ] \
+    || fail "Flyway V3 did not create the login-method revision column"
+[ "$(db_value "
+    SELECT count(*)
+    FROM pg_constraint
+    WHERE conname = 'ck_users_login_methods_revision_nonnegative'
+      AND conrelid = 'public.users'::regclass;
+")" = "1" ] \
+    || fail "Flyway V3 did not create the nonnegative revision check"
 
 expect_db_rejection "
     BEGIN;
@@ -472,8 +492,8 @@ wait_for_application
 [ "$(db_value "
     SELECT count(*)
     FROM uniauth_flyway_schema_history
-    WHERE version IN ('1', '2') AND type = 'SQL' AND success = true;
-")" = "2" ] || fail "application restart changed the Flyway migration history"
+    WHERE version IN ('1', '2', '3') AND type = 'SQL' AND success = true;
+")" = "3" ] || fail "application restart changed the Flyway migration history"
 [ "$(db_value "SELECT count(*) FROM users WHERE id = '$local_user_id';")" = "1" ] \
     || fail "application restart lost the registered user"
 restarted_user="$(
@@ -634,6 +654,128 @@ bound_web3_method_id="$(
         <<<"$managed_methods"
 )"
 
+race_method_id="shell-race-${RUN_ID}"
+db_value "
+    INSERT INTO user_login_methods (
+        id,
+        user_id,
+        auth_provider,
+        provider_user_id,
+        provider_email,
+        provider_username,
+        is_primary,
+        is_verified
+    ) VALUES (
+        '$race_method_id',
+        '$local_user_id',
+        'GITHUB',
+        '$race_method_id',
+        '$local_email',
+        'shell-race',
+        false,
+        true
+    );
+
+    CREATE OR REPLACE FUNCTION e2e_delay_login_method_mutation()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS \$\$
+    BEGIN
+        PERFORM pg_sleep(0.75);
+        IF TG_OP = 'DELETE' THEN
+            RETURN OLD;
+        END IF;
+        RETURN NEW;
+    END
+    \$\$;
+
+    CREATE TRIGGER e2e_delay_login_method_mutation
+    BEFORE UPDATE OR DELETE ON user_login_methods
+    FOR EACH ROW
+    EXECUTE FUNCTION e2e_delay_login_method_mutation();
+" >/dev/null
+
+race_delete_body="$TEMP_DIR/login-method-race-delete.json"
+race_delete_status_file="$TEMP_DIR/login-method-race-delete.status"
+race_primary_body="$TEMP_DIR/login-method-race-primary.json"
+race_primary_status_file="$TEMP_DIR/login-method-race-primary.status"
+
+curl -sS -o "$race_delete_body" -w '%{http_code}' \
+    -X DELETE \
+    -H "Authorization: Bearer $new_access_token" \
+    "${BASE_URL}/api/user/login-methods/${race_method_id}" \
+    >"$race_delete_status_file" &
+race_delete_pid=$!
+curl -sS -o "$race_primary_body" -w '%{http_code}' \
+    -X PUT \
+    -H "Authorization: Bearer $new_access_token" \
+    "${BASE_URL}/api/user/login-methods/${race_method_id}/primary" \
+    >"$race_primary_status_file" &
+race_primary_pid=$!
+
+wait "$race_delete_pid"
+wait "$race_primary_pid"
+
+db_value "
+    DROP TRIGGER e2e_delay_login_method_mutation ON user_login_methods;
+    DROP FUNCTION e2e_delay_login_method_mutation();
+" >/dev/null
+
+race_delete_status="$(cat "$race_delete_status_file")"
+race_primary_status="$(cat "$race_primary_status_file")"
+if ! {
+    [ "$race_delete_status" = "200" ] && [ "$race_primary_status" = "409" ];
+} && ! {
+    [ "$race_delete_status" = "409" ] && [ "$race_primary_status" = "200" ];
+}; then
+    fail "concurrent login-method mutation did not return one 200 and one 409"
+fi
+
+if [ "$race_delete_status" = "409" ]; then
+    race_conflict_body="$race_delete_body"
+else
+    race_conflict_body="$race_primary_body"
+fi
+race_conflict_error="$(jq -er '.error' "$race_conflict_body")"
+case "$race_conflict_error" in
+    "登录方式已被并发修改，请重试"|"主登录方式已被并发修改，请重试")
+        ;;
+    *)
+        fail "concurrent login-method mutation returned an unstable conflict message"
+        ;;
+esac
+
+[ "$(db_value "
+    SELECT count(*)
+    FROM user_login_methods
+    WHERE user_id = '$local_user_id';
+")" -ge "1" ] || fail "concurrent login-method mutation removed every login method"
+[ "$(db_value "
+    SELECT count(*)
+    FROM user_login_methods
+    WHERE user_id = '$local_user_id' AND is_primary = true;
+")" = "1" ] || fail "concurrent login-method mutation did not leave exactly one primary"
+[ "$(db_value "
+    SELECT login_methods_revision
+    FROM users
+    WHERE id = '$local_user_id';
+")" = "1" ] || fail "concurrent login-method mutation did not claim exactly one revision"
+
+if [ "$(db_value "
+    SELECT count(*)
+    FROM user_login_methods
+    WHERE id = '$race_method_id';
+")" = "1" ]; then
+    race_cleanup_status="$(
+        request_status \
+            DELETE \
+            "/api/user/login-methods/${race_method_id}" \
+            -H "Authorization: Bearer $new_access_token"
+    )"
+    [ "$race_cleanup_status" = "200" ] \
+        || fail "the surviving race fixture could not be removed"
+fi
+
 set_primary_status="$(
     request_status \
         PUT \
@@ -764,7 +906,7 @@ grep -qi 'set-cookie: refreshToken=.*Max-Age=0' "$logout_headers" \
 echo "13/13 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
     || fail "the E2E harness connected to an unexpected database"
-[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "2" ] \
+[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "3" ] \
     || fail "Flyway history contained unexpected rows after two application starts"
 [ "$(db_value "SELECT count(*) FROM web3_nonces;")" = "0" ] \
     || fail "consumed Web3 nonces remained in the database"

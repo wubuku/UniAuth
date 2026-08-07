@@ -14,16 +14,18 @@
 - `docs/drafts/DOCUMENTATION_PLAN.md`: 文档体系建设计划。
 - `docs/drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md`: 下一轮测试优先实施切片。
 - `docs/archive/database/README.md`: 旧 SQL 的历史归档和当前替代路径。
+- `reference/email-service/README.md`: 外部邮件 REST 服务的独立参考实现、Flyway 和 E2E。
 
 已有文档保持原路径。新指南链接历史材料，不通过搬迁或复制来“整理”目录。
 
 ## Big Picture
 
-UniAuth 是一个单仓库认证系统，包含三个可运行部分：
+UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个独立参考组件：
 
 - `src/main/java/org/dddml/uniauth/`: Spring Boot 3.3.4 / Java 17 后端。
 - `frontend/`: React 18 + TypeScript + Vite SPA。
 - `python-resource-server/`: Flask 异构资源服务器示例，通过 JWKS 验证 UniAuth JWT。
+- `reference/email-service/`: 外部邮件 REST 服务参考实现；独立 Maven 工程，不纳入根构建。
 
 后端同时承担几种角色：
 
@@ -43,11 +45,13 @@ UniAuth 是一个单仓库认证系统，包含三个可运行部分：
 - 默认不激活任何 Spring profile；启动者必须显式选择 `dev`、`test` 或 `prod`。
 - `dev`、`test`、`prod` 只支持 PostgreSQL。
 - 三个 profile 的 host、port、database、user 和 password 都必须显式提供。
-- Flyway 是唯一 schema owner；当前 runtime migration 链是 PostgreSQL V1 baseline + V2 登录方式加固。
+- Flyway 是唯一 schema owner；当前 runtime migration 链是 PostgreSQL V1 baseline +
+  V2 登录方式约束 + V3 登录方式 revision CAS。
 - Hibernate 使用 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 外部邮件服务默认地址：`http://localhost:8095`。
-- UniAuth 只实现邮件服务 HTTP 适配器，不包含 SMTP/供应商发送实现。真实邮箱注册验证
-  和密码重置需要独立邮件服务满足当前 HTTP、模板和响应契约；普通邮箱加密码登录不发信。
+- UniAuth 主应用只实现邮件服务 HTTP 适配器；真实邮箱注册验证和密码重置需要独立
+  邮件服务满足当前 HTTP、模板和响应契约。`reference/email-service/` 提供可运行参考，
+  但不会由根应用自动启动；普通邮箱加密码登录不发信。
 - React 生产构建直接写入 `src/main/resources/static/`，该目录是生成物并被 gitignore。
 - OAuth2 callback 和 `app.frontend.url` 当前包含部署域名硬编码；本地 OAuth2 流程需要显式覆盖配置。
 
@@ -103,6 +107,8 @@ CORS 目前同时存在于 `CorsConfig`、`WebConfig`、`WebMvcConfig` 和 YAML�
 - 本地用户名全局唯一；provider + provider user id 全局唯一。
 - 不能删除用户最后一个登录方式。
 - 每个用户预期只有一个 primary 登录方式。
+- `users.login_methods_revision` 是登录方式集合变更的用户级乐观 CAS token；
+  remove/set-primary 竞争只有一个请求取得变更权，失败方返回稳定 `409`。
 - `LOCAL` 同时承载用户名/密码和邮箱验证码绑定；后者允许
   `local_password_hash IS NULL`。数据库行形状约束不得假设每个 LOCAL 方式都有密码。
 
@@ -157,8 +163,23 @@ JWKS、旧 token 和 Python 资源服务器；真实环境仍需外部密钥管�
 `LOGIN` purpose，当前没有受支持的邮箱验证码登录 endpoint。
 
 当前失败语义不是生产可靠状态机：邮件服务不可用、拒绝或异步投递失败时，UniAuth
-仍可能持久化验证码并向客户端返回“已发送”。Java 集成测试 mock `EmailService`，
-Shell E2E 使用不可达地址并从隔离数据库读取验证码；这些门禁不证明真实邮件已入队或送达。
+仍可能持久化验证码并向客户端返回“已发送”。UniAuth Java 集成测试 mock
+`EmailService`，Shell E2E 使用不可达地址并从隔离数据库读取验证码；它们不证明外部
+服务行为。`reference/email-service` 的默认 E2E 通过真实 HTTP、Flyway/PostgreSQL、
+真实 Spring Beans、Thymeleaf、异步队列和 GreenMail 验证兼容实现，但不证明真实供应商送达。
+
+参考邮件服务的 schema 由其自己的 Flyway V1 管理，history table 是
+`email_service_flyway_schema_history`；所有 profile 使用 Hibernate `validate`，
+SQL init 关闭。它必须连接独立数据库，不得连接 UniAuth 或共享数据库。修改该组件时：
+
+```bash
+cd reference/email-service
+TESTCONTAINERS_RYUK_DISABLED=true mvn clean compile test-compile
+TESTCONTAINERS_RYUK_DISABLED=true mvn test
+```
+
+默认测试使用 disposable PostgreSQL 和进程内 GreenMail，不读取 `.env`，也不发送真实
+邮件。真实 SMTP/供应商验证仍须显式 opt in。
 
 ## Database Reality
 
@@ -172,8 +193,9 @@ PostgreSQL 是唯一受支持数据库。Flyway 配置：
 - `out-of-order=false`
 
 V1 精确复现获准的 8 张 dev auth/session 表；V2 对齐登录方式时区/nullability，
-增加 provider/行形状约束和每用户至多一个 primary 的唯一索引。后续结构修复必须
-新增 V3+，不得修改已经发布或 baseline 的 V1/V2 checksum。
+增加 provider/行形状约束和每用户至多一个 primary 的唯一索引；V3 增加用户级
+`login_methods_revision`，用于登录方式集合变更的乐观 CAS。后续结构修复必须新增
+V4+，不得修改已经发布或 baseline 的 V1/V2/V3 checksum。
 
 修改 entity/schema 时至少核对：
 
@@ -232,13 +254,15 @@ PYTHON_BIN=python3 scripts/verify.sh
 
 已知状态（2026-08-07 当前工作树）：
 
-- Maven：74 tests，0 failures/errors/skips。
+- Maven：77 tests，0 failures/errors/skips。
+- 邮件参考服务：59 tests，0 failures/errors/skips；其中 5 个完整 ApplicationContext E2E。
 - Shell HTTP E2E：13/13。
 - Flyway baseline guard：10/10。
 - Mock Playwright：18 tests。
 - Python：9 tests。
 - 前端 ESLint、TypeScript 和生产构建通过。
-- 本批完整门禁后的固定范围检查：连续无修改 3/3。
+- 每个未提交批次仍必须在完整门禁后重新执行连续三轮无修改检查；无问题轮次只记录在
+  当次工作报告，不为留痕修改仓库文件。
 - 前端 lockfile 已通过严格 `npm ci`；已显式升级受影响的 Axios、Ethers、
   React Router、Vite 和相关传递依赖，`npm audit --audit-level=high` 通过。
 - npm audit 仍报告 2 个 React Router moderate advisories。当前 SPA 只使用

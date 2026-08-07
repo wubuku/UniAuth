@@ -1,7 +1,8 @@
 # UniAuth - 统一身份认证系统
 
 > 状态：Needs verification。H0.1-H0.3、PostgreSQL/Flyway H1.1-H1.3、测试基础
-> Batch A 与登录方式约束 Batch B1 已完成加固验证，但项目尚无生产就绪证明。
+> Batch A、登录方式约束 Batch B1 与删除/primary 并发保护 Batch B2a 已完成加固验证，
+> 但项目尚无生产就绪证明。
 > 仓库不默认激活 Spring profile，所有 profile 只支持显式 PostgreSQL，Flyway 是唯一
 > schema owner，演示数据默认关闭且不执行全表清理。
 > 开始开发或启动前，请先阅读 [文档导航](docs/README.md)、
@@ -17,10 +18,11 @@
 | 后端 | Spring Boot 3.3.4 / Java 17，默认端口 `8081` |
 | 前端 | React 18 / Vite，开发端口 `5173` |
 | 资源服务器 | Flask，默认端口 `5002` |
-| 邮件发送 | 外部 HTTP 服务，默认端口 `8095`；本仓库不包含 SMTP/供应商发送实现 |
+| 邮件发送 | 外部 HTTP 服务，默认端口 `8095`；`reference/email-service/` 提供独立参考实现 |
 | 数据库 | PostgreSQL-only |
-| Migration | Flyway V1 baseline + V2，history `uniauth_flyway_schema_history` |
-| Java 验证 | 74 tests |
+| Migration | Flyway V1 baseline + V2 + V3，history `uniauth_flyway_schema_history` |
+| Java 验证 | 77 tests |
+| 邮件参考服务 | 59 tests，其中 5 个 PostgreSQL/HTTP/SMTP E2E |
 | HTTP E2E | 13/13 |
 | Flyway baseline guard | 10/10 |
 | Playwright | 18 tests |
@@ -56,10 +58,12 @@ OAuth2、多登录方式、自定义 JWT、邮箱验证、Web3 和异构资源�
 系统采用 Spring Boot 3.3.4 + React 18，`dev`、`test`、`prod` 均使用 PostgreSQL。
 schema 由 Flyway 管理，SQLite runtime 已退役。
 
-邮箱地址注册验证和密码重置依赖一个独立邮件发送服务。UniAuth 当前只包含该服务的
-HTTP 客户端适配器，不直接连接 SMTP 或邮件供应商。已建立账户后的邮箱加密码登录
-不发送邮件；当前也没有受支持的“每次登录发送验证码”无密码登录接口。完整依赖契约
-见 [配置基线](docs/CONFIGURATION.md#邮件服务依赖)。
+邮箱地址注册验证和密码重置依赖一个独立邮件发送服务。UniAuth 主应用只包含该服务的
+HTTP 客户端适配器，不直接连接 SMTP 或邮件供应商；仓库中的
+[邮件服务参考实现](reference/email-service/README.md) 是独立 Maven 组件，不由根应用
+自动构建或启动。已建立账户后的邮箱加密码登录不发送邮件；当前也没有受支持的
+“每次登录发送验证码”无密码登录接口。完整依赖契约见
+[配置基线](docs/CONFIGURATION.md#邮件服务依赖)。
 
 | 属性 | 说明 |
 |------|------|
@@ -101,7 +105,7 @@ HTTP 客户端适配器，不直接连接 SMTP 或邮件供应商。已建立账
 ### 会话持久化
 
 项目启用了 Spring Session JDBC，默认会话超时为 30 分钟。Session 表由 Flyway V1
-创建，当前 schema 迁移到 V2，集成测试已覆盖 create/read/delete；多实例和负载均衡
+创建，当前 schema 迁移到 V3，集成测试已覆盖 create/read/delete；多实例和负载均衡
 行为仍无发布级证据。
 
 ### 细粒度权限控制

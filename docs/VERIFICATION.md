@@ -31,6 +31,22 @@ mvn test
 - 对 OAuth、邮件、Web3 或其他外部服务的真实调用，必须先确认凭据、费用和副作用；
   未经用户允许不得发起高成本或不可逆的真实调用。
 
+### 邮件服务参考实现
+
+`reference/email-service/` 是独立 Maven 组件，不纳入根 Maven reactor。修改邮件服务
+代码、HTTP/模板契约、队列、实体或 migration 时，至少执行：
+
+```bash
+cd reference/email-service
+TESTCONTAINERS_RYUK_DISABLED=true mvn clean compile test-compile
+TESTCONTAINERS_RYUK_DISABLED=true mvn test
+```
+
+组件级集成测试必须依赖完整 Spring ApplicationContext 和真实业务 Bean，并尽可能从
+真实 HTTP 入口覆盖 Flyway/PostgreSQL、Thymeleaf、队列、异步事件、JavaMailSender
+和 SMTP 结果。PostgreSQL 使用 Testcontainers，SMTP 使用进程内 GreenMail；默认门禁
+不得读取 `.env`、连接真实供应商或发送真实邮件。
+
 ### 前端
 
 前端模块是 `frontend/`。凡改动前端源码、接口契约或后端返回结构，硬门槛至少包括：
@@ -108,7 +124,7 @@ while counter < 3:
 |------|------|----------------------|
 | L0 静态检查 | 语法、格式、链接 | 否 |
 | L1 构建检查 | Java 编译、TypeScript/Vite build | 否 |
-| L2 自动化测试 | Java 行为、前端浏览器、Python JWT/JWKS | 测试按需启动各自 harness |
+| L2 自动化测试 | Java 行为、邮件参考服务、前端浏览器、Python JWT/JWKS | 测试按需启动各自 harness |
 | L3 本地运行验证 | API、cookie、数据库、OAuth2 流程 | 是 |
 | L4 外部集成 | OAuth provider、邮件、Web3、远端 JWKS | 是 |
 
@@ -116,16 +132,18 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 
 ## 2026-08-07 当前加固门禁
 
-> 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3、Batch A 和 Batch B1 触达路径；
+> 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1 和 Batch B2a
+> 触达路径；
 > 不代表 H1.4-H8、完整认证正确性或生产就绪。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 74 tests，0 failures/errors/skips |
+| `mvn test` | 通过 | 77 tests，0 failures/errors/skips |
 | `scripts/test-http-e2e.sh` | 通过 | 13/13；真实应用、PostgreSQL、重启、JWT、Web3、email、登录方式 |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 10/10；exact schema、V2 初始/apply 前数据预检、post-baseline 失败恢复与其他拒绝/清理路径 |
-| Flyway integration | 通过 | fresh V1→V2、existing baseline V1→V2、Hibernate validate、Session、checksum/failure recovery |
+| Flyway integration | 通过 | fresh V1→V3、existing baseline V1→V3、Hibernate validate、Session、checksum/failure recovery |
+| 邮件参考服务 | 通过 | 59 tests；其中 5 个 E2E 覆盖真实 HTTP、Flyway V1、PostgreSQL、Spring Beans、Thymeleaf、GreenMail、失败重试 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
@@ -136,31 +154,38 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | Python | 通过 | 9/9 离线 RSA/JWKS/Flask tests |
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 | Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
-| 固定范围收敛检查 | 通过 | 完整门禁后连续 3/3 轮无问题、无修改 |
 
 Shell HTTP E2E 使用 `test` profile、disposable PostgreSQL、临时 RSA key、dummy OAuth
 和不可达邮件服务地址。它验证：
 
-- Flyway V1/V2 和自定义 history table。
+- Flyway V1/V2/V3 和自定义 history table。
 - 应用重启后的 migration 幂等和用户数据保留。
 - `/api/auth/**` allowlist 与资源服务器拒绝边界。
 - 本地注册/登录、JWT claims、cookie/header 优先级和持久化。
 - refresh rotation 与 access/refresh type confusion。
 - 本地签名 Web3 登录、message tamper、replay 拒绝和钱包绑定。
-- 登录方式 primary/delete/最后方式拒绝。
+- 登录方式 primary/delete/最后方式拒绝，以及真实并发 mutation 的 `200/409` 和最终
+  “至少一个登录方式、恰好一个 primary”不变量。
 - 邮箱注册、持久化验证码、重试耗尽和密码重置。
 - logout cookie 清理、Flyway history 和最终数据库不变量。
 
 未执行真实 OAuth provider、真实邮件或共享开发库写操作。
 
-邮件相关门禁只验证 UniAuth 内部状态机和 HTTP 边界，不验证真实投递：
+UniAuth 主应用的邮件相关门禁只验证内部状态机和 HTTP 边界：
 
 - `EmailAuthenticationIntegrationTest` 使用 mock `EmailService`。
 - Shell HTTP E2E 把邮件服务地址指向不可达端口，并从 disposable PostgreSQL 读取验证码。
 - 外部服务返回 `success=true` 也只表示接受或入队，不证明收件箱已收到邮件。
 
-因此，真实邮箱能力需要单独的显式 opt-in 集成测试，至少覆盖外部服务可达、模板渲染、
-SMTP/供应商接受和实际收件；该测试不得使用共享用户邮箱或进入默认无副作用门禁。
+独立参考实现补充了默认无外部副作用的组件级 E2E：
+
+- 完整 Spring ApplicationContext 和随机真实 HTTP 端口。
+- Flyway V1、独立 history table、PostgreSQL 16 和 Hibernate `validate`。
+- 两个必需模板经过真实 service/repository/event Bean、Thymeleaf、队列和 GreenMail 收件。
+- 未知模板拒绝，以及 SMTP 连接失败后的失败日志和可重试队列状态。
+
+该 E2E 证明参考实现的本地协议链，不证明真实供应商鉴权、TLS、退信或外部收件。
+真实邮箱能力仍需要隔离账户的显式 opt-in 测试，不进入默认无副作用门禁。
 
 Flyway baseline guard 使用 disposable PostgreSQL 16。错误 major 测试通过离线
 `psql` fixture 注入 PostgreSQL 15 版本号，不要求下载或支持 `postgres:15` 镜像。
@@ -200,6 +225,10 @@ SSR data router 或 `deserializeErrors`。门禁阻止 high/critical；若外部
 ```bash
 mvn clean compile test-compile
 mvn test
+
+cd reference/email-service
+TESTCONTAINERS_RYUK_DISABLED=true mvn clean compile test-compile
+TESTCONTAINERS_RYUK_DISABLED=true mvn test
 ```
 
 应检查 Surefire 输出中的实际 test count，避免测试被过滤或空执行仍被误报为通过。

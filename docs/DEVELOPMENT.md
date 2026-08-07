@@ -124,21 +124,34 @@ entity 或 schema 变更至少核对：
 - Flyway fresh/baseline 集成测试
 - schema fingerprint
 
-Flyway 是唯一 schema owner。已发布 migration 不得改写；新增结构修复必须使用 V2+。
+Flyway 是唯一 schema owner。已发布 migration 不得改写；新增结构修复必须使用 V4+。
 
 ## 外部集成
 
 以下操作不是默认验证，运行前必须确认凭据和副作用：
 
 - Google/GitHub/X OAuth2。
-- 邮件服务及其 SMTP/供应商投递。
+- 真实 SMTP/邮件供应商投递。
 - Web3 真实钱包签名。
 - PostgreSQL schema 导出或 baseline apply。
 - Python 从远端 JWKS 拉取密钥。
 
+仓库中的[邮件服务参考实现](../reference/email-service/README.md)有独立默认门禁：
+
+```bash
+cd reference/email-service
+TESTCONTAINERS_RYUK_DISABLED=true mvn clean compile test-compile
+TESTCONTAINERS_RYUK_DISABLED=true mvn test
+```
+
+该门禁使用 disposable PostgreSQL、Flyway 和进程内 GreenMail，覆盖真实 HTTP 与完整
+Spring ApplicationContext，但不会连接外部 SMTP 或发送真实邮件。统一
+`scripts/verify.sh` 会执行同一门禁。
+
 启用邮箱注册验证或密码重置前：
 
-1. 启动一个满足 [邮件服务契约](CONFIGURATION.md#邮件服务依赖) 的独立服务。
+1. 单独启动[参考实现](../reference/email-service/README.md)或其他满足
+   [邮件服务契约](CONFIGURATION.md#邮件服务依赖)的独立服务。
 2. 为该服务配置模板、队列和 SMTP/邮件供应商凭据。
 3. 设置 `EMAIL_SERVICE_URL`，并确认后端进程能够访问 `/api/email/health`。
 4. 明确认知 health 和 `success=true` 只证明服务存活或请求入队，不证明最终送达。

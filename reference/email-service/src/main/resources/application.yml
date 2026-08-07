@@ -43,8 +43,8 @@ spring:
   mail:
     host: ${SMTP_HOST}
     port: ${SMTP_PORT}
-    username: ${SMTP_USERNAME}
-    password: ${SMTP_PASSWORD}
+    username: ${SMTP_USERNAME:${SPRING_MAIL_USERNAME:}}
+    password: ${SMTP_PASSWORD:${SPRING_MAIL_PASSWORD:}}
     default-encoding: UTF-8
     properties:
       mail:
@@ -60,7 +60,7 @@ spring:
 
 app:
   mail:
-    from-email: ${EMAIL_FROM_ADDRESS}
+    from-email: ${EMAIL_FROM_ADDRESS:${APP_MAIL_FROM_EMAIL}}
     from-name: ${EMAIL_FROM_NAME:UniAuth}
     enabled: true
     queue:

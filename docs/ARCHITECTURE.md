@@ -7,13 +7,14 @@
 
 ## 系统边界
 
-UniAuth 是一个单仓库认证系统，包含三个可运行部分：
+UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个独立参考组件：
 
 | 模块 | 路径 | 责任 |
 |------|------|------|
 | Spring Boot 后端 | `src/main/java/org/dddml/uniauth/` | 用户、登录方式、OAuth2 Client、自定义 JWT、JWKS、API 安全 |
 | React SPA | `frontend/` | 登录、用户状态、登录方式管理、Web3 和资源服务器演示 |
 | Flask 资源服务器 | `python-resource-server/` | 通过 JWKS 验证 UniAuth access token 的异构示例 |
+| 邮件服务参考实现 | `reference/email-service/` | 独立 REST/队列/SMTP 示例；不纳入根 Maven 构建 |
 
 生产构建时，Vite 把 SPA 写入 `src/main/resources/static/`，由 Spring Boot
 提供静态资源。该目录是生成物，不是前端源码。
@@ -62,9 +63,11 @@ Authorization Server 协议已经完整接通。
    不会在每次登录时发送验证码。
 5. 密码重置复用同一邮件服务边界和验证码表，purpose 为 `PASSWORD_RESET`。
 
-UniAuth 仓库内的 `RestTemplateEmailServiceImpl` 只是 HTTP 客户端，不直接连接 SMTP
-或邮件供应商。外部服务必须提供 health、模板邮件端点、模板和约定的 JSON 响应；
-详细契约见 [配置基线](CONFIGURATION.md#邮件服务依赖)。虽然
+UniAuth 主应用内的 `RestTemplateEmailServiceImpl` 只是 HTTP 客户端，不直接连接
+SMTP 或邮件供应商。外部服务必须提供 health、模板邮件端点、模板和约定的 JSON 响应；
+仓库提供一个独立的[邮件服务参考实现](../reference/email-service/README.md)，其 schema
+由独立 Flyway V1 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP E2E
+验证。详细契约见 [配置基线](CONFIGURATION.md#邮件服务依赖)。虽然
 `VerificationPurpose.LOGIN` 和前端联合类型仍存在，当前没有受支持的邮箱验证码
 无密码登录 endpoint。
 
@@ -118,10 +121,12 @@ UniAuth 仓库内的 `RestTemplateEmailServiceImpl` 只是 HTTP 客户端，不�
 - 同一用户同一 provider 只能有一个登录方式。
 - 不能移除最后一个登录方式。
 - 每个用户预期只有一个 primary 登录方式。
+- remove 和 set-primary 通过 `users.login_methods_revision` 执行用户级乐观 CAS；
+  同一用户的组合并发只有一个请求取得变更权，竞争方返回 `409`。
 
 这些约束一部分由 service 检查，一部分由数据库约束保证。顺序行为、并发 provider
-绑定和并发 set-primary 已有 PostgreSQL 集成测试；删除与 set-primary 等组合并发
-仍可能留下零登录方式或零 primary，归下一轮 P0 加固。
+绑定、并发 set-primary，以及删除/delete-primary/set-primary 组合并发已有
+PostgreSQL 集成测试；Shell E2E 还会发起真实并发 HTTP 请求并验证最终不变量。
 
 ## JWT 模型
 
@@ -157,9 +162,10 @@ access token 默认 1 小时，refresh token 默认 7 天。
 当前问题：
 
 - 演示数据默认关闭；显式启用时只允许 disposable test/demo 数据库并只 upsert 受管账户。
-- Flyway 当前为 dev-derived V1 baseline + V2 登录方式加固；不得修改已发布的 V1/V2。
+- Flyway 当前为 dev-derived V1 baseline + V2 登录方式约束 + V3 登录方式 revision
+  CAS；不得修改已发布的 V1/V2/V3。
 - V2 已对齐登录方式的时区/nullability，并增加 provider/行形状与 primary 唯一约束；
-  其余实体、索引，以及删除与 set-primary 等写操作的组合并发不变量仍归后续
+  V3 已保护 remove/set-primary 组合并发。其余实体、索引和数据预检仍归后续
   H1.4 切片。
 - Spring Session 表由 Flyway V1 管理，框架自动建表关闭。
 - `blacksheep_dev` 已通过只读 baseline rehearsal，尚未执行 baseline apply。

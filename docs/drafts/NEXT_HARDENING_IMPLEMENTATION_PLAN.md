@@ -1,10 +1,10 @@
 # UniAuth 下一轮加固实施计划
 
-> 状态：Batch A 与 Batch B1 已实施，通过完整门禁及连续三轮无修改检查
+> 状态：Batch A 与 Batch B1 已完成；Batch B2a 实现与完整门禁已验证
 > 事实基线：2026-08-07
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
-> 前置成果：PostgreSQL-only、Flyway V1 baseline + V2、Testcontainers、Java/Shell/Playwright/Python
-> 基础门禁已建立
+> 前置成果：PostgreSQL-only、Flyway V1 baseline + V2 + V3、Testcontainers、
+> Java/Shell/Playwright/Python 与邮件参考服务基础门禁
 
 ## 1. 目标
 
@@ -12,7 +12,7 @@
 HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 
 1. 扩充集成测试、Shell E2E 和 Playwright，形成现有功能覆盖矩阵。
-2. 通过 PostgreSQL V2+ migration 加固身份数据不变量，并建立 G1 要求的最小持久
+2. 通过 PostgreSQL V4+ migration 继续加固身份数据不变量，并建立 G1 要求的最小持久
    安全审计基座。
 3. 收敛 JWT、refresh、blacklist、logout、cookie、CSRF、CORS 和 OAuth2 redirect。
 4. 修复邮箱验证码、密码重置和 Web3/SIWE 的并发、重放与失败语义。
@@ -27,10 +27,11 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 |------|----------|
 | 数据库 | `dev`、`test`、`prod` 只支持显式 PostgreSQL |
 | Schema owner | Flyway，runtime location 为 `db/migration/postgresql` |
-| 当前 migration | `V1__baseline_uniauth_auth_schema.sql` + `V2__harden_login_method_invariants.sql` |
+| 当前 migration | V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS |
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
-| Java | `mvn clean compile test-compile` 和 74 tests 已通过 |
+| Java | `mvn clean compile test-compile` 和 77 tests 已通过 |
+| 邮件参考服务 | 独立 compile/test-compile 和 59 tests 已通过，其中 5 个完整 E2E |
 | HTTP E2E | `scripts/test-http-e2e.sh` 13/13 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 10/10 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、18 个 Mock Playwright tests 已通过 |
@@ -50,11 +51,12 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 
 ### 3.1 已有后端覆盖
 
-- fresh PostgreSQL 执行 Flyway V1→V2，Hibernate validate。
-- 既有 V1 schema baseline 后执行 V2 并启动应用。
+- fresh PostgreSQL 执行 Flyway V1→V3，Hibernate validate。
+- 既有 V1 schema baseline 后执行 V2/V3 并启动应用。
 - Spring Session JDBC create/read/delete。
 - 本地注册、登录、错误密码、refresh、access/refresh type confusion。
 - `/api/user`、登录方式查询、设置 primary、删除、添加本地方式。
+- 登录方式并发 bind/set-primary、并发删除，以及删除与 set-primary 的组合竞争。
 - 邮箱注册、真实持久化验证码、密码重置。
 - Web3 本地签名登录、nonce replay、钱包绑定。
 - `/api/auth/**` allowlist、未知/已删除路由 fail closed。
@@ -65,6 +67,7 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 - 真实 `start.sh` 启动。
 - disposable PostgreSQL 和 Flyway history。
 - 本地登录、JWT、refresh、Web3、邮箱、logout cookie、最终数据库不变量。
+- 真实并发登录方式 mutation 的 `200/409` 和 CAS revision 结果。
 
 ### 3.3 已有 Playwright 覆盖
 
@@ -73,6 +76,7 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 - 忘记密码。
 - OAuth2 callback 成功/失败。
 - 登录方式 UUID 操作。
+- 登录方式 `409` 并发冲突保持可见且不错误修改列表。
 - Python 资源服务器页面 Mock。
 - 浏览器无钱包时的 Web3 失败提示。
 
@@ -333,6 +337,57 @@ Batch A 通过后才开始。
 删除与 set-primary 等组合并发的 write-skew 未在 B1 中修复，继续归 Batch B2。
 
 #### Batch B2：登录方式删除并发保护与后续 schema 对齐
+
+##### 2026-08-07 本轮固定范围：Batch B2a
+
+本轮只加固登录方式删除与 set-primary 的组合并发，不扩展用户可见功能。
+
+纳入范围：
+
+1. 新增 Flyway V3，在 `users` 增加非负、非空、默认 `0` 的
+   `login_methods_revision`，作为登录方式集合变更的用户级乐观 CAS token。
+2. `removeLoginMethod` 和 `setPrimaryLoginMethod` 必须先读取 revision，再读取并验证
+   当前登录方式状态，最后用带预期 revision 的条件更新取得本次变更权。
+3. CAS 失败统一映射为稳定 `409`，不返回 SQL、约束或锁实现细节。
+4. PostgreSQL HTTP 集成测试至少覆盖：
+   - 两个登录方式被并发删除；
+   - 删除 primary 与设置另一方式为 primary 并发；
+   - 删除目标方式与把同一目标设为 primary 并发。
+5. Shell HTTP E2E 必须实际并发调用登录方式 API，并验证最终至少一个登录方式且
+   恰好一个 primary。
+6. Flyway fresh/baseline adoption、baseline guard 和统一验证入口必须识别 V3。
+
+明确不纳入本轮：
+
+- `users`、email code、Web3 nonce、token blacklist 的其余 schema 对齐与索引清理；
+- 最近认证、token security version、审计/outbox；
+- email service、Web3、OAuth2 或前端的新功能与行为改写。
+
+本轮验收要求：
+
+- 不使用悲观锁，不增加 JPA `@Version`；
+- 并发竞争允许一个请求成功、另一个返回可重试 `409`，不得返回 `500`；
+- 每个场景结束后数据库中至少一个登录方式且恰好一个 primary；
+- 完整门禁通过后，执行连续三轮无问题、无修改检查。
+
+##### Batch B2a 实际结果
+
+2026-08-07 已完成实现与完整硬门槛：
+
+- 新增不可修改的 Flyway V3；fresh V1→V3 与 existing baseline V1→V3 均通过，
+  baseline rehearsal/guard 的 restored 与 fresh 路径都验证 V3 history。
+- `removeLoginMethod` 与 `setPrimaryLoginMethod` 使用
+  `users.login_methods_revision` 条件更新取得用户级变更权；未使用悲观锁或 JPA
+  `@Version`。
+- PostgreSQL HTTP 集成测试共 7 个并发场景，包含并发 delete/delete、
+  delete-primary/set-other-primary 和 delete-target/set-same-target-primary。
+- Shell HTTP E2E 13/13 会安装一次性延迟 trigger，真实并发调用 API，验证一个
+  `200`、一个稳定 `409`、revision 只被领取一次，并保持登录方式最终不变量。
+- Mock Playwright 18/18 覆盖 `409` 提示保持可见且列表不被错误修改。
+- 完整 `scripts/verify.sh` 已通过：Java 77、邮件参考服务 59、Flyway guard 10/10、
+  Playwright 18、Python 9，以及编译、lint、typecheck、生产构建和文档链接检查。
+
+连续三轮无问题检查按验证规则只在当次工作报告逐轮输出；无问题轮次不修改本文。
 
 ##### B2.1 数据预检
 

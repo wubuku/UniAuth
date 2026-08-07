@@ -21,8 +21,9 @@
 
 邮箱地址注册验证和密码重置需要一个独立邮件发送服务。UniAuth 当前没有 SMTP、
 JavaMailSender 或邮件供应商 SDK 实现；`RestTemplateEmailServiceImpl` 只是调用外部
-服务的 HTTP 适配器。已有的独立 email-service 实现不属于本仓库，因此只克隆或部署
-UniAuth 不会自动获得真实邮件投递能力。
+服务的 HTTP 适配器。仓库中的
+[邮件服务参考实现](../reference/email-service/README.md) 是独立 Maven 组件，不纳入
+根构建，也不会由 UniAuth 进程自动启动；部署者仍需单独运行它或提供兼容服务。
 
 这个依赖不是 Spring 进程的启动前置条件，但它是以下用户流程的运行前置条件：
 
@@ -91,6 +92,19 @@ health 响应的最小兼容形状：
 `success=true` 只表示外部服务接受或入队，不代表 SMTP/供应商已经送达邮件。外部服务
 仍需自行负责模板渲染、队列、重试、SMTP/供应商凭据和投递状态。
 
+仓库参考实现默认监听 `127.0.0.1:8095`，并有自己的配置和数据库边界：
+
+- 必须使用独立的 `EMAIL_POSTGRES_*` 数据库，不能复用 UniAuth 或共享数据库。
+- Flyway location 是 `classpath:db/migration/postgresql`，history table 是
+  `email_service_flyway_schema_history`，当前 migration 为 V1。
+- 所有 profile 使用 Hibernate `validate`，SQL init 关闭。
+- SMTP 首选 `SMTP_*` 和 `EMAIL_FROM_*` 变量；从来源 `.env` 复制的
+  `SPRING_MAIL_USERNAME`、`SPRING_MAIL_PASSWORD`、`APP_MAIL_FROM_EMAIL` 仍兼容。
+- 本机 `.env` 被忽略且不得提交；它不替代显式数据库、SMTP host/port 和 TLS 配置。
+
+完整启动、Flyway 和验证说明见
+[邮件服务参考实现 README](../reference/email-service/README.md)。
+
 当前实现还有两个必须显式知晓的限制：
 
 - `app.email.service.timeout: 5000` 已出现在 YAML，但 `RestTemplate` 仍以
@@ -120,7 +134,7 @@ health 响应的最小兼容形状：
 
 - Flyway location：`classpath:db/migration/postgresql`
 - history table：`uniauth_flyway_schema_history`
-- 当前版本：V2（V1 baseline + V2 登录方式加固）
+- 当前版本：V3（V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS）
 - `baseline-on-migrate=false`
 - `clean-disabled=true`
 - SQL init：`never`
@@ -147,7 +161,9 @@ Flyway 只扫描 `src/main/resources/db/migration/postgresql/`。旧 V1-V4、V6-
 runtime classpath。
 
 V1 来自获准的实际 dev PostgreSQL 8 表结构。V2 加固登录方式时区/nullability、
-provider/行形状和 primary 唯一性。后续修复使用 V3+；不得改写 V1/V2 checksum。
+provider/行形状和 primary 唯一性。V3 增加非负的用户级
+`login_methods_revision`，供登录方式删除和 primary 切换使用乐观 CAS。后续修复
+使用 V4+；不得改写 V1/V2/V3 checksum。
 
 ## Existing-schema baseline
 
