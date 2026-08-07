@@ -1,5 +1,8 @@
 # Spring Boot OAuth2 重定向问题
 
+> 状态：Reference。本文列出候选解决方案，不代表当前实现已采用。
+> callback 与前端地址现状见 [配置基线](../CONFIGURATION.md)。
+
 您已经分析得很透彻了。让我给您提供几个**生产级别的实用解决方案**：
 
 ## 推荐方案：自定义 `state` 参数（最可靠）
@@ -258,4 +261,3 @@ window.location.href = redirectPath;
 <div align="center">⁂</div>
 
 [^1]: oauth2-redirect-issue-analysis.md
-

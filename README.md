@@ -1,4 +1,12 @@
-# UniAuth - 企业级统一身份认证系统
+# UniAuth - 统一身份认证系统
+
+> 状态：Needs verification。当前项目正在加固，尚无生产就绪证明。默认 `test` profile 启动会连接 PostgreSQL
+> 并删除全部用户和登录方式；`dev` 也会清空 SQLite 用户数据。
+> 开始开发或启动前，请先阅读 [文档导航](docs/README.md)、
+> [配置基线](docs/CONFIGURATION.md)、[开发指南](docs/DEVELOPMENT.md) 和
+> [验证指南](docs/VERIFICATION.md)。
+> 下文保留了较多设计目标、部署示例和历史说明；除非链接的 live guide 或当前代码明确确认，
+> 不应把这些内容视为已完成能力或发布证明。
 
 ## 目录
 
@@ -20,7 +28,10 @@
 
 ## 项目概述
 
-UniAuth 是一个生产级统一身份认证系统，支持多 OAuth2 提供商（Google、GitHub、Twitter/X）集成，提供完整的用户认证、授权和会话管理功能。系统采用 Spring Boot 3.3.4 + React 18 技术栈，支持开发环境（SQLite）和生产环境（PostgreSQL）无缝切换。
+UniAuth 是一个正在加固的统一身份认证项目，包含本地认证、Google/GitHub/X
+OAuth2、多登录方式、自定义 JWT、邮箱验证、Web3 和异构资源服务器示例。
+系统采用 Spring Boot 3.3.4 + React 18，`dev` 使用 SQLite，`test`/`prod`
+使用 PostgreSQL；这些环境目前并非无缝等价。
 
 | 属性 | 说明 |
 |------|------|
@@ -35,11 +46,11 @@ UniAuth 是一个生产级统一身份认证系统，支持多 OAuth2 提供商�
 
 ### 设计目标
 
-本系统旨在为企业级应用提供安全、可靠、可扩展的身份认证解决方案。核心设计目标包括：支持多种 OAuth2 登录方式的统一接入、提供完整的 JWT 令牌管理机制、实现会话持久化以支持多实例部署、以及遵循安全最佳实践进行配置。通过采用 Spring Authorization Server 作为认证引擎，系统能够满足复杂的企业认证需求，同时保持代码的简洁性和可维护性。
+本项目的设计目标包括多种 OAuth2 登录方式的统一接入、JWT 令牌管理、会话持久化和跨语言资源服务器验证。当前代码同时包含 Spring Authorization Server 配置与自定义 JWT 签发流程，两者尚未形成经完整测试证明的统一授权服务器实现；安全性、可扩展性和多实例行为仍需按 [加固实施规划](docs/drafts/HARDENING_IMPLEMENTATION_PLAN.md) 验证。
 
 ### 适用场景
 
-UniAuth 适用于以下业务场景：企业内部系统的统一身份认证入口、SaaS 产品的多租户身份管理、需要支持第三方社交登录的 Web 应用、以及微服务架构中的集中式认证服务。系统架构设计充分考虑了水平扩展需求，支持在高并发环境下稳定运行。
+目标场景包括企业内部认证入口、第三方社交登录 Web 应用和微服务认证集成。当前仓库没有多租户模型、容量测试或高并发稳定性证据，这些场景只能作为设计方向，不能视为当前支持承诺。
 
 ---
 
@@ -47,7 +58,7 @@ UniAuth 适用于以下业务场景：企业内部系统的统一身份认证入
 
 ### 多提供商统一认证
 
-系统支持 Google、GitHub 和 Twitter/X 三大主流 OAuth2 提供商的统一接入。所有登录方式共享统一的用户身份模型和权限体系，用户可以通过任意提供商登录，系统自动识别并关联同一邮箱账号的不同登录方式。这种设计既简化了用户登录体验，又保持了认证逻辑的一致性。
+代码中配置了 Google、GitHub 和 Twitter/X OAuth2 Client，并将登录方式映射到统一用户模型。外部 provider 流程尚未在本次基线上复验；当前实现遇到已被其他身份使用的邮箱时会拒绝自动创建，不会仅凭同邮箱自动关联账户，绑定必须经过已登录流程。
 
 | 提供商 | 认证协议 | 令牌类型 | 用户信息端点 |
 |--------|----------|----------|--------------|
@@ -57,19 +68,19 @@ UniAuth 适用于以下业务场景：企业内部系统的统一身份认证入
 
 ### JWT 令牌管理
 
-系统采用 RS256 算法生成的 JWT 令牌进行身份验证，密钥使用 RSA-2048 位加密存储于本地文件系统。令牌包含标准的 OAuth2 声明（iss、aud、sub、exp、iat）和自定义声明（userId、username、email、authorities），支持访问令牌和刷新令牌的双令牌机制。令牌签发采用 JWKS 标准格式，便于异构系统集成验证。
+自定义 `JwtTokenService` 使用 RSA-2048/RS256 签发 access token 和 refresh token，并通过 JWKS 暴露公钥。密钥当前存储在本地二进制文件中且 `rsa-keys.ser` 已被 Git 跟踪，不是加密密钥库；issuer、audience、token type、撤销和刷新轮换也尚未形成完整验证链。
 
 ### 会话持久化
 
-通过 Spring Session JDBC 模块实现会话持久化，所有用户会话存储于 PostgreSQL 数据库中，支持多应用实例共享会话状态。这一设计确保了在负载均衡环境下用户认证状态的可靠性，同时便于运维监控会话使用情况。系统默认配置 30 分钟会话超时，可根据安全策略灵活调整。
+项目启用了 Spring Session JDBC，默认会话超时为 30 分钟。`dev` 会话落在 SQLite，`test` 落在 PostgreSQL，`prod` 要求外部预置 Session 表；多实例共享和负载均衡行为尚无当前回归证据。
 
 ### 细粒度权限控制
 
-基于 Spring Security 的权限模型，系统实现了用户-角色-权限的三级授权体系。每个用户可以拥有多个登录方式，每个登录方式对应不同的认证来源。权限以角色（Role）和权限（Authority）两种形式授予，支持灵活的访问控制策略配置。
+当前权限存储为用户的 authority 集合，安全链对 `ROLE_ADMIN`、`ROLE_MANAGER` 等值执行路径授权。仓库没有独立的角色/权限实体层级，也没有覆盖所有安全链 matcher 的自动化测试。
 
 ### 多登录方式统一管理
 
-前端提供完整的登录方式管理界面，用户可以在一个账户下绑定多个 OAuth2 提供商（Google、GitHub、Twitter/X）和本地账户。核心功能包括：
+后端提供登录方式查询、设置 primary、解绑和添加本地登录方式的接口，OAuth2 成功处理器包含绑定分支；前端和这些接口的完整交互仍需复验。当前代码目标包括：
 
 | 功能 | 说明 |
 |------|------|
@@ -361,22 +372,19 @@ JWT_SECRET=your-base64-encoded-secret-key
 
 ### 步骤四：启动应用
 
-#### 开发环境启动（使用 SQLite）
+#### 开发环境启动（使用可丢弃的 SQLite）
 
 ```bash
-# 方式一：使用环境变量文件启动
-export $(cat .env | xargs) && mvn spring-boot:run
-
-# 方式二：直接启动（确保环境变量已设置）
-mvn spring-boot:run
-
-# 方式三：使用 IDE 运行
-# 直接运行 UniAuthApplication.main() 方法
+# 仅在确认 dev-database.db 可被清空后执行
+SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
 ```
 
-应用启动后，访问 `http://localhost:8081` 验证运行状态。开发环境会自动创建 SQLite 数据库文件，无需手动初始化。
+应用启动后访问 `http://localhost:8081`。`DevEnvironmentInitializer` 会在每次
+启动时删除全部用户和登录方式，再创建演示账户。
 
 #### 测试环境启动（使用 PostgreSQL）
+
+`test` profile 同样会清空用户数据。只允许指向隔离且可丢弃的数据库：
 
 ```bash
 # 激活 test profile，使用 PostgreSQL 数据库
@@ -386,7 +394,7 @@ mvn spring-boot:run -Dspring-boot.run.profiles=test
 SPRING_PROFILES_ACTIVE=test mvn spring-boot:run
 ```
 
-测试环境会自动执行 `schema-postgresql.sql` 脚本创建表结构，并加载测试数据初始化器。
+测试环境会执行 `schema-postgresql.sql`，随后初始化器删除用户数据并重建演示账户。
 
 ---
 
@@ -410,31 +418,30 @@ mvn spring-boot:run
 # 设置环境变量运行测试环境
 # SPRING_PROFILES_ACTIVE=test mvn spring-boot:run
 
-# 如果服务已经在运行，可以杀死 808x 端口上的服务
-# lsof -i :8082 | grep LISTEN | awk '{print $2}' | xargs kill -9
-# lsof -i :8081 | grep LISTEN | awk '{print $2}' | xargs kill -9
+# 如果确认可以停止占用默认后端端口的进程
+# lsof -ti tcp:8081 | xargs kill
 
 # 如果使用环境变量文件，可以使用以下命令：
 # export $(cat .env | grep -v '^#' | xargs) && mvn spring-boot:run
 
-# 指定后端服务端口号运行：
-# export $(cat .env | grep -v '^#' | xargs) && mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8082"
-# 也可以通过设置环境变量指定端口：
-# export SERVER_PORT=8082
+# 显式指定当前默认后端端口：
+# export $(cat .env | grep -v '^#' | xargs) && mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8081"
+# 也可以通过 Spring Boot 环境变量指定端口：
+# export SERVER_PORT=8081
 
 # ----------------------------------------------------------------------
 # **给 AI 助手的话**：
 # 你应该使用后台运行的方式启动服务，避免自己挂起：
-# cd /PATH/TO/UniAuth && nohup bash -c 'export $(cat .env 2>/dev/null | grep -v "^#" | xargs) && mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8082"' > /tmp/spring-boot.log 2>&1 & echo "PID: $!"
+# cd /PATH/TO/UniAuth && nohup bash -c 'export $(cat .env 2>/dev/null | grep -v "^#" | xargs) && mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8081"' > /tmp/spring-boot.log 2>&1 & echo "PID: $!"
 #
 # 在必要的时候，使用 psql 检查数据库。数据库连接信息见：`src/main/resources/application-test.yml`
 # 示例查询：
-# PGPASSWORD="123456" psql -h localhost -p 5432 -U postgres -d your_database -t -c "SELECT count(*) FROM users;"
+# PGPASSWORD="$POSTGRES_PASSWORD" psql -h "${POSTGRES_HOST:-localhost}" -p "${POSTGRES_PORT:-5432}" -U "$POSTGRES_USER" -d "$POSTGRES_DATABASE" -t -c "SELECT count(*) FROM users;"
 # ----------------------------------------------------------------------
 
 # **提示**：
-# - ✅ 外部隧道域名配置： `https://api.u2511175.nyat.app:55139`
-# - 目前各平台 SSO 登录配置都使用这个域名作为回调地址。
+# - OAuth2 callback 仍包含多个环境域名硬编码，不能把任一隧道域名视为通用默认值。
+# - 实际值见 application.yml 和 application-{profile}.yml；本地运行前应显式覆盖。
 ```
 
 ### 步骤五：验证安装
@@ -592,7 +599,7 @@ spring:
       same-site: Strict
 
 server:
-  port: ${SERVER_PORT:8080}
+  port: ${SERVER_PORT:8081}
 
 logging:
   level:
@@ -1253,11 +1260,11 @@ USER app:app
 COPY --from=builder /app/target/uni-auth-1.0.0.jar app.jar
 
 # 暴露端口
-EXPOSE 8080
+EXPOSE 8081
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/actuator/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8081/actuator/health || exit 1
 
 # 启动命令
 ENTRYPOINT ["java", "-jar", "app.jar"]
@@ -1272,7 +1279,7 @@ services:
   uniauth:
     build: .
     ports:
-      - "8080:8080"
+      - "8081:8081"
     environment:
       - SPRING_PROFILES_ACTIVE=prod
       - POSTGRES_HOST=postgres
@@ -1826,5 +1833,3 @@ spring:
 - **项目仓库**：[GitHub Repository URL]
 - **问题反馈**：[GitHub Issues](https://github.com/your-org/uniauth/issues)
 - **文档反馈**：欢迎通过 Pull Request 或 Issues 提交文档改进建议
-
-

@@ -7,7 +7,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "${SCRIPT_DIR}")"
 
-BASE_URL="http://localhost:8082"
+BASE_URL="${BASE_URL:-http://localhost:8081}"
 EMAIL_REGISTERED="registered@test.com"
 EMAIL_NOT_REGISTERED="notregistered@test.com"
 EMAIL_EXISTS="exists@test.com"

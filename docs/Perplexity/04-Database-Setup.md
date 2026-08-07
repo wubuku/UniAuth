@@ -1,5 +1,8 @@
 # 📊 数据库设置与迁移指南
 
+> 状态：Historical。本文早于当前 schema 和 profile 行为；不得据此启动数据库。
+> 当前事实见 [配置基线](../CONFIGURATION.md)。
+
 **版本:** 3.0.0  
 **数据库:** SQLite (开发) + PostgreSQL (生产)
 

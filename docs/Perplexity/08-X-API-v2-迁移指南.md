@@ -1,5 +1,9 @@
 # 🚀 X（Twitter）API v2 最新迁移指南
 
+> 状态：Reference。本文保留 X API v2 迁移背景；“最新”仅指成文时点，
+> 使用配置片段前必须核对当前 `application.yml` 和
+> [配置基线](../CONFIGURATION.md)。
+
 **版本:** 1.0.0  
 **日期:** 2026年1月22日  
 **仅针对**: X API v2 迁移（从 Twitter API v1.1）

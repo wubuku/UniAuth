@@ -13,7 +13,7 @@ PROJECT_ROOT="$(dirname "${SCRIPT_DIR}")"
 
 set -e
 
-BASE_URL="${BASE_URL:-http://localhost:8082}"
+BASE_URL="${BASE_URL:-http://localhost:8081}"
 EMAIL="${EMAIL:-xxx@example.com}"
 PASSWORD="${PASSWORD:-TestPassword123!}"
 NEW_PASSWORD="${NEW_PASSWORD:-NewPassword456!}"

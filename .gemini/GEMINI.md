@@ -1,5 +1,8 @@
 # UniAuth Project Context
 
+> Current source of truth: `AGENTS.md` and `docs/README.md`.
+> The project is under hardening and does not currently have production-readiness evidence.
+
 ## Overview
 UniAuth is a Unified Authentication & Authorization system using Spring Boot (Backend) and React (Frontend).
 It supports local username/password login and OAuth2 SSO (Google, GitHub, X).
@@ -8,7 +11,7 @@ It uses a Heterogeneous Resource Server architecture (Java Auth Server + Python 
 ## Tech Stack
 - **Backend**: Java 17, Spring Boot 3, Maven.
 - **Frontend**: React, Vite, TypeScript.
-- **Database**: PostgreSQL (Production), SQLite (Dev/Test).
+- **Database**: PostgreSQL (Test/Production), SQLite (Dev).
 - **Security**: Spring Security 6, OAuth2 Client/Resource Server.
 
 ## Key Conventions & Architecture
@@ -34,7 +37,12 @@ It uses a Heterogeneous Resource Server architecture (Java Auth Server + Python 
 ### Frontend-Backend Integration
 - **Deployment**: Spring Boot serves the React app static files.
 - **Routing**: `SpaController` forwards non-API paths to `index.html` to support client-side routing.
-- **Dev**: Frontend runs on port 5173 (Vite), Backend on 8080. Proxy configured in Vite.
+- **Dev**: Frontend runs on port 5173 (Vite), Backend on 8081. Proxy configured in Vite.
+
+### Startup Safety
+- The default Spring profile is `test`, backed by PostgreSQL.
+- Both `test` and `dev` startup initializers delete all users and login methods.
+- Do not start the backend until the selected database is confirmed disposable.
 
 ## Operational Commands
 - **Start Backend**: `mvn spring-boot:run`

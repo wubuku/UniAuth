@@ -1,5 +1,8 @@
 # 问题分析与解决方案
 
+> 状态：Historical。本文记录 2026-01-27 的问题调查；端口、endpoint 和修复状态
+> 需按 [当前架构](../ARCHITECTURE.md) 与 [配置基线](../CONFIGURATION.md) 复核。
+
 ## 0. 项目背景
 
 本项目是一个基于 Spring Boot 和 React 的 OAuth2 认证系统，主要功能包括：

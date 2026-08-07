@@ -28,7 +28,6 @@ public class CorsConfig {
 
         // 允许的源 - 明确列出所有允许的域名
         configuration.setAllowedOrigins(Arrays.asList(
-                "http://localhost:8080",
                 "http://localhost:5173",
                 "http://localhost:8081",
                 "https://api.u2511175.nyat.app:55139",
@@ -66,7 +65,6 @@ public class CorsConfig {
             public void addCorsMappings(CorsRegistry registry) {
                 registry.addMapping("/**")
                         .allowedOrigins(
-                                "http://localhost:8080",
                                 "http://localhost:5173",
                                 "http://localhost:8081",
                                 "https://api.u2511175.nyat.app:55139"

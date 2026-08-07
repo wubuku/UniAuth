@@ -1,5 +1,9 @@
 # OAuth2 Demo Frontend
 
+> 状态：Needs verification。当前端口和构建方式以 `vite.config.ts` 为准；
+> 项目级安全规则见 [开发指南](../docs/DEVELOPMENT.md) 和
+> [配置基线](../docs/CONFIGURATION.md)。下文的功能列表不代表已完成端到端回归。
+
 这是一个使用React构建的前后端分离OAuth2登录演示应用的前端部分。
 
 ## 技术栈
@@ -48,12 +52,12 @@ frontend/
 
 ## 功能特性
 
-✅ **完整的OAuth2登录**: 支持Google、GitHub、Twitter三种登录方式
-✅ **现代化UI**: 使用React和Tailwind CSS构建
-✅ **用户信息显示**: 显示用户基本信息和提供商特定数据
-✅ **Token验证**: 完整的JWT和OAuth2 Token验证功能
-✅ **响应式设计**: 支持移动端和桌面端
-✅ **TypeScript**: 完整的类型安全
+- **OAuth2登录入口**：Google、GitHub、X
+- **本地认证界面**：注册、登录和密码重置
+- **用户信息显示**：展示统一用户信息和提供商数据
+- **Token演示**：JWT、刷新和异构资源服务器测试界面
+- **Web3演示**：钱包登录与绑定
+- **TypeScript**：当前仍有部分跨端类型漂移，需以后端 JSON 为准
 
 ## 快速开始
 
@@ -83,7 +87,7 @@ npm run dev
 npm run build
 ```
 
-构建产物将输出到 `dist/` 目录。
+构建产物将输出到 `../src/main/resources/static/`，由 Spring Boot 提供。
 
 ### 预览生产构建
 
@@ -96,8 +100,8 @@ npm run preview
 创建 `.env.local` 文件配置API地址：
 
 ```env
-VITE_API_BASE_URL=http://localhost:8080
-VITE_OAUTH_REDIRECT_URL=http://localhost:5173/auth/callback
+VITE_API_BASE_URL=http://localhost:8081
+VITE_OAUTH_REDIRECT_URL=http://localhost:5173/oauth2/callback
 ```
 
 ## API接口
@@ -105,16 +109,16 @@ VITE_OAUTH_REDIRECT_URL=http://localhost:5173/auth/callback
 ### 认证相关
 
 - `GET /api/user` - 获取当前用户信息
-- `POST /api/logout` - 用户登出
+- `POST /api/auth/logout` - 用户登出
 - `POST /api/validate-google-token` - 验证Google Token
 - `POST /api/validate-github-token` - 验证GitHub Token
-- `POST /api/validate-twitter-token` - 验证Twitter Token
+- `POST /api/validate-x-token` - 验证 X Token
 
 ### OAuth2登录
 
 - `/oauth2/authorization/google` - Google登录
 - `/oauth2/authorization/github` - GitHub登录
-- `/oauth2/authorization/twitter` - Twitter登录
+- `/oauth2/authorization/x` - X登录
 
 ## 页面功能
 
@@ -180,15 +184,16 @@ try {
    cd frontend
    npm run build  # 构建并自动复制到 ../src/main/resources/static/
    cd ..
-   mvn spring-boot:run  # 启动一体化应用
+   # 仅在确认 dev-database.db 可清空后启动
+   SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
    ```
 4. **访问地址**：前端和后端都在 `http://localhost:8081`
 
 **传统分离开发模式**（可选）：
 
-前端运行在 `http://localhost:5173`，后端运行在 `http://localhost:8080`。
+前端运行在 `http://localhost:5173`，后端运行在 `http://localhost:8081`。
 - 前端：`npm run dev`
-- 后端：`mvn spring-boot:run`
+- 后端：显式选择 profile；不要裸跑默认 `test`
 
 ### 生产环境
 
@@ -202,7 +207,7 @@ try {
 **传统分离部署**：
 
 1. 构建前端：`npm run build`
-2. 将 `dist/` 目录部署到静态文件服务器
+2. 将 `src/main/resources/static/` 中的构建产物部署到静态文件服务器
 3. 配置反向代理将API请求转发到后端
 4. 更新环境变量为生产域名
 
@@ -221,14 +226,14 @@ server {
 
     # API代理到后端
     location /api/ {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://localhost:8081;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
 
     # OAuth2回调代理
     location /oauth2/ {
-        proxy_pass http://localhost:8080;
+        proxy_pass http://localhost:8081;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
@@ -241,6 +246,7 @@ server {
 2. **HTTPS**: 生产环境必须使用HTTPS以确保OAuth2安全
 3. **环境变量**: 不要在代码中硬编码API地址和密钥
 4. **安全性**: 前端Token验证仅用于演示，实际应用中应在后端验证
+5. **Lint**: `npm run lint` 当前因缺少 ESLint 配置而失败
 
 ## 许可证
 

@@ -1,5 +1,9 @@
 # 🎨 前端完整实现指南 (React + TypeScript)
 
+> 状态：Historical。本文示例中的端口、目录和 token 存储策略不作为当前依据。
+> 当前前端流程见 [开发指南](../DEVELOPMENT.md) 和
+> [前端 README](../../frontend/README.md)。
+
 **版本:** 3.0.0  
 **重点:** HttpOnly Cookie + Token 管理
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Documentation"
+  short_description: "Build and maintain an AI-friendly project docs system"
+  default_prompt: "Use $project-docs to audit and improve this repository documentation system."

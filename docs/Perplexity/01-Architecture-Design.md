@@ -1,5 +1,8 @@
 # 📐 用户系统架构设计（完整版）
 
+> 状态：Historical。本文是 2026 年 1 月的方案设计，不是当前架构说明。
+> 当前事实见 [当前架构](../ARCHITECTURE.md) 和 [配置基线](../CONFIGURATION.md)。
+
 **版本:** 3.0.0 - Spring Authorization Server Native  
 **最后更新:** 2026年1月  
 **适用场景:** 自有用户 + Google SSO 的完整用户认证系统

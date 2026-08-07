@@ -49,7 +49,6 @@ app:
     allowed-origins:
       - https://api.u2511175.nyat.app:55139
       - http://localhost:5173
-      - http://localhost:8080
       - http://localhost:8081
       - https://blacksheepmedia.xyz
     allowed-methods:

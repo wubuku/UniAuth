@@ -1,5 +1,9 @@
 # Python 异构资源服务器
 
+> 状态：Needs verification。当前代码监听 `5002`，并仍硬编码历史认证服务器域名、
+> 关闭 TLS 证书验证且把 JWT `sub` 当作 username。请先阅读
+> [配置基线](../docs/CONFIGURATION.md) 和 [验证指南](../docs/VERIFICATION.md)。
+
 这是一个 Flask 实现的示例资源服务器，展示了如何验证来自 Spring Boot OAuth2 认证服务器的 JWT Token。
 
 ## 功能
@@ -36,7 +40,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-服务器将在 `http://0.0.0.0:5001` 上启动。
+服务器将在 `http://0.0.0.0:5002` 上启动。
 
 ## API 端点
 
@@ -57,7 +61,7 @@ Authorization: Bearer <JWT_TOKEN>
   "message": "Access granted",
   "user": {
     "id": "user-id",
-    "username": "username",
+    "username": "user-id",
     "email": "user@example.com",
     "authorities": ["ROLE_USER"]
   },
@@ -66,6 +70,9 @@ Authorization: Bearer <JWT_TOKEN>
   }
 }
 ```
+
+当前实现把 `sub` 写入 `username`；UniAuth 新 token 的 `sub` 实际是用户 UUID。
+正确用户名应读取 `username` claim。
 
 ### 受保护资源信息
 ```bash
@@ -81,6 +88,9 @@ Authorization: Bearer <JWT_TOKEN>
 AUTH_SERVER_URL = "https://api.u2511175.nyat.app:55139"  # 认证服务器地址
 JWKS_URL = f"{AUTH_SERVER_URL}/oauth2/jwks"              # JWKS 端点
 ```
+
+上面的值是历史部署地址，不是通用默认值。后续加固会改为环境变量；在此之前，
+本地测试需显式改成 `http://localhost:8081`，生产环境必须恢复 TLS 证书验证。
 
 ## Token 验证流程
 
@@ -112,11 +122,16 @@ JWKS_URL = f"{AUTH_SERVER_URL}/oauth2/jwks"              # JWKS 端点
 
 ```bash
 # 1. 登录获取 Token
-TOKEN=$(curl -s -X POST "https://api.u2511175.nyat.app:55139/api/auth/login?username=testboth&password=password123" -H "Content-Type: application/json" | jq -r '.accessToken')
+AUTH_SERVER_URL="${AUTH_SERVER_URL:-http://localhost:8081}"
+TOKEN=$(curl -s -X POST "${AUTH_SERVER_URL}/api/auth/login" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=testboth&password=password123" | jq -r '.accessToken')
 
 # 2. 使用 Token 访问受保护资源
-curl -H "Authorization: Bearer $TOKEN" http://localhost:5001/api/protected
+curl -H "Authorization: Bearer $TOKEN" http://localhost:5002/api/protected
 ```
+
+该测试会依赖已启动的 UniAuth。启动前必须确认所选 profile 的数据库可丢弃。
 
 ## 生产部署
 
@@ -124,7 +139,7 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:5001/api/protected
 
 ```bash
 pip install gunicorn
-gunicorn -w 4 -b 0.0.0.0:5001 app:app
+gunicorn -w 4 -b 0.0.0.0:5002 app:app
 ```
 
 ## 许可证

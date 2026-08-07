@@ -17,7 +17,7 @@
     <packaging>jar</packaging>
 
     <name>UniAuth</name>
-    <description>Production-grade universal authentication system with multi-provider OAuth2 support</description>
+    <description>Universal authentication system with multi-provider OAuth2 support</description>
 
     <properties>
         <java.version>17</java.version>

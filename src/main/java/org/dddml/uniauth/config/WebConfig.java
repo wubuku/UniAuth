@@ -39,7 +39,7 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addMapping("/api/**")
                 .allowedOrigins(
                     "http://localhost:5173",
-                    "http://localhost:3000",
+                    "http://localhost:8081",
                     "https://api.u2511175.nyat.app:55139"  // 外部隧道域
                 ) // 允许的前端域名
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
@@ -50,9 +50,7 @@ public class WebConfig implements WebMvcConfigurer {
         // 配置CORS，允许资源服务器访问Token验证端点
         registry.addMapping("/oauth2/**")
                 .allowedOrigins(
-                    "http://localhost:5001",  // 本地Python资源服务器
-                    "http://localhost:5002",  // 备用端口
-                    "http://localhost:5000",  // 备用端口
+                    "http://localhost:5002",  // 本地Python资源服务器
                     "https://api.u2511175.nyat.app:55139"  // 外部隧道域
                 )
                 .allowedMethods("GET", "POST", "OPTIONS")

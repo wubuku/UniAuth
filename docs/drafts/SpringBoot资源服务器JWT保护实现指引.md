@@ -1,5 +1,8 @@
 # Spring Boot 资源服务器 JWT 保护实现指引
 
+> 状态：Reference。本文是外部 Java 资源服务器的通用实现参考，不是当前 UniAuth
+> 后端的运行说明。JWT 契约见 [当前架构](../ARCHITECTURE.md#jwt-模型)。
+
 ## 📋 概述
 
 这份指引将帮助你在 Spring Boot 应用中实现与 Python 资源服务器**完全相同**的 JWT 验证机制,确保所有微服务(Python、Java 等)使用同一个认证/授权服务。
@@ -778,4 +781,3 @@ logging:
 <span style="display:none">[^1][^2][^3]</span>
 
 <div align="center">⁂</div>
-

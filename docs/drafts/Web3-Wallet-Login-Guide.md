@@ -1,5 +1,8 @@
 # Web3 钱包登录完整开发指南
 
+> 状态：Reference。本文是包含 Redis/MySQL 等假设的通用教程，不是当前仓库实现说明。
+> 当前 Web3 所有权边界见 [当前架构](../ARCHITECTURE.md#代码所有权)。
+
 > **面向对象**: Spring Boot 后端开发人员（Web3 小白）  
 > **目标**: 为现有 Web2 项目添加 Web3 钱包登录功能  
 > **支持钱包**: MetaMask、Coinbase Wallet、WalletConnect 等 300+ 主流钱包

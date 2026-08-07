@@ -1,5 +1,8 @@
 # Spring Boot 项目集成 SSO + 本地登录指南
 
+> 状态：Needs verification。本文面向复制/移植场景，端口、包名、schema 和安全配置
+> 不能直接视为当前仓库事实。当前边界见 [当前架构](../ARCHITECTURE.md)。
+
 ## 📌 概述
 
 本指南帮助你将 `./` 项目的**认证和授权模块**集成到自己的 Spring Boot 项目中。

@@ -1,5 +1,8 @@
 # Session 持久化与多服务器支持指南
 
+> 状态：Historical。Spring Session JDBC 已部分落地，但生产建表和多实例行为没有
+> 当前回归证据。配置事实见 [配置基线](../CONFIGURATION.md)。
+
 ## 📋 问题背景
 
 当前项目采用**混合模式认证**：

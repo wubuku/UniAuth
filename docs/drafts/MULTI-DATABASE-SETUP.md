@@ -1,5 +1,8 @@
 # 多数据库支持 - SQLite (Dev) & PostgreSQL (Test/Prod)
 
+> 状态：Needs verification。当前默认 profile 是 `test`，不是本文原先描述的 `dev`；
+> `dev` 和 `test` 启动都会清空用户数据。先读 [配置基线](../CONFIGURATION.md)。
+
 > 📌 **项目架构**: 支持SQLite（开发）和PostgreSQL（测试/生产）双数据库
 
 ## 🎯 概述
@@ -16,12 +19,11 @@
 
 ## 🚀 启动指南
 
-### 方式1：默认启动（dev环境 - SQLite）
+### 方式1：显式启动 dev（SQLite，数据可丢弃）
 
 ```bash
 # cd repo-root
-export $(cat .env | xargs)
-mvn spring-boot:run
+SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
 ```
 
 **说明**:
@@ -304,4 +306,3 @@ src/main/resources/
 - [Google OAuth2 Demo README](../README.md)
 - [多登录方式实现计划](./multi-login-methods-implementation-plan-v3-improved.md)
 - [项目进展](./project-progress.md)
-

@@ -1,5 +1,8 @@
 # 🔧 后端完整实现指南 (Spring Authorization Server Native)
 
+> 状态：Historical。本文包含从零实现示例，包名、依赖和认证路径不等于当前仓库。
+> 当前后端边界见 [当前架构](../ARCHITECTURE.md)。
+
 **版本:** 3.0.0  
 **重点:** 充分利用 Spring Authorization Server 内置方案
 

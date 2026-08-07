@@ -1,5 +1,8 @@
 # OAuth2 登录后重定向问题分析
 
+> 状态：Needs verification。本文记录的问题仍有参考价值，但方案和安全结论需要按
+> 当前 `SecurityConfig`、callback 配置和 [配置基线](../CONFIGURATION.md) 复核。
+
 ## 问题描述
 
 在实现 OAuth2 SSO 登录功能时，遇到一个核心问题：**无法准确实现"从哪里来（发起登录）就回哪里去"**。

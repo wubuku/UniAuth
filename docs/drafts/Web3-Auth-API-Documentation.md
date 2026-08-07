@@ -1,5 +1,9 @@
 # Web3 Wallet Login API Documentation
 
+> Status: Needs verification. The endpoints mostly match the current controller, but
+> response semantics, `isNewUser`, bind results, and SIWE validation still need tests.
+> See [Verification](../VERIFICATION.md).
+
 ## Overview
 
 Web3 Wallet Login provides passwordless authentication using Ethereum wallets (MetaMask, Coinbase Wallet, etc.). This authentication method uses the Sign-In with Ethereum (SIWE) standard for secure, decentralized identity verification.
@@ -360,8 +364,8 @@ function Web3Login() {
 
 ## Related Files
 
-- **Controller**: [Web3AuthController.java](../src/main/java/org/dddml/uniauth/controller/Web3AuthController.java)
-- **Service**: [Web3AuthService.java](../src/main/java/org/dddml/uniauth/service/Web3AuthService.java)
-- **DTOs**: [Web3NonceResponse.java](../src/main/java/org/dddml/uniauth/dto/web3/Web3NonceResponse.java), [Web3LoginRequest.java](../src/main/java/org/dddml/uniauth/dto/web3/Web3LoginRequest.java), [Web3AuthResponse.java](../src/main/java/org/dddml/uniauth/dto/web3/Web3AuthResponse.java)
-- **Utility**: [Web3SignatureUtils.java](../src/main/java/org/dddml/uniauth/util/Web3SignatureUtils.java)
-- **Migration**: [V4__Add_web3_login_support.sql](../src/main/resources/db/migration/V4__Add_web3_login_support.sql)
+- **Controller**: [Web3AuthController.java](../../src/main/java/org/dddml/uniauth/controller/Web3AuthController.java)
+- **Service**: [Web3AuthService.java](../../src/main/java/org/dddml/uniauth/service/Web3AuthService.java)
+- **DTOs**: [Web3NonceResponse.java](../../src/main/java/org/dddml/uniauth/dto/web3/Web3NonceResponse.java), [Web3LoginRequest.java](../../src/main/java/org/dddml/uniauth/dto/web3/Web3LoginRequest.java), [Web3AuthResponse.java](../../src/main/java/org/dddml/uniauth/dto/web3/Web3AuthResponse.java)
+- **Utility**: [Web3SignatureUtils.java](../../src/main/java/org/dddml/uniauth/util/Web3SignatureUtils.java)
+- **Migration**: [V4__Add_web3_login_support.sql](../../src/main/resources/db/migration/V4__Add_web3_login_support.sql)

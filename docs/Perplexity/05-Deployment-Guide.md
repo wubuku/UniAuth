@@ -1,5 +1,8 @@
 # 🚀 部署与运维指南
 
+> 状态：Historical。本文的 Docker、端口、health endpoint 和生产就绪假设未经
+> 当前代码验证。当前默认端口和启动边界见 [配置基线](../CONFIGURATION.md)。
+
 **版本:** 3.0.0  
 **支持环境:** Docker + 传统服务器
 
