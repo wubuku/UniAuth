@@ -1,8 +1,8 @@
 # UniAuth - 统一身份认证系统
 
 > 状态：Needs verification。H0.1-H0.3、PostgreSQL/Flyway H1.1-H1.3、测试基础
-> Batch A、登录方式约束 Batch B1 与删除/primary 并发保护 Batch B2a 已完成加固验证，
-> 但项目尚无生产就绪证明。
+> Batch A、登录方式约束 Batch B1、删除/primary 并发保护 Batch B2a 与实体约束/索引
+> 对齐 Batch B2b 已完成加固验证，但项目尚无生产就绪证明。
 > 仓库不默认激活 Spring profile，所有 profile 只支持显式 PostgreSQL，Flyway 是唯一
 > schema owner，演示数据默认关闭且不执行全表清理。
 > 开始开发或启动前，请先阅读 [文档导航](docs/README.md)、
@@ -20,11 +20,11 @@
 | 资源服务器 | Flask，默认端口 `5002` |
 | 邮件发送 | 外部 HTTP 服务，默认端口 `8095`；`reference/email-service/` 提供独立参考实现 |
 | 数据库 | PostgreSQL-only |
-| Migration | Flyway V1 baseline + V2 + V3，history `uniauth_flyway_schema_history` |
-| Java 验证 | 77 tests |
+| Migration | Flyway V1 baseline + V2 + V3 + V4，history `uniauth_flyway_schema_history` |
+| Java 验证 | 83 tests |
 | 邮件参考服务 | 59 tests，其中 5 个 PostgreSQL/HTTP/SMTP E2E |
 | HTTP E2E | 13/13 |
-| Flyway baseline guard | 10/10 |
+| Flyway baseline guard | 11/11 |
 | Playwright | 18 tests |
 | Python | 9 tests |
 | 前端 lint/type/build | 通过 |
@@ -105,7 +105,7 @@ HTTP 客户端适配器，不直接连接 SMTP 或邮件供应商；仓库中的
 ### 会话持久化
 
 项目启用了 Spring Session JDBC，默认会话超时为 30 分钟。Session 表由 Flyway V1
-创建，当前 schema 迁移到 V3，集成测试已覆盖 create/read/delete；多实例和负载均衡
+创建，当前 schema 迁移到 V4，集成测试已覆盖 create/read/delete；多实例和负载均衡
 行为仍无发布级证据。
 
 ### 细粒度权限控制

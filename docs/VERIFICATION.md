@@ -132,17 +132,17 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 
 ## 2026-08-07 当前加固门禁
 
-> 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1 和 Batch B2a
-> 触达路径；
+> 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1、Batch B2a 和
+> Batch B2b 触达路径；
 > 不代表 H1.4-H8、完整认证正确性或生产就绪。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 77 tests，0 failures/errors/skips |
+| `mvn test` | 通过 | 83 tests，0 failures/errors/skips |
 | `scripts/test-http-e2e.sh` | 通过 | 13/13；真实应用、PostgreSQL、重启、JWT、Web3、email、登录方式 |
-| `scripts/test-flyway-baseline-guard.sh` | 通过 | 10/10；exact schema、V2 初始/apply 前数据预检、post-baseline 失败恢复与其他拒绝/清理路径 |
-| Flyway integration | 通过 | fresh V1→V3、existing baseline V1→V3、Hibernate validate、Session、checksum/failure recovery |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 11/11；exact schema、V2/V4 初始及 apply 前数据预检、post-baseline 失败恢复与其他拒绝/清理路径 |
+| Flyway integration | 通过 | fresh V1→V4、existing baseline V1→V4、V3→V4、Hibernate validate、Session、checksum/failure recovery |
 | 邮件参考服务 | 通过 | 59 tests；其中 5 个 E2E 覆盖真实 HTTP、Flyway V1、PostgreSQL、Spring Beans、Thymeleaf、GreenMail、失败重试 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
@@ -158,7 +158,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 Shell HTTP E2E 使用 `test` profile、disposable PostgreSQL、临时 RSA key、dummy OAuth
 和不可达邮件服务地址。它验证：
 
-- Flyway V1/V2/V3 和自定义 history table。
+- Flyway V1/V2/V3/V4 和自定义 history table。
 - 应用重启后的 migration 幂等和用户数据保留。
 - `/api/auth/**` allowlist 与资源服务器拒绝边界。
 - 本地注册/登录、JWT claims、cookie/header 优先级和持久化。
@@ -192,7 +192,8 @@ Flyway baseline guard 使用 disposable PostgreSQL 16。错误 major 测试通�
 apply 竞态 fixture 会在 rehearsal 后改变 disposable 源数据，确认二次预检在创建
 Flyway history 前失败关闭。第二个 fixture 在 baseline 已创建后注入不兼容数据，
 确认 V2 拒绝迁移，并且脚本只在受管 schema 未变、history 为 baseline-only 时移除
-不完整 history，恢复为可重新 rehearsal 的状态。
+不完整 history，恢复为可重新 rehearsal 的状态。V4 fixture 另行确认实体契约坏数据
+会在创建 history 前被只读 preflight 拒绝。
 
 前端依赖已把 Axios、Ethers、Vite、Rollup、PostCSS 及相关传递依赖升级到修复版本。
 审计仍报告 2 个 React Router moderate advisories；当前代码只使用客户端

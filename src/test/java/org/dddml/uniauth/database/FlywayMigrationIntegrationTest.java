@@ -45,9 +45,9 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Test
-    void freshDatabaseMigratesToVersionThreeAndHibernateValidates() {
+    void freshDatabaseMigratesToVersionFourAndHibernateValidates() {
         assertThat(flyway.info().current()).isNotNull();
-        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("3");
+        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("4");
         assertThat(flyway.migrate().migrationsExecuted).isZero();
 
         List<String> tables = jdbcTemplate.queryForList(
@@ -203,6 +203,123 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
+    void entityConstraintsDefaultsAndRepositoryIndexesAreAligned() {
+        assertThat(columnDescriptor("users", "email_verified"))
+                .isEqualTo("boolean:NO:false");
+        assertThat(columnDescriptor("users", "enabled"))
+                .isEqualTo("boolean:NO:true");
+        assertThat(columnDescriptor("users", "created_at"))
+                .isEqualTo("timestamp without time zone:NO:CURRENT_TIMESTAMP");
+        assertThat(columnDescriptor("users", "updated_at"))
+                .isEqualTo("timestamp without time zone:NO:CURRENT_TIMESTAMP");
+        assertThat(columnDescriptor("web3_nonces", "created_at"))
+                .isEqualTo("timestamp with time zone:NO:CURRENT_TIMESTAMP");
+        assertThat(columnDescriptor("email_verification_codes", "is_used"))
+                .isEqualTo("boolean:NO:false");
+        assertThat(columnDescriptor("email_verification_codes", "retry_count"))
+                .isEqualTo("integer:NO:0");
+        assertThat(columnDescriptor("token_blacklist", "token_type"))
+                .isEqualTo("character varying:NO:");
+        assertThat(columnDescriptor("token_blacklist", "blacklisted_at"))
+                .isEqualTo("timestamp without time zone:NO:CURRENT_TIMESTAMP");
+
+        assertThat(constraintExists("ck_email_verification_retry_count_nonnegative"))
+                .isTrue();
+        assertThat(constraintExists("ck_token_blacklist_token_type")).isTrue();
+
+        assertThat(indexExists("idx_email_verification_pending_lookup")).isTrue();
+        assertThat(indexExists("idx_email_verification_email_created_at")).isTrue();
+        assertThat(indexExists("idx_email_verification_expires_at")).isTrue();
+        assertThat(indexExists("idx_token_blacklist_expires_at")).isTrue();
+
+        assertThat(indexExists("idx_users_email")).isFalse();
+        assertThat(indexExists("idx_users_username")).isFalse();
+        assertThat(indexExists("idx_web3_nonces_wallet_address")).isFalse();
+        assertThat(indexExists("idx_jti")).isFalse();
+        assertThat(indexExists("idx_token_blacklist_jti")).isFalse();
+        assertThat(indexExists("idx_expires_at")).isFalse();
+
+        String emailCodeId = UUID.randomUUID().toString();
+        String tokenBlacklistId = UUID.randomUUID().toString();
+        String nonceId = UUID.randomUUID().toString();
+        try {
+            jdbcTemplate.update(
+                    """
+                    INSERT INTO email_verification_codes (
+                        id, created_at, email, expires_at, purpose,
+                        updated_at, verification_code
+                    ) VALUES (?, CURRENT_TIMESTAMP, ?,
+                        CURRENT_TIMESTAMP + INTERVAL '10 minutes',
+                        'REGISTRATION', CURRENT_TIMESTAMP, '123456')
+                    """,
+                    emailCodeId,
+                    "schema-default-" + emailCodeId + "@example.invalid"
+            );
+            assertThat(jdbcTemplate.queryForObject(
+                    """
+                    SELECT is_used::text || ':' || retry_count::text
+                    FROM email_verification_codes
+                    WHERE id = ?
+                    """,
+                    String.class,
+                    emailCodeId
+            )).isEqualTo("false:0");
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "UPDATE email_verification_codes SET retry_count = -1 WHERE id = ?",
+                    emailCodeId
+            ))
+                    .hasRootCauseInstanceOf(SQLException.class)
+                    .hasMessageContaining(
+                            "ck_email_verification_retry_count_nonnegative"
+                    );
+
+            jdbcTemplate.update(
+                    """
+                    INSERT INTO token_blacklist (
+                        id, jti, token_type, expires_at
+                    ) VALUES (?, ?, 'ACCESS', CURRENT_TIMESTAMP + INTERVAL '1 hour')
+                    """,
+                    tokenBlacklistId,
+                    "schema-jti-" + tokenBlacklistId
+            );
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT blacklisted_at IS NOT NULL FROM token_blacklist WHERE id = ?",
+                    Boolean.class,
+                    tokenBlacklistId
+            )).isTrue();
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "UPDATE token_blacklist SET token_type = 'UNKNOWN' WHERE id = ?",
+                    tokenBlacklistId
+            ))
+                    .hasRootCauseInstanceOf(SQLException.class)
+                    .hasMessageContaining("ck_token_blacklist_token_type");
+
+            jdbcTemplate.update(
+                    """
+                    INSERT INTO web3_nonces (
+                        id, wallet_address, nonce, expires_at
+                    ) VALUES (?, ?, ?, CURRENT_TIMESTAMP + INTERVAL '5 minutes')
+                    """,
+                    nonceId,
+                    "0x" + nonceId.replace("-", "") + "00000000",
+                    "schema-nonce-" + nonceId
+            );
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT created_at IS NOT NULL FROM web3_nonces WHERE id = ?",
+                    Boolean.class,
+                    nonceId
+            )).isTrue();
+        } finally {
+            jdbcTemplate.update("DELETE FROM web3_nonces WHERE id = ?", nonceId);
+            jdbcTemplate.update("DELETE FROM token_blacklist WHERE id = ?", tokenBlacklistId);
+            jdbcTemplate.update(
+                    "DELETE FROM email_verification_codes WHERE id = ?",
+                    emailCodeId
+            );
+        }
+    }
+
+    @Test
     void flywayCleanIsDisabled() {
         assertThatThrownBy(flyway::clean)
                 .isInstanceOf(FlywayException.class)
@@ -223,5 +340,43 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
 
         sessionRepository.deleteById(session.getId());
         assertThat(sessionRepository.findById(session.getId())).isNull();
+    }
+
+    private String columnDescriptor(String tableName, String columnName) {
+        return jdbcTemplate.queryForObject(
+                """
+                SELECT data_type || ':' || is_nullable || ':' || COALESCE(column_default, '')
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = ?
+                  AND column_name = ?
+                """,
+                String.class,
+                tableName,
+                columnName
+        );
+    }
+
+    private boolean constraintExists(String constraintName) {
+        return Boolean.TRUE.equals(jdbcTemplate.queryForObject(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE connamespace = 'public'::regnamespace
+                      AND conname = ?
+                )
+                """,
+                Boolean.class,
+                constraintName
+        ));
+    }
+
+    private boolean indexExists(String indexName) {
+        return jdbcTemplate.queryForObject(
+                "SELECT to_regclass('public.' || ?) IS NOT NULL",
+                Boolean.class,
+                indexName
+        );
     }
 }

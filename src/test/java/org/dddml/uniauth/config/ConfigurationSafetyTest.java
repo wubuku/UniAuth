@@ -92,7 +92,8 @@ class ConfigurationSafetyTest {
                     .containsExactly(
                             "V1__baseline_uniauth_auth_schema.sql",
                             "V2__harden_login_method_invariants.sql",
-                            "V3__add_login_method_revision.sql"
+                            "V3__add_login_method_revision.sql",
+                            "V4__align_entity_constraints_and_indexes.sql"
                     );
         }
     }

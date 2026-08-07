@@ -124,7 +124,7 @@ entity 或 schema 变更至少核对：
 - Flyway fresh/baseline 集成测试
 - schema fingerprint
 
-Flyway 是唯一 schema owner。已发布 migration 不得改写；新增结构修复必须使用 V4+。
+Flyway 是唯一 schema owner。已发布 migration 不得改写；新增结构修复必须使用 V5+。
 
 ## 外部集成
 

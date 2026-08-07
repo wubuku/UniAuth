@@ -15,7 +15,7 @@
 
 ## 当前库存
 
-当前审计范围内共有 47 份项目 Markdown（不含技能包）：
+当前审计范围内共有 49 份项目 Markdown（不含技能包）：
 
 | 区域 | 数量 | 当前角色 |
 |------|------|----------|
@@ -24,7 +24,7 @@
 | `docs/Perplexity/` | 8 | 2026 年 1 月生成的架构与实现参考，整体按历史材料处理 |
 | `docs/drafts/` | 24 | 规划、调查、集成指南、进度记录，状态差异较大 |
 | `docs/archive/` | 2 | database/legacy SQL 归档索引 |
-| 组件 README | 2 | 前端与 Python 示例说明，均存在端口或契约漂移 |
+| 组件 README/AGENTS | 4 | 前端、Python 与邮件服务参考实现的组件入口 |
 
 技能包 `.agents/skills/project-docs/` 中的文档不计入项目文档库存。
 
@@ -105,11 +105,11 @@
 ## 已知事实与待修复项
 
 - `dev`、`test`、`prod` 已统一为显式 PostgreSQL，SQLite runtime 已退役。
-- Flyway V1 baseline + V2 + V3 已接管 8 张认证/Session 表，并加固登录方式
-  行形状、primary 和集合变更 CAS 不变量；
+- Flyway V1 baseline + V2 + V3 + V4 已接管 8 张认证/Session 表，并加固登录方式
+  行形状、primary、集合变更 CAS 以及其余目标实体约束和 email repository 索引；
   旧 SQL 已归档到 runtime classpath 外。
-- Java 已有 PostgreSQL/Testcontainers 集成测试，当前完整门禁为 77 tests。
-- HTTP Shell E2E 当前 13/13，Flyway baseline guard 10/10，
+- Java 已有 PostgreSQL/Testcontainers 集成测试，当前完整门禁为 83 tests。
+- HTTP Shell E2E 当前 13/13，Flyway baseline guard 11/11，
   Mock Playwright 18 tests，Python 9 tests。
 - 前端严格 `npm ci`、high/critical 依赖审计、lint、typecheck 和生产构建通过；
   `scripts/verify.sh` 与 GitHub Actions 使用统一验证入口。

@@ -279,6 +279,11 @@ echo "1/13 Verify Flyway-owned PostgreSQL startup"
 ")" = "1" ] || fail "Flyway V3 was not recorded as a successful SQL migration"
 [ "$(db_value "
     SELECT count(*)
+    FROM uniauth_flyway_schema_history
+    WHERE version = '4' AND type = 'SQL' AND success = true;
+")" = "1" ] || fail "Flyway V4 was not recorded as a successful SQL migration"
+[ "$(db_value "
+    SELECT count(*)
     FROM information_schema.tables
     WHERE table_schema = 'public'
       AND table_name = ANY (ARRAY[
@@ -320,6 +325,48 @@ echo "1/13 Verify Flyway-owned PostgreSQL startup"
       AND conrelid = 'public.users'::regclass;
 ")" = "1" ] \
     || fail "Flyway V3 did not create the nonnegative revision check"
+[ "$(db_value "
+    SELECT is_nullable || ':' || column_default
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'email_verification_codes'
+      AND column_name = 'retry_count';
+")" = "NO:0" ] \
+    || fail "Flyway V4 did not align email retry state"
+[ "$(db_value "
+    SELECT count(*)
+    FROM pg_constraint
+    WHERE conname IN (
+        'ck_email_verification_retry_count_nonnegative',
+        'ck_token_blacklist_token_type'
+    );
+")" = "2" ] \
+    || fail "Flyway V4 did not create the entity state checks"
+[ "$(db_value "
+    SELECT count(*)
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND indexname IN (
+        'idx_email_verification_pending_lookup',
+        'idx_email_verification_email_created_at',
+        'idx_email_verification_expires_at'
+    );
+")" = "3" ] \
+    || fail "Flyway V4 did not create the email repository indexes"
+[ "$(db_value "
+    SELECT count(*)
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND indexname IN (
+        'idx_users_email',
+        'idx_users_username',
+        'idx_web3_nonces_wallet_address',
+        'idx_jti',
+        'idx_token_blacklist_jti',
+        'idx_expires_at'
+    );
+")" = "0" ] \
+    || fail "Flyway V4 left redundant indexes in place"
 
 expect_db_rejection "
     BEGIN;
@@ -906,7 +953,7 @@ grep -qi 'set-cookie: refreshToken=.*Max-Age=0' "$logout_headers" \
 echo "13/13 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
     || fail "the E2E harness connected to an unexpected database"
-[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "3" ] \
+[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "4" ] \
     || fail "Flyway history contained unexpected rows after two application starts"
 [ "$(db_value "SELECT count(*) FROM web3_nonces;")" = "0" ] \
     || fail "consumed Web3 nonces remained in the database"

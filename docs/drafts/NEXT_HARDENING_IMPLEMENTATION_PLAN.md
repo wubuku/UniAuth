@@ -1,9 +1,9 @@
 # UniAuth 下一轮加固实施计划
 
-> 状态：Batch A 与 Batch B1 已完成；Batch B2a 实现与完整门禁已验证
+> 状态：Batch A、Batch B1、Batch B2a、Batch B2b 已完成；下一批待重新探索后冻结
 > 事实基线：2026-08-07
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
-> 前置成果：PostgreSQL-only、Flyway V1 baseline + V2 + V3、Testcontainers、
+> 前置成果：PostgreSQL-only、Flyway V1 baseline + V2 + V3 + V4、Testcontainers、
 > Java/Shell/Playwright/Python 与邮件参考服务基础门禁
 
 ## 1. 目标
@@ -12,7 +12,7 @@
 HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 
 1. 扩充集成测试、Shell E2E 和 Playwright，形成现有功能覆盖矩阵。
-2. 通过 PostgreSQL V4+ migration 继续加固身份数据不变量，并建立 G1 要求的最小持久
+2. 通过 PostgreSQL V5+ migration 继续加固身份数据不变量，并建立 G1 要求的最小持久
    安全审计基座。
 3. 收敛 JWT、refresh、blacklist、logout、cookie、CSRF、CORS 和 OAuth2 redirect。
 4. 修复邮箱验证码、密码重置和 Web3/SIWE 的并发、重放与失败语义。
@@ -27,13 +27,13 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 |------|----------|
 | 数据库 | `dev`、`test`、`prod` 只支持显式 PostgreSQL |
 | Schema owner | Flyway，runtime location 为 `db/migration/postgresql` |
-| 当前 migration | V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS |
+| 当前 migration | V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束/索引对齐 |
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
-| Java | `mvn clean compile test-compile` 和 77 tests 已通过 |
+| Java | `mvn clean compile test-compile` 和 83 tests 已通过 |
 | 邮件参考服务 | 独立 compile/test-compile 和 59 tests 已通过，其中 5 个完整 E2E |
 | HTTP E2E | `scripts/test-http-e2e.sh` 13/13 已通过 |
-| Flyway guard | `scripts/test-flyway-baseline-guard.sh` 10/10 已通过 |
+| Flyway guard | `scripts/test-flyway-baseline-guard.sh` 11/11 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、18 个 Mock Playwright tests 已通过 |
 | Python | 9 个离线 JWT/JWKS/Flask tests 已通过 |
 | 统一入口 | `scripts/verify.sh` 本地通过；CI 使用同一入口 |
@@ -51,8 +51,8 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 
 ### 3.1 已有后端覆盖
 
-- fresh PostgreSQL 执行 Flyway V1→V3，Hibernate validate。
-- 既有 V1 schema baseline 后执行 V2/V3 并启动应用。
+- fresh PostgreSQL 执行 Flyway V1→V4，Hibernate validate。
+- 既有 V1 schema baseline 后执行 V2/V3/V4 并启动应用。
 - Spring Session JDBC create/read/delete。
 - 本地注册、登录、错误密码、refresh、access/refresh type confusion。
 - `/api/user`、登录方式查询、设置 primary、删除、添加本地方式。
@@ -386,6 +386,87 @@ Batch A 通过后才开始。
 - Mock Playwright 18/18 覆盖 `409` 提示保持可见且列表不被错误修改。
 - 完整 `scripts/verify.sh` 已通过：Java 77、邮件参考服务 59、Flyway guard 10/10、
   Playwright 18、Python 9，以及编译、lint、typecheck、生产构建和文档链接检查。
+
+连续三轮无问题检查按验证规则只在当次工作报告逐轮输出；无问题轮次不修改本文。
+
+##### 2026-08-07 本轮固定范围：Batch B2b
+
+本轮只通过 Flyway V4 对齐现有实体契约和查询索引，不改变任何 endpoint、认证流程、
+验证码、Web3 nonce 或 token blacklist 的业务语义。
+
+只读事实基线：
+
+- `blacksheep_dev` 是 PostgreSQL 16.8，`TimeZone=Etc/UTC`，仍无
+  `uniauth_flyway_schema_history`。
+- `users` 3 行、`web3_nonces` 2 行、`email_verification_codes` 27 行、
+  `token_blacklist` 0 行。
+- `users.email_verified/enabled/created_at/updated_at`、
+  `web3_nonces.created_at`、`email_verification_codes.is_used/retry_count` 和
+  `token_blacklist.token_type/blacklisted_at` 当前均无 `NULL`。
+- 规范化 email/username 无重复；同一规范化 `(email,purpose)` 无多个未使用且未过期
+  challenge。该结果只用于 migration 可进入性判断，不提前实施 Batch D 的 challenge
+  唯一性或 canonicalization 语义。
+- 以上查询使用 read-only transaction 和
+  `default_transaction_read_only=on`，未创建 history、未 apply、未修改共享库。
+
+纳入范围：
+
+1. 新增不可修改的 Flyway V4：
+   - 将 `users.email_verified`、`enabled`、`created_at`、`updated_at` 设为非空，
+     保留既有默认值和 `LocalDateTime` 对应的无时区类型。
+   - 将 `web3_nonces.created_at` 设为非空，保留 `Instant` 对应的带时区类型。
+   - 将 `email_verification_codes.is_used/retry_count` 设为非空并补齐
+     `false/0` 默认值；增加 retry count 非负约束。
+   - 将 `token_blacklist.token_type/blacklisted_at` 设为非空；增加现有
+     `ACCESS/REFRESH/ID` 枚举约束，时间类型继续与 `LocalDateTime` 一致。
+2. 为当前 email repository 查询增加：
+   - pending challenge 最新记录 lookup 索引；
+   - email 日发送计数索引；
+   - 过期清理索引。
+3. 只删除可由同列 unique index 或同定义 canonical index 完全覆盖的重复索引：
+   - users 的 email/username 非唯一重复索引；
+   - Web3 wallet address 非唯一重复索引；
+   - token blacklist 的重复 jti/expiry 索引。
+4. 增加独立 V4 preflight SQL；baseline rehearsal 和 apply 写入前必须同时重查
+   V2 登录方式数据与 V4 实体契约数据。
+5. PostgreSQL 集成测试覆盖 fresh V1→V4、existing baseline V1→V4、
+   V3→V4、坏数据阻断、约束/default、目标索引存在和重复索引消失。
+6. Shell HTTP E2E 与 Flyway baseline guard 必须识别 V4；guard 增加 V4 坏数据在
+   创建 history 前 fail closed 的一次性 fixture。
+
+明确不纳入本轮：
+
+- 不将 token blacklist 接入验证、refresh 或 logout。
+- 不改变 email code 发送、消费、重试、频控或投递失败语义。
+- 不改变 Web3 message、nonce 覆盖或消费并发语义。
+- 不增加 pending email challenge 唯一索引，不实施 canonical email。
+- 不删除 `user_login_methods` 的历史 Web3 列；expand/contract 单独评审。
+- 不引入悲观锁、JPA `@Version`、新表或用户可见功能。
+- 不对 `blacksheep_dev` 或其他共享数据库执行 baseline/apply/write。
+
+本轮验收要求：
+
+- V4 对目标坏数据 fail closed，错误信息不得包含敏感数据。
+- Hibernate `validate`、fresh migration、existing baseline adoption 和失败恢复通过。
+- email 查询所需索引可由 PostgreSQL catalog 精确验证；被删除索引必须有等价覆盖。
+- HTTP 业务响应保持不变，完整 Java/Shell/Playwright/Python/邮件服务门禁无回归。
+- 完整门禁通过后执行连续三轮无问题、无修改检查。
+
+##### Batch B2b 实际结果
+
+2026-08-07 已完成实现与完整硬门槛：
+
+- 新增不可修改的 Flyway V4；fresh V1→V4、existing baseline V1→V4 和 V3→V4
+  均通过，Hibernate `validate` 无 schema 漂移。
+- V4 对齐目标 nullability/default/check，建立 3 个 email repository 索引，并删除
+  users、Web3 nonce 和 token blacklist 中有等价覆盖的 6 个重复索引；未改变 endpoint
+  或认证、验证码、Web3、blacklist 业务语义。
+- baseline 脚本增加独立只读 V4 preflight，并在 rehearsal 初始阶段和 apply 写入前
+  重查；guard 的坏数据 fixture 验证创建 Flyway history 前 fail closed。
+- 完整 `scripts/verify.sh` 已通过：Java 83、邮件参考服务 59、HTTP E2E 13/13、
+  Flyway guard 11/11、Playwright 18、Python 9，以及编译、lint、typecheck、生产构建、
+  Shell/Python 静态检查和文档链接检查。
+- `blacksheep_dev` 仅执行只读事实核验；未创建 history、未 baseline/apply、未写入。
 
 连续三轮无问题检查按验证规则只在当次工作报告逐轮输出；无问题轮次不修改本文。
 

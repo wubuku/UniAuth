@@ -132,6 +132,7 @@ for database in \
     baseline_extra_test \
     baseline_history_test \
     baseline_invalid_login_methods_test \
+    baseline_invalid_entity_schema_test \
     baseline_apply_test \
     baseline_apply_data_race_test \
     baseline_apply_migration_race_test \
@@ -139,7 +140,7 @@ for database in \
     create_source_database "$database"
 done
 
-echo "1/10 Accept an exact approved schema in rehearsal mode"
+echo "1/11 Accept an exact approved schema in rehearsal mode"
 valid_output="$TEMP_DIR/valid.log"
 run_guard baseline_valid_test rehearse valid >"$valid_output" 2>&1
 grep -Fq "Flyway baseline rehearsal passed." "$valid_output" \
@@ -158,10 +159,16 @@ grep -Fq "restored_v3_history_type=SQL" \
 grep -Fq "fresh_v3_history_type=SQL" \
     "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
     || fail "fresh rehearsal did not apply Flyway V3"
+grep -Fq "restored_v4_history_type=SQL" \
+    "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
+    || fail "existing-schema rehearsal did not apply Flyway V4"
+grep -Fq "fresh_v4_history_type=SQL" \
+    "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
+    || fail "fresh rehearsal did not apply Flyway V4"
 valid_fingerprint="$(awk '/^Schema fingerprint: / {print $3}' "$valid_output")"
 [ -n "$valid_fingerprint" ] || fail "rehearsal did not report a schema fingerprint"
 
-echo "2/10 Reject a source missing one managed table"
+echo "2/11 Reject a source missing one managed table"
 source_psql "$SOURCE_PORT" baseline_missing_test \
     -c "DROP TABLE token_blacklist;" >/dev/null
 expect_guard_failure \
@@ -170,7 +177,7 @@ expect_guard_failure \
     missing-table \
     "source database does not contain all eight approved UniAuth tables"
 
-echo "3/10 Reject additional structure inside a managed auth table"
+echo "3/11 Reject additional structure inside a managed auth table"
 source_psql "$SOURCE_PORT" baseline_extra_test \
     -c "ALTER TABLE users ADD COLUMN unexpected_auth_state text;" >/dev/null
 expect_guard_failure \
@@ -179,7 +186,7 @@ expect_guard_failure \
     extra-auth-structure \
     "baselined and fresh migrated schema fingerprints differ"
 
-echo "4/10 Reject a source that already has Flyway history"
+echo "4/11 Reject a source that already has Flyway history"
 source_psql "$SOURCE_PORT" baseline_history_test \
     -c "CREATE TABLE uniauth_flyway_schema_history (installed_rank integer);" >/dev/null
 expect_guard_failure \
@@ -188,7 +195,7 @@ expect_guard_failure \
     existing-history \
     "a Flyway history table already exists"
 
-echo "5/10 Reject source data that cannot satisfy Flyway V2"
+echo "5/11 Reject source data that cannot satisfy Flyway V2"
 source_psql "$SOURCE_PORT" baseline_invalid_login_methods_test \
     -c "
         INSERT INTO users (id, username, email)
@@ -219,7 +226,46 @@ expect_guard_failure \
     invalid-login-method-data \
     "source data is not compatible with pending login-method migration: users_without_exactly_one_primary"
 
-echo "6/10 Reject PostgreSQL versions outside the approved major"
+echo "6/11 Reject source data that cannot satisfy Flyway V4"
+source_psql "$SOURCE_PORT" baseline_invalid_entity_schema_test \
+    -c "
+        INSERT INTO users (
+            id,
+            username,
+            email,
+            email_verified
+        ) VALUES (
+            '00000000-0000-0000-0000-000000000041',
+            'invalid-entity-schema',
+            'invalid-entity-schema@example.invalid',
+            NULL
+        );
+        INSERT INTO user_login_methods (
+            id,
+            user_id,
+            auth_provider,
+            local_username,
+            is_primary,
+            is_verified
+        ) VALUES (
+            '00000000-0000-0000-0000-000000000042',
+            '00000000-0000-0000-0000-000000000041',
+            'LOCAL',
+            'invalid-entity-schema',
+            true,
+            false
+        );
+    " >/dev/null
+expect_guard_failure \
+    baseline_invalid_entity_schema_test \
+    rehearse \
+    invalid-entity-schema-data \
+    "source data is not compatible with pending entity-schema migration: null_user_runtime_fields"
+[ "$(source_psql "$SOURCE_PORT" baseline_invalid_entity_schema_test -qAt \
+    -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
+    || fail "V4 preflight failure created Flyway history"
+
+echo "7/11 Reject PostgreSQL versions outside the approved major"
 fake_version_bin="$TEMP_DIR/fake-version-bin"
 real_psql="$(command -v psql)"
 mkdir -p "$fake_version_bin"
@@ -242,7 +288,7 @@ expect_guard_failure \
     PATH="$fake_version_bin:$PATH" \
     UNIAUTH_REAL_PSQL="$real_psql"
 
-echo "7/10 Require the exact confirmation token before apply"
+echo "8/11 Require the exact confirmation token before apply"
 expect_guard_failure \
     baseline_apply_test \
     apply \
@@ -252,7 +298,7 @@ expect_guard_failure \
     -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "apply without confirmation created Flyway history"
 
-echo "8/10 Recheck source data immediately before apply"
+echo "9/11 Recheck source data immediately before apply"
 race_bin="$TEMP_DIR/race-bin"
 race_counter="$TEMP_DIR/race-mvn-count.txt"
 real_mvn="$(command -v mvn)"
@@ -323,7 +369,7 @@ expect_guard_failure \
     -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "apply created Flyway history after source data changed during rehearsal"
 
-echo "9/10 Remove incomplete baseline history if V2 rejects a later data race"
+echo "10/11 Remove incomplete baseline history if V2 rejects a later data race"
 migration_race_bin="$TEMP_DIR/migration-race-bin"
 migration_race_counter="$TEMP_DIR/migration-race-mvn-count.txt"
 mkdir -p "$migration_race_bin"
@@ -395,7 +441,7 @@ expect_guard_failure \
     -c "SELECT count(*) FROM users WHERE username = 'migration-data-race';")" = "1" ] \
     || fail "migration race fixture did not reach the post-baseline window"
 
-echo "10/10 Remove temporary Flyway credentials after Maven failure"
+echo "11/11 Remove temporary Flyway credentials after Maven failure"
 fake_bin="$TEMP_DIR/fake-bin"
 capture_file="$TEMP_DIR/flyway-config-path.txt"
 mkdir -p "$fake_bin"

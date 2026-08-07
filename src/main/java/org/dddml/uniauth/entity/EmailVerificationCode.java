@@ -37,11 +37,11 @@ public class EmailVerificationCode {
     @Column(name = "expires_at", nullable = false)
     private Instant expiresAt;
 
-    @Column(name = "retry_count")
+    @Column(name = "retry_count", nullable = false)
     @Builder.Default
     private Integer retryCount = 0;
 
-    @Column(name = "is_used")
+    @Column(name = "is_used", nullable = false)
     @Builder.Default
     private Boolean isUsed = false;
 

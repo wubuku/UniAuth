@@ -46,7 +46,7 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - `dev`、`test`、`prod` 只支持 PostgreSQL。
 - 三个 profile 的 host、port、database、user 和 password 都必须显式提供。
 - Flyway 是唯一 schema owner；当前 runtime migration 链是 PostgreSQL V1 baseline +
-  V2 登录方式约束 + V3 登录方式 revision CAS。
+  V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束与索引对齐。
 - Hibernate 使用 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 外部邮件服务默认地址：`http://localhost:8095`。
 - UniAuth 主应用只实现邮件服务 HTTP 适配器；真实邮箱注册验证和密码重置需要独立
@@ -76,8 +76,8 @@ Flyway V1 源自 2026-08-07 对 `blacksheep_dev` 的只读 schema 导出。
 该库已通过只读 rehearsal，但尚未执行 baseline apply。未经用户显式授权和精确
 confirmation token，不得对其创建 `uniauth_flyway_schema_history` 或执行 pending
 migrations。apply 前必须重新核对源 schema 指纹、V2 数据预检和 history table，
-不能沿用长时间 rehearsal 开始时的旧状态；apply 后必须与 rehearsal 的 fresh 最新
-迁移结果一致。
+以及 V4 实体契约预检，不能沿用长时间 rehearsal 开始时的旧状态；apply 后必须与
+rehearsal 的 fresh 最新迁移结果一致。
 
 仓库根目录 `.env`、`jwt-secret.key`、OAuth2 凭据和数据库密码属于敏感信息。不要打印、提交或写入文档。
 历史提交中的 `rsa-keys.ser` 包含已暴露的 JWT 私钥材料，不能继续信任或恢复到版本控制。
@@ -194,8 +194,10 @@ PostgreSQL 是唯一受支持数据库。Flyway 配置：
 
 V1 精确复现获准的 8 张 dev auth/session 表；V2 对齐登录方式时区/nullability，
 增加 provider/行形状约束和每用户至多一个 primary 的唯一索引；V3 增加用户级
-`login_methods_revision`，用于登录方式集合变更的乐观 CAS。后续结构修复必须新增
-V4+，不得修改已经发布或 baseline 的 V1/V2/V3 checksum。
+`login_methods_revision`，用于登录方式集合变更的乐观 CAS；V4 对齐 users、Web3
+nonce、email verification 和 token blacklist 的既有实体约束，补齐 email repository
+索引并移除有等价唯一/规范索引覆盖的重复索引。后续结构修复必须新增 V5+，不得修改
+已经发布或 baseline 的 V1/V2/V3/V4 checksum。
 
 修改 entity/schema 时至少核对：
 
@@ -254,10 +256,10 @@ PYTHON_BIN=python3 scripts/verify.sh
 
 已知状态（2026-08-07 当前工作树）：
 
-- Maven：77 tests，0 failures/errors/skips。
+- Maven：83 tests，0 failures/errors/skips。
 - 邮件参考服务：59 tests，0 failures/errors/skips；其中 5 个完整 ApplicationContext E2E。
 - Shell HTTP E2E：13/13。
-- Flyway baseline guard：10/10。
+- Flyway baseline guard：11/11。
 - Mock Playwright：18 tests。
 - Python：9 tests。
 - 前端 ESLint、TypeScript 和生产构建通过。

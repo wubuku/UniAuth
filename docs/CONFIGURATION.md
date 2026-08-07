@@ -134,7 +134,8 @@ health 响应的最小兼容形状：
 
 - Flyway location：`classpath:db/migration/postgresql`
 - history table：`uniauth_flyway_schema_history`
-- 当前版本：V3（V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS）
+- 当前版本：V4（V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS +
+  V4 实体约束与索引对齐）
 - `baseline-on-migrate=false`
 - `clean-disabled=true`
 - SQL init：`never`
@@ -162,8 +163,10 @@ runtime classpath。
 
 V1 来自获准的实际 dev PostgreSQL 8 表结构。V2 加固登录方式时区/nullability、
 provider/行形状和 primary 唯一性。V3 增加非负的用户级
-`login_methods_revision`，供登录方式删除和 primary 切换使用乐观 CAS。后续修复
-使用 V4+；不得改写 V1/V2/V3 checksum。
+`login_methods_revision`，供登录方式删除和 primary 切换使用乐观 CAS。V4 对齐
+users、Web3 nonce、email verification 和 token blacklist 的目标约束/default，
+增加 email repository 索引并删除有等价覆盖的重复索引。后续修复使用 V5+；不得改写
+V1/V2/V3/V4 checksum。
 
 ## Existing-schema baseline
 
@@ -175,7 +178,8 @@ provider/行形状和 primary 唯一性。V3 增加非负的用户级
 - 非生产数据库名保护。
 - rehearsal 成功。
 - 精确匹配本次结构指纹的 `UNIAUTH_BASELINE_CONFIRM`。
-- apply 写入前再次确认源 schema 指纹、V2 数据预检均未变化，且仍不存在 Flyway history table。
+- apply 写入前再次确认源 schema 指纹、V2 登录方式数据预检、V4 实体契约预检均未
+  变化，且仍不存在 Flyway history table。
 - apply 创建 baseline history、执行 pending migrations，并确认最终结构与 rehearsal
   中的 fresh 最新迁移结果一致。
 - 如果 baseline 创建后 pending migration 失败，脚本只会在受管 schema 未变化且

@@ -1,8 +1,8 @@
 # UniAuth 全面加固实施规划
 
 > 状态：In progress；Phase 0 H0.1-H0.3、PostgreSQL/Flyway H1.1-H1.3、
-> 测试基础 Batch A、登录方式约束 Batch B1 与删除/primary 并发保护 Batch B2a
-> 已通过 2026-08-07 完整门禁
+> 测试基础 Batch A、登录方式约束 Batch B1、删除/primary 并发保护 Batch B2a 与
+> 实体约束/索引对齐 Batch B2b 已通过 2026-08-07 完整门禁
 > 事实基线：2026-08-07
 > 实施范围：只修复、约束和验证现有能力，不增加新的用户功能
 > 安全前提：任何会启动 Spring 的验证都必须使用明确隔离、可丢弃的数据库
@@ -19,6 +19,7 @@
 | H1.3 可执行 migration 链 | Verified | Flyway fresh/baseline、Hibernate validate、Session JDBC、SQLite 退役 |
 | H1.4 Batch B1 | Verified | Flyway V2、登录方式时区/nullability、provider/shape/primary 约束与 bind/set-primary 并发 |
 | H1.4 Batch B2a | Verified | Flyway V3、用户级 revision CAS、delete/delete 与 delete/set-primary 组合并发 |
+| H1.4 Batch B2b | Verified | Flyway V4、其余目标实体约束/default、email 查询索引、重复索引清理与只读 preflight |
 | H1.4 其余工作-H8 | Not implemented | 仍按本文后续 phase 执行，不得从前述门禁推断为已完成 |
 
 本批次自动化和隔离 HTTP 证据见 [验证指南](../VERIFICATION.md)。H1.4-H8 必须分别完成
@@ -39,11 +40,11 @@
 `blacksheep_dev` 已完成只读 rehearsal，但尚未执行 baseline apply。创建 Flyway history
 仍是独立、需要显式授权和精确 confirmation token 的操作，不属于普通测试门禁。
 
-### 当前实施批次：测试基础、Batch B1 与 Batch B2a 已完成
+### 当前实施批次：测试基础、Batch B1、Batch B2a 与 Batch B2b 已完成
 
-测试基础 Batch A、登录方式约束 Batch B1 与删除/primary 并发保护 Batch B2a 已完成
-完整门禁。剩余 H1.4、认证行为修复、实际工作包、退出条件和连续三轮检查规则见
-[下一轮加固实施计划](NEXT_HARDENING_IMPLEMENTATION_PLAN.md)。
+测试基础 Batch A、登录方式约束 Batch B1、删除/primary 并发保护 Batch B2a 与
+实体约束/索引对齐 Batch B2b 已完成完整门禁。剩余 H1.4、认证行为修复、实际工作包、
+退出条件和连续三轮检查规则见 [下一轮加固实施计划](NEXT_HARDENING_IMPLEMENTATION_PLAN.md)。
 
 ## 1. 目标与边界
 

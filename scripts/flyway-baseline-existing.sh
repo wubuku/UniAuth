@@ -9,6 +9,7 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="$PROJECT_DIR/scripts"
 FINGERPRINT_SQL="$SCRIPT_DIR/sql/uniauth-schema-fingerprint.sql"
 LOGIN_METHOD_PREFLIGHT_SQL="$SCRIPT_DIR/sql/v2-login-method-preflight.sql"
+ENTITY_SCHEMA_PREFLIGHT_SQL="$SCRIPT_DIR/sql/v4-entity-schema-preflight.sql"
 MODE="${1:-rehearse}"
 RUN_TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 ARTIFACT_DIR="${UNIAUTH_BASELINE_ARTIFACT_DIR:-$PROJECT_DIR/.local/uniauth/baseline-rehearsal/$RUN_TIMESTAMP-$$}"
@@ -106,6 +107,17 @@ source_data_violations() {
             -U "$POSTGRES_USER" \
             -d "$POSTGRES_DATABASE" \
             -f "$LOGIN_METHOD_PREFLIGHT_SQL"
+}
+
+source_entity_schema_violations() {
+    PGOPTIONS="-c default_transaction_read_only=on" \
+        PGPASSWORD="$POSTGRES_PASSWORD" \
+        psql -X -qAt -v ON_ERROR_STOP=1 \
+            -h "$POSTGRES_HOST" \
+            -p "$POSTGRES_PORT" \
+            -U "$POSTGRES_USER" \
+            -d "$POSTGRES_DATABASE" \
+            -f "$ENTITY_SCHEMA_PREFLIGHT_SQL"
 }
 
 schema_fingerprint() {
@@ -277,6 +289,12 @@ fi
 SOURCE_DATA_VIOLATIONS="$(source_data_violations)"
 if [ -n "$SOURCE_DATA_VIOLATIONS" ]; then
     echo "ERROR: source data is not compatible with pending login-method migration: $SOURCE_DATA_VIOLATIONS" >&2
+    exit 1
+fi
+
+SOURCE_ENTITY_SCHEMA_VIOLATIONS="$(source_entity_schema_violations)"
+if [ -n "$SOURCE_ENTITY_SCHEMA_VIOLATIONS" ]; then
+    echo "ERROR: source data is not compatible with pending entity-schema migration: $SOURCE_ENTITY_SCHEMA_VIOLATIONS" >&2
     exit 1
 fi
 
@@ -464,6 +482,29 @@ if [ "$RESTORED_V3_HISTORY_TYPE" != "SQL" ] || [ "$FRESH_V3_HISTORY_TYPE" != "SQ
     exit 1
 fi
 
+RESTORED_V4_HISTORY_TYPE="$(
+    psql_value \
+        127.0.0.1 \
+        "$REHEARSAL_PORT" \
+        "$REHEARSAL_DATABASE" \
+        "$REHEARSAL_USER" \
+        "$REHEARSAL_PASSWORD" \
+        "SELECT type FROM uniauth_flyway_schema_history WHERE version = '4';"
+)"
+FRESH_V4_HISTORY_TYPE="$(
+    psql_value \
+        127.0.0.1 \
+        "$REHEARSAL_PORT" \
+        "$FRESH_DATABASE" \
+        "$REHEARSAL_USER" \
+        "$REHEARSAL_PASSWORD" \
+        "SELECT type FROM uniauth_flyway_schema_history WHERE version = '4';"
+)"
+if [ "$RESTORED_V4_HISTORY_TYPE" != "SQL" ] || [ "$FRESH_V4_HISTORY_TYPE" != "SQL" ]; then
+    echo "ERROR: Flyway V4 was not applied in both rehearsal paths" >&2
+    exit 1
+fi
+
 REPORT_FILE="$ARTIFACT_DIR/rehearsal-result.txt"
 {
     echo "timestamp=$RUN_TIMESTAMP"
@@ -478,6 +519,8 @@ REPORT_FILE="$ARTIFACT_DIR/rehearsal-result.txt"
     echo "fresh_v2_history_type=$FRESH_V2_HISTORY_TYPE"
     echo "restored_v3_history_type=$RESTORED_V3_HISTORY_TYPE"
     echo "fresh_v3_history_type=$FRESH_V3_HISTORY_TYPE"
+    echo "restored_v4_history_type=$RESTORED_V4_HISTORY_TYPE"
+    echo "fresh_v4_history_type=$FRESH_V4_HISTORY_TYPE"
     echo "source_dump=$SOURCE_DUMP"
 } > "$REPORT_FILE"
 
@@ -516,6 +559,12 @@ if [ "$MODE" = "apply" ]; then
     APPLY_SOURCE_DATA_VIOLATIONS="$(source_data_violations)"
     if [ -n "$APPLY_SOURCE_DATA_VIOLATIONS" ]; then
         echo "ERROR: source data changed during rehearsal; refusing baseline apply: $APPLY_SOURCE_DATA_VIOLATIONS" >&2
+        exit 1
+    fi
+
+    APPLY_SOURCE_ENTITY_SCHEMA_VIOLATIONS="$(source_entity_schema_violations)"
+    if [ -n "$APPLY_SOURCE_ENTITY_SCHEMA_VIOLATIONS" ]; then
+        echo "ERROR: source entity-schema data changed during rehearsal; refusing baseline apply: $APPLY_SOURCE_ENTITY_SCHEMA_VIOLATIONS" >&2
         exit 1
     fi
 

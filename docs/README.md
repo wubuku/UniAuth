@@ -14,8 +14,8 @@
 | [配置基线](CONFIGURATION.md) | Live | 端口、profile、数据库、外部服务和密钥 |
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
-| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | In progress | H0.1-H0.3、H1.1-H1.3、H1.4 Batch B1/B2a 已验证；其余 H1.4-H8 待实施 |
-| [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Draft | Batch B2a 已完成；继续按测试优先切片执行后续加固 |
+| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | In progress | H0.1-H0.3、H1.1-H1.3、H1.4 Batch B1/B2a/B2b 已验证；其余 H1.4-H8 待实施 |
+| [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Draft | Batch B2b 已完成；继续按测试优先切片执行后续加固 |
 
 ## 当前关键结论
 
@@ -24,7 +24,8 @@
 - Vite 使用 `5173`，Python 资源服务器代码实际使用 `5002`。
 - `dev`、`test`、`prod` 只支持显式 PostgreSQL；SQLite runtime 已退役。
 - Flyway 已接管 schema：V1 来自实际 dev PostgreSQL 的 8 表结构，V2 加固登录方式
-  行形状/primary 不变量，V3 增加登录方式集合 revision CAS。
+  行形状/primary 不变量，V3 增加登录方式集合 revision CAS，V4 对齐其余既有实体
+  约束并补齐 email repository 索引。
 - Hibernate 只执行 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 邮箱注册验证和密码重置依赖独立邮件服务；UniAuth 主应用只提供 HTTP 客户端适配器，
   仓库另有不纳入根构建的参考实现。普通邮箱加密码登录不需要每次发信。

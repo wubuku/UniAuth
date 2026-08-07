@@ -14,8 +14,7 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "token_blacklist", indexes = {
-    @Index(name = "idx_jti", columnList = "jti"),
-    @Index(name = "idx_expires_at", columnList = "expires_at")
+    @Index(name = "idx_token_blacklist_expires_at", columnList = "expires_at")
 })
 @Data
 @NoArgsConstructor
