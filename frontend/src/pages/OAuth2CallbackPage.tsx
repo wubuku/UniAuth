@@ -62,7 +62,7 @@ const OAuth2CallbackPage = () => {
             }
           } catch (error) {
             console.error('调用refreshToken API失败:', error);
-            throw new Error('获取accessToken失败');
+            throw new Error('获取accessToken失败', { cause: error });
           }
         }
         

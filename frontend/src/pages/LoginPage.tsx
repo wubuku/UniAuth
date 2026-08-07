@@ -180,13 +180,6 @@ export default function LoginPage() {
     }
   }, [user, navigate]);
 
-  useEffect(() => {
-    if (showVerificationModal && verificationEmail && !verificationLoading && !hasAutoSentCode && verificationCountdown === 0) {
-      setHasAutoSentCode(true);
-      handleSendVerificationCode();
-    }
-  }, [showVerificationModal, verificationEmail, verificationLoading, hasAutoSentCode, verificationCountdown]);
-
   const isValidEmail = (value: string): boolean => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
   };
@@ -245,6 +238,13 @@ export default function LoginPage() {
       setVerificationLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (showVerificationModal && verificationEmail && !verificationLoading && !hasAutoSentCode && verificationCountdown === 0) {
+      setHasAutoSentCode(true);
+      handleSendVerificationCode();
+    }
+  }, [showVerificationModal, verificationEmail, verificationLoading, hasAutoSentCode, verificationCountdown]);
 
   const handleVerifyEmail = async () => {
     if (!verificationCode || verificationCode.length !== 6) {

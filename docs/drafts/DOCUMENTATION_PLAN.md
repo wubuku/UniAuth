@@ -1,6 +1,6 @@
 # UniAuth 文档体系建设计划
 
-> 状态：执行中；PostgreSQL/Flyway 实施后的事实校准进行中
+> 状态：Live maintenance；首版体系已建立，随加固 batch 持续校准
 > 基线日期：2026-08-07
 > 原则：已有文档不移动；新文档链接已有内容；当前事实以代码、配置和可执行验证为准。
 
@@ -15,14 +15,14 @@
 
 ## 当前库存
 
-当前审计范围内共有 42 份项目 Markdown（不含技能包）：
+当前审计范围内共有 47 份项目 Markdown（不含技能包）：
 
 | 区域 | 数量 | 当前角色 |
 |------|------|----------|
 | 根目录及 `.gemini/` | 4 | 项目入口、代理上下文、历史验证记录 |
 | `docs/` 顶层 | 7 | live guides、导航和大型历史契约 |
 | `docs/Perplexity/` | 8 | 2026 年 1 月生成的架构与实现参考，整体按历史材料处理 |
-| `docs/drafts/` | 21 | 规划、调查、集成指南、进度记录，状态差异较大 |
+| `docs/drafts/` | 24 | 规划、调查、集成指南、进度记录，状态差异较大 |
 | `docs/archive/` | 2 | database/legacy SQL 归档索引 |
 | 组件 README | 2 | 前端与 Python 示例说明，均存在端口或契约漂移 |
 
@@ -76,8 +76,8 @@
 | P0 | 为历史“已完成/生产就绪”声明增加明确状态说明 | 已完成 |
 | P1 | 更新根 README、AGENTS 和组件文档入口 | 已完成 |
 | P1 | 编写不增加新功能的全面加固实施规划 | 已完成首版；持续按实施状态校准 |
-| P1 | 编写下一轮测试优先实施切片 | 已完成首版，严格审查中 |
-| P1 | 修复新增/修改文档的相对链接 | 待执行 |
+| P1 | 编写下一轮测试优先实施切片 | 已完成；随 batch 状态持续更新 |
+| P1 | 修复新增/修改文档的相对链接 | 已纳入统一门禁 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -104,9 +104,14 @@
 
 - `dev`、`test`、`prod` 已统一为显式 PostgreSQL，SQLite runtime 已退役。
 - Flyway V1 已接管 8 张认证/Session 表；旧 SQL 已归档到 runtime classpath 外。
-- Java 已有 PostgreSQL/Testcontainers 集成测试，当前完整门禁为 42 tests。
-- HTTP Shell E2E 当前 10/10，Mock Playwright 当前 12 tests，Python 当前 5 tests。
-- 前端 build 成功；lint 仍因缺少 ESLint 配置失败。
+- Java 已有 PostgreSQL/Testcontainers 集成测试，当前完整门禁为 63 tests。
+- HTTP Shell E2E 当前 13/13，Flyway baseline guard 7/7，
+  Mock Playwright 18 tests，Python 9 tests。
+- 前端严格 `npm ci`、high/critical 依赖审计、lint、typecheck 和生产构建通过；
+  `scripts/verify.sh` 与 GitHub Actions 使用统一验证入口。
+- npm audit 仍有 2 个 React Router moderate advisories；当前客户端路由 pathname
+  固定为同源值，OAuth 错误仅进入编码后的 query，不触达公告中的
+  RSC/SSR data-router/外部输入决定目标 URL 路径；后续版本升级继续跟踪。
 - 邮箱验证码发送值已与持久化值一致；失败、频控和并发语义仍待修复。
 - token blacklist 尚未接入验证、刷新和登出流程。
 - Web3 的 `isNewUser`、bind 返回处理和 EIP-191 字节长度已修复；

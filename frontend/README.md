@@ -63,7 +63,7 @@ frontend/
 
 ### 环境要求
 
-- Node.js 16+
+- Node.js 20.19+、22.13+ 或 24+
 - npm 或 yarn
 
 ### 安装依赖
@@ -265,7 +265,7 @@ server {
 2. **HTTPS**: 生产环境必须使用HTTPS以确保OAuth2安全
 3. **环境变量**: 不要在代码中硬编码API地址和密钥
 4. **安全性**: 前端Token验证仅用于演示，实际应用中应在后端验证
-5. **Lint**: `npm run lint` 当前因缺少 ESLint 配置而失败
+5. **Lint**: 提交前运行 `npm run lint`；当前使用 ESLint flat config
 
 ## 许可证
 

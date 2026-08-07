@@ -18,10 +18,12 @@
 | 资源服务器 | Flask，默认端口 `5002` |
 | 数据库 | PostgreSQL-only |
 | Migration | Flyway V1，history `uniauth_flyway_schema_history` |
-| Java 验证 | 42 tests |
-| HTTP E2E | 10/10 |
-| Playwright | 12 tests |
-| Python | 5 tests |
+| Java 验证 | 63 tests |
+| HTTP E2E | 13/13 |
+| Flyway baseline guard | 7/7 |
+| Playwright | 18 tests |
+| Python | 9 tests |
+| 前端 lint/type/build | 通过 |
 
 安全启动、测试和 baseline 操作见 [开发指南](docs/DEVELOPMENT.md) 与
 [验证指南](docs/VERIFICATION.md)。`blacksheep_dev` 只完成了只读 rehearsal，
@@ -210,10 +212,10 @@ schema 由 Flyway 管理，SQLite runtime 已退役。
 |------|------|----------|
 | React | 18.x | UI 框架 |
 | TypeScript | 5.x | 类型安全 |
-| Vite | 5.x | 构建工具 |
+| Vite | 7.x | 构建工具 |
 | Tailwind CSS | 3.x | 样式框架 |
 | Axios | 1.x | HTTP 客户端 |
-| React Router | 6.x | 路由管理 |
+| React Router | 6.30.4 | 路由管理 |
 
 ### 项目结构
 

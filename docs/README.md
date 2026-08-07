@@ -26,7 +26,7 @@
 - Flyway 已接管 schema，当前 V1 来自实际 dev PostgreSQL 的 8 表结构。
 - Hibernate 只执行 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 已建立 PostgreSQL Java 集成测试、真实 HTTP Shell E2E、Mock Playwright 和
-  Python 离线 JWT/JWKS 测试；ESLint 配置仍缺失。
+  Python 离线 JWT/JWKS 测试；ESLint 与统一验证入口已纳入门禁。
 - `blacksheep_dev` 已通过只读 baseline rehearsal，但尚未执行 baseline apply。
 
 详细证据和操作限制见 [配置基线](CONFIGURATION.md) 与

@@ -28,11 +28,6 @@ export default function TestPage() {
   const [removingMethodId, setRemovingMethodId] = useState<string | null>(null);
   const [settingPrimaryId, setSettingPrimaryId] = useState<string | null>(null);
 
-  // 加载登录方式
-  useEffect(() => {
-    loadLoginMethods();
-  }, []);
-
   const loadLoginMethods = async () => {
     try {
       setLoadingLoginMethods(true);
@@ -45,6 +40,11 @@ export default function TestPage() {
       setLoadingLoginMethods(false);
     }
   };
+
+  // 加载登录方式
+  useEffect(() => {
+    loadLoginMethods();
+  }, []);
 
   const handleBindLoginMethod = async (provider: string) => {
     setBindingProvider(provider);
@@ -177,7 +177,7 @@ export default function TestPage() {
       setTokenValidationLoading('refresh');
       const result = await refreshToken();
       setTokenRefreshResult(result);
-    } catch (error) {
+    } catch {
       setTokenRefreshResult({
         message: 'Token refresh failed',
         accessToken: '',

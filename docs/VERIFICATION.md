@@ -122,28 +122,45 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 42 tests，0 failures/errors/skips |
-| `scripts/test-http-e2e.sh` | 通过 | 10/10；真实应用、PostgreSQL、Flyway、JWT、Web3、email |
-| Flyway fresh/baseline integration | 通过 | fresh V1、existing-schema baseline、Hibernate validate、Session round-trip |
+| `mvn test` | 通过 | 63 tests，0 failures/errors/skips |
+| `scripts/test-http-e2e.sh` | 通过 | 13/13；真实应用、PostgreSQL、重启、JWT、Web3、email、登录方式 |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 7/7；exact schema 与六类拒绝/清理路径 |
+| Flyway integration | 通过 | fresh V1、existing-schema baseline、Hibernate validate、Session、checksum/failure recovery |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
+| `npm run lint` | 通过 | ESLint 0 warnings/errors |
+| `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
+| `npm audit --audit-level=high` | 通过 | 0 high/critical；2 个 React Router moderate advisories 见下文 |
 | `npx tsc --noEmit` | 通过 | 无 TypeScript 错误 |
 | `npm run build` | 通过 | Vite 生产构建成功，保留 chunk warning |
-| `npm run test:e2e` | 通过 | 12/12 Chrome-channel Mock Playwright tests |
-| Python | 通过 | 5/5 离线 RSA/JWKS/Flask tests |
+| `npm run test:e2e` | 通过 | 18/18 Chrome-channel Mock Playwright tests |
+| Python | 通过 | 9/9 离线 RSA/JWKS/Flask tests |
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
+| Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
 
 Shell HTTP E2E 使用 `test` profile、disposable PostgreSQL、临时 RSA key、dummy OAuth
 和不可达邮件服务地址。它验证：
 
 - Flyway V1 和自定义 history table。
+- 应用重启后的 migration 幂等和用户数据保留。
 - `/api/auth/**` allowlist 与资源服务器拒绝边界。
-- 本地注册/登录、JWT claims、cookie 和持久化。
+- 本地注册/登录、JWT claims、cookie/header 优先级和持久化。
 - refresh rotation 与 access/refresh type confusion。
-- 本地签名 Web3 登录、replay 拒绝和钱包绑定。
-- 邮箱注册、持久化验证码、密码重置。
-- logout cookie 清理和最终数据库不变量。
+- 本地签名 Web3 登录、message tamper、replay 拒绝和钱包绑定。
+- 登录方式 primary/delete/最后方式拒绝。
+- 邮箱注册、持久化验证码、重试耗尽和密码重置。
+- logout cookie 清理、Flyway history 和最终数据库不变量。
 
 未执行真实 OAuth provider、真实邮件或共享开发库写操作。
+
+Flyway baseline guard 使用 disposable PostgreSQL 16。错误 major 测试通过离线
+`psql` fixture 注入 PostgreSQL 15 版本号，不要求下载或支持 `postgres:15` 镜像。
+
+前端依赖已把 Axios、Ethers、Vite、Rollup、PostCSS 及相关传递依赖升级到修复版本。
+审计仍报告 2 个 React Router moderate advisories；当前代码只使用客户端
+`BrowserRouter/Routes`，导航 pathname 均为固定同源值；OAuth provider 错误仅进入
+`encodeURIComponent` 编码后的 `/login` query 参数，不成为目标 URL。不使用 RSC、
+SSR data router 或 `deserializeErrors`。门禁阻止 high/critical；若外部输入开始决定
+导航目标 URL，必须先重新评估并升级/替换路由依赖。
 
 ## 2026-08-07 实施前基线
 
@@ -177,13 +194,13 @@ mvn test
 
 ```bash
 cd frontend
+npm run lint
 npx tsc --noEmit
 npm run build
 npm run test:e2e
-npm run lint
 ```
 
-当前 lint 预期失败；完成 ESLint 配置后，必须把 lint 失败视为门禁失败。
+任一 lint warning/error、类型错误、构建错误或 Playwright 失败均为门禁失败。
 
 ### Shell
 
@@ -208,6 +225,19 @@ python3 .agents/skills/project-docs/scripts/check_relative_links.py \
 git diff --check
 ```
 
+### Unified Gate
+
+```bash
+PYTHON_BIN=python3 scripts/verify.sh
+```
+
+该命令串行执行 Shell syntax、严格 `npm ci`、high/critical 依赖审计、Java compile/tests、
+HTTP E2E、Flyway baseline guard、frontend lint/type/build/Playwright、Python
+tests、文档链接和 patch hygiene。统一入口通过 `NPM_REGISTRY` 固定 npm registry，
+默认使用 `https://registry.npmjs.org/`，避免继承用户级镜像后因缺少 audit API 而误失败。
+网络受限时可同时设置本机代理；脚本会把本地回环地址加入 `NO_PROXY`。
+`.github/workflows/verification.yml` 使用同一入口，避免本地与 CI 漂移。
+
 ## 行为验证前置条件
 
 启动 Spring 前逐项确认：
@@ -226,7 +256,7 @@ git diff --check
 
 - 初始化器在未显式授权时不能清空数据库。
 - PostgreSQL schema 与 entity 一致，SQLite 运行与测试入口保持退役。
-- Flyway checksum、缺表、未知 auth 漂移和 baseline guard 失败矩阵。
+- Flyway checksum、缺表、未知 auth 漂移和 baseline guard 失败矩阵继续保持覆盖。
 - access/refresh token 的 type、issuer、audience、expiry 和 header/cookie 冲突。
 - blacklist/revoke/logout 能阻止旧 token。
 - OAuth2 登录/绑定、redirect allowlist 和 provider subject mock 集成测试。

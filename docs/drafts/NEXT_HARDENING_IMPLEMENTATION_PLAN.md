@@ -1,6 +1,6 @@
 # UniAuth 下一轮加固实施计划
 
-> 状态：Draft
+> 状态：Batch A 已实施并通过完整门禁；Batch B 尚未开始
 > 事实基线：2026-08-07
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
 > 前置成果：PostgreSQL-only、Flyway V1、Testcontainers、Java/Shell/Playwright/Python
@@ -30,10 +30,12 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | 当前 migration | `V1__baseline_uniauth_auth_schema.sql` |
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
-| Java | `mvn clean compile test-compile` 和 42 tests 已通过 |
-| HTTP E2E | `scripts/test-http-e2e.sh` 10/10 已通过 |
-| 前端 | TypeScript、生产构建、12 个 Mock Playwright tests 已通过 |
-| Python | 5 个离线 JWT/JWKS/Flask tests 已通过 |
+| Java | `mvn clean compile test-compile` 和 63 tests 已通过 |
+| HTTP E2E | `scripts/test-http-e2e.sh` 13/13 已通过 |
+| Flyway guard | `scripts/test-flyway-baseline-guard.sh` 7/7 已通过 |
+| 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、18 个 Mock Playwright tests 已通过 |
+| Python | 9 个离线 JWT/JWKS/Flask tests 已通过 |
+| 统一入口 | `scripts/verify.sh` 本地通过；CI 使用同一入口 |
 | 既有库演练 | `blacksheep_dev` 只读 rehearsal 已通过 |
 | Schema fingerprint | `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 
@@ -205,6 +207,35 @@ Playwright 继续使用 route/mock 和进程环境变量，不写持久 `.env.lo
 - 测试夹具不访问共享数据库和真实外部服务。
 - Batch A 实际新增的全部门禁通过后，执行连续三轮无修改检查。
 
+#### Batch A 实际结果
+
+2026-08-07 已完成完整硬门槛：
+
+- PostgreSQL/Testcontainers 后端测试增至 63，新增 JWT issuer/audience/type/expiry/
+  tamper/header-cookie 边界、OAuth2 success handler 和 Flyway checksum/failure recovery。
+- HTTP E2E 扩展为 13/13，覆盖应用重启、Flyway 幂等与数据保留、登录方式生命周期、
+  Web3 message tamper、邮箱 retry exhaustion 和最终数据库不变量。
+- baseline guard 独立测试 7/7，覆盖 exact schema、缺表、额外 auth 结构、已有 history、
+  错误 PostgreSQL major、缺少 apply confirmation 和临时凭据清理。错误 major 使用
+  离线 `psql` fixture，不依赖或支持 PostgreSQL 15 runtime。
+- Mock Playwright 扩展为 18 tests，覆盖钱包连接/签名边界、单次 refresh/retry、
+  refresh failure 和登录方式错误状态。
+- Python 扩展为 9 tests，覆盖 issuer、audience、expiry 和 key rotation。
+- 前端依赖审计触发了 Axios、Ethers、React Router、Vite 与相关传递依赖的安全升级；
+  `npm audit --audit-level=high` 通过。仍有 2 个 React Router moderate advisories；
+  当前客户端导航 pathname 固定为同源值，OAuth 错误只进入编码后的 query，
+  不触达公告中的外部输入决定目标 URL 路径；继续跟踪可用的无重叠修复版本。
+- ESLint、`scripts/verify.sh` 和 `.github/workflows/verification.yml` 已建立；
+  本地统一门禁已通过，远端 workflow 需在本次 push 后执行。
+
+以下目标没有被误写成“已修复”，继续归属后续批次：
+
+- 登录方式并发 bind/set-primary/delete 不变量与 PostgreSQL V2+ 约束：Batch B。
+- token blacklist、refresh replay、logout 撤销、cookie/CSRF/CORS/redirect：Batch C。
+- Email 投递失败/并发状态机和完整 SIWE 字段绑定/nonce 原子消费：Batch D。
+- Python access/refresh type confusion、跨语言固定 token；前端 logout 只清理应用存储、
+  Web3 bind 和 StrictMode 单次 callback：与 Batch C/D 修复同步补齐。
+
 ### Batch B：PostgreSQL V2+ schema、并发不变量与安全审计基座
 
 Batch A 通过后才开始。
@@ -363,6 +394,22 @@ while counter < 3:
 - live 文档与当前代码一致。
 - 连续三轮无修改检查通过。
 - 提交中不含 `.env`、`.local/`、数据库导出、私钥、`target/`、静态构建产物或测试报告。
+
+## 8. 持续加固循环
+
+单个 batch 的完成不是停止条件。每轮固定执行：
+
+1. 重新充分探索，形成范围固定、无新功能的下一轮计划。
+2. 扩充 PostgreSQL 后端集成测试与必要夹具。
+3. 扩充 Shell HTTP E2E 和 Flyway baseline guard 测试。
+4. 扩充 Playwright、Python 契约测试、ESLint 和统一验证入口。
+5. 通过完整编译、测试、构建和 E2E 硬门槛。
+6. 连续完成三轮无修改检查，更新文档并提交推送。
+7. 立即回到第 1 步。
+
+只有用户明确要求暂停，或经过全面代码、配置、文档和测试复查后确认已不存在任何
+有意义的加固工作，才允许结束循环。发现需要新增用户功能的事项只能记录到计划，
+不能借持续加固之名实施。
 
 ## 相关文档
 

@@ -8,7 +8,7 @@
 
 - Java 17
 - Maven
-- Node.js/npm
+- Node.js `20.19+`、`22.13+` 或 `24+` / npm
 - Python 3（仅 Python 示例和脚本）
 - PostgreSQL 16（交互启动）
 - Docker（Testcontainers、Shell E2E 和 Flyway rehearsal）
@@ -37,6 +37,7 @@ mvn test
 
 ```bash
 cd frontend
+npm run lint
 npx tsc --noEmit
 npm run build
 npm run test:e2e
@@ -44,14 +45,15 @@ npm run test:e2e
 
 构建会重建 Spring Boot 静态资源目录。
 
-前端 lint 命令存在，但当前缺少 ESLint 配置：
+完整仓库门禁使用一次性 PostgreSQL、真实后端 HTTP E2E、Flyway guard、Mock
+Playwright 和离线 Python 测试，并先通过无宽松参数的 `npm ci` 安装前端依赖：
 
 ```bash
-cd frontend
-npm run lint
+PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-在配置补齐前，该命令预期失败，不能报告 lint 通过。
+`PYTHON_BIN` 可指向已安装 `python-resource-server/requirements.txt` 依赖的解释器。
+该入口不会读取 `.env`，不会写共享开发库，也不会执行 Flyway baseline apply。
 
 ## 前端开发
 
@@ -99,7 +101,7 @@ SPRING_PROFILES_ACTIVE=dev \
 
 1. 修改 `frontend/src/**`。
 2. API 契约同步 `services/authService.ts` 和 `types/index.ts`。
-3. 运行 build；lint 配置补齐后再把 lint 设为门禁。
+3. 运行 lint、typecheck、生产构建和覆盖改动的 Mock Playwright。
 
 ### Python 示例
 
@@ -118,6 +120,7 @@ entity 或 schema 变更至少核对：
 - `application-prod.yml`
 - `scripts/export-schema-pg.sh`
 - `scripts/flyway-baseline-existing.sh`
+- `scripts/test-flyway-baseline-guard.sh`
 - Flyway fresh/baseline 集成测试
 - schema fingerprint
 

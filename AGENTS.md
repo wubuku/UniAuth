@@ -38,6 +38,7 @@ UniAuth 是一个单仓库认证系统，包含三个可运行部分：
 
 - 后端默认端口：`8081`。
 - Vite 开发端口：`5173`，`/api` 和 `/oauth2` 代理到 `http://localhost:8081`。
+- 前端 lint/build 要求 Node.js `20.19+`、`22.13+` 或 `24+`；CI 使用 Node `20.19`。
 - Python 示例与组件 README 当前统一使用：`5002`。
 - 默认不激活任何 Spring profile；启动者必须显式选择 `dev`、`test` 或 `prod`。
 - `dev`、`test`、`prod` 只支持 PostgreSQL。
@@ -168,34 +169,59 @@ npm run build
 
 Vite 会清空并重建 Spring Boot 静态资源目录。当前构建成功，但主 JS chunk 超过 500 kB。
 
-`npm run lint` 当前不可用，因为仓库没有 ESLint 配置文件；不要报告 lint 通过。
+前端已提供与当前 React/TypeScript 工具链匹配的 ESLint 配置。修改前端时至少执行：
+
+```bash
+cd frontend
+npm run lint
+npx tsc --noEmit
+npm run build
+npm run test:e2e
+```
 
 登录方式 id 的前端类型已统一为 UUID string。跨端修改时仍要核对真实 JSON，
 并同步 service、types、页面、Playwright 和 Shell contract。
 
 ## Verification Commands
 
-不会启动 Spring 应用的基础验证：
+快速分层验证：
 
 ```bash
 mvn clean compile test-compile
 mvn test
-cd frontend && npx tsc --noEmit && npm run build && npm run test:e2e
+cd frontend && npm run lint && npx tsc --noEmit && npm run build && npm run test:e2e
 bash -n build-frontend.sh start.sh start-with-frontend.sh scripts/*.sh
 python3 -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") for root in ("python-resource-server", "scripts") for p in Path(root).glob("*.py")]'
 (cd python-resource-server && python3 -m unittest -v test_app.py)
 ```
 
+完整仓库门禁会启动 disposable PostgreSQL、真实 Spring 应用和 Mock 浏览器，不读取
+`.env`，也不接触共享开发库；前端依赖先通过无宽松参数的 `npm ci` 干净安装：
+
+```bash
+PYTHON_BIN=python3 scripts/verify.sh
+```
+
 已知状态（2026-08-07 当前工作树）：
 
-- Maven：42 tests，0 failures/errors/skips。
-- Shell HTTP E2E：10/10。
-- Mock Playwright：12 tests。
-- Python：5 tests。
-- Flyway：fresh migration、existing-schema baseline integration 和
-  `blacksheep_dev` 只读 rehearsal 已通过。
+- Maven：63 tests，0 failures/errors/skips。
+- Shell HTTP E2E：13/13。
+- Flyway baseline guard：7/7。
+- Mock Playwright：18 tests。
+- Python：9 tests。
+- 前端 ESLint、TypeScript 和生产构建通过。
+- 前端 lockfile 已通过严格 `npm ci`；已显式升级受影响的 Axios、Ethers、
+  React Router、Vite 和相关传递依赖，`npm audit --audit-level=high` 通过。
+- npm audit 仍报告 2 个 React Router moderate advisories。当前 SPA 只使用
+  `BrowserRouter/Routes`，导航 pathname 均为固定同源值；OAuth 错误仅作为
+  `encodeURIComponent` 编码后的 `/login` query 参数，不成为导航目标。不使用 RSC、
+  SSR data router 或 `deserializeErrors`；继续禁止让外部输入决定 `Link`、
+  `Navigate` 或 `useNavigate` 的目标 URL，并在可用的无重叠修复版本出现后升级。
+- Flyway：fresh migration、existing-schema baseline integration、checksum/failure recovery、
+  guard failure matrix 和 `blacksheep_dev` 只读 rehearsal 已通过。
+- `scripts/verify.sh` 是本地统一验证入口；`.github/workflows/verification.yml` 在 CI
+  中执行同一入口。
 - 后续变更必须重新运行受影响门禁，不能继承该结果。
-- 前端 lint 当前失败，原因是缺少 ESLint 配置。
 - Python 资源服务器已有离线 RSA/JWKS/Flask 测试。
 - 真实 OAuth2、真实邮件和共享数据库写操作仍属于显式 opt-in 验证。
 
@@ -237,11 +263,19 @@ python3 -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") fo
 ## Change Discipline
 
 - 多步骤任务持续使用 plan 工具；关键提醒必须写入本文件或任务实施文档。
+- 加固工作采用持续循环：固定范围规划 -> PostgreSQL 集成测试与夹具 ->
+  Shell/Flyway E2E -> Playwright/Python/质量工具 -> 完整硬门槛 -> 连续三轮无修改
+  检查 -> 文档更新与提交推送。每轮推送后立即重新充分探索并规划下一轮，不把单个
+  batch 完成当作停止点；只有用户明确要求暂停，或全面复查确认已无任何有意义的
+  加固工作时才能停止。
 - 当前总原则是先全面加固已有功能，不增加新功能。
 - 实施前先建立集成测试、Shell E2E 和 Playwright 保护；测试必须覆盖本次修改。
 - 基础门禁通过后执行连续三轮无修改检查；任何实质修改都将计数归零。
 - 并发修复优先数据库约束、条件更新和 CAS，不默认使用悲观锁，也不机械引入 `@Version`。
 - 未经用户允许，不运行真实高成本外部调用；真实 OAuth/mail 也不是默认门禁。
+- 外部依赖下载遇到网络阻断时，可使用用户提供的本机 `http_proxy`、`https_proxy`
+  和 `all_proxy` 临时注入当前命令；不要把机器专用代理地址写入仓库配置、`.npmrc`
+  或可提交的环境文件。
 - 保持改动紧贴请求，不顺手重写历史文档或大规模清理认证架构。
 - 安全、token、cookie、OAuth2 callback、CORS 和 schema 改动具有跨模块影响，必须同时检查后端、前端和 Python 示例。
 - API 响应变更要同步 `frontend/src/services/authService.ts`、类型、调用页面和相关脚本。

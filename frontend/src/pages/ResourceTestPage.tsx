@@ -9,7 +9,9 @@ const ResourceTestPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
-  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(
+    () => localStorage.getItem('accessToken')
+  );
   const [activeTest, setActiveTest] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
 
@@ -29,15 +31,14 @@ const ResourceTestPage: React.FC = () => {
   useEffect(() => {
     console.log('=== 开始检查token状态 ===');
     // 从localStorage获取token（仅在需要访问不同域资源服务器时使用）
-    let token = localStorage.getItem('accessToken');
+    const token = localStorage.getItem('accessToken');
     console.log('从localStorage获取的token:', token ? 'Present' : 'Missing');
-    setAccessToken(token);
     console.log('最终设置的token:', token ? 'Present' : 'Missing');
     
     // 定期检查 token 变化
     const interval = setInterval(() => {
       console.log('=== 定期检查token变化 ===');
-      let updatedToken = localStorage.getItem('accessToken');
+      const updatedToken = localStorage.getItem('accessToken');
       console.log('从localStorage获取的updatedToken:', updatedToken ? 'Present' : 'Missing');
       if (updatedToken !== accessToken) {
         console.log('token发生变化，更新状态');

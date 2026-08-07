@@ -18,6 +18,8 @@ APP_PID=""
 APP_LOG="$TEMP_DIR/application.log"
 COOKIE_JAR="$TEMP_DIR/cookies.txt"
 SERVER_PORT="${UNIAUTH_E2E_SERVER_PORT:-}"
+export NO_PROXY="${NO_PROXY:+${NO_PROXY},}localhost,127.0.0.1,::1"
+export no_proxy="${no_proxy:+${no_proxy},}localhost,127.0.0.1,::1"
 
 fail() {
     echo "FAIL: $1" >&2
@@ -117,6 +119,54 @@ request_status() {
         "${BASE_URL}${path}"
 }
 
+start_application() {
+    (
+        export SPRING_PROFILES_ACTIVE=test
+        export POSTGRES_HOST=127.0.0.1
+        export POSTGRES_PORT="$DATABASE_PORT"
+        export POSTGRES_DATABASE="$DATABASE_NAME"
+        export POSTGRES_USER="$DATABASE_USER"
+        export POSTGRES_PASSWORD="$DATABASE_PASSWORD"
+        export SERVER_PORT
+        export JWT_RSA_KEY_FILE="$TEMP_DIR/signing-key.ser"
+        export GOOGLE_CLIENT_ID=e2e-google
+        export GOOGLE_CLIENT_SECRET=e2e-google-secret
+        export GITHUB_CLIENT_ID=e2e-github
+        export GITHUB_CLIENT_SECRET=e2e-github-secret
+        export TWITTER_CLIENT_ID=e2e-x
+        export TWITTER_CLIENT_SECRET=e2e-x-secret
+        export APP_DEMO_DATA_ENABLED=false
+        export APP_DEMO_DATA_DISPOSABLE=false
+        export APP_EMAIL_SERVICE_URL=http://127.0.0.1:1
+        export APP_FRONTEND_URL="$BASE_URL"
+        export APP_WEB3_DOMAIN="127.0.0.1:${SERVER_PORT}"
+        exec "$PROJECT_DIR/start.sh"
+    ) >>"$APP_LOG" 2>&1 &
+    APP_PID=$!
+}
+
+wait_for_application() {
+    for _ in $(seq 1 150); do
+        if curl -fsS "${BASE_URL}/oauth2/jwks" >/dev/null 2>&1; then
+            return
+        fi
+        if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
+            fail "application process exited before becoming ready"
+        fi
+        sleep 1
+    done
+    fail "application did not become ready"
+}
+
+stop_application() {
+    if [ -z "$APP_PID" ]; then
+        return
+    fi
+    terminate_process_tree "$APP_PID"
+    wait "$APP_PID" >/dev/null 2>&1 || true
+    APP_PID=""
+}
+
 create_wallet() {
     (
         cd "$PROJECT_DIR/frontend"
@@ -200,44 +250,10 @@ if ! PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
 fi
 
 echo "HTTP E2E: starting the real application through start.sh"
-(
-    export SPRING_PROFILES_ACTIVE=test
-    export POSTGRES_HOST=127.0.0.1
-    export POSTGRES_PORT="$DATABASE_PORT"
-    export POSTGRES_DATABASE="$DATABASE_NAME"
-    export POSTGRES_USER="$DATABASE_USER"
-    export POSTGRES_PASSWORD="$DATABASE_PASSWORD"
-    export SERVER_PORT
-    export JWT_RSA_KEY_FILE="$TEMP_DIR/signing-key.ser"
-    export GOOGLE_CLIENT_ID=e2e-google
-    export GOOGLE_CLIENT_SECRET=e2e-google-secret
-    export GITHUB_CLIENT_ID=e2e-github
-    export GITHUB_CLIENT_SECRET=e2e-github-secret
-    export TWITTER_CLIENT_ID=e2e-x
-    export TWITTER_CLIENT_SECRET=e2e-x-secret
-    export APP_DEMO_DATA_ENABLED=false
-    export APP_DEMO_DATA_DISPOSABLE=false
-    export APP_EMAIL_SERVICE_URL=http://127.0.0.1:1
-    export APP_FRONTEND_URL="$BASE_URL"
-    export APP_WEB3_DOMAIN="127.0.0.1:${SERVER_PORT}"
-    exec "$PROJECT_DIR/start.sh"
-) >"$APP_LOG" 2>&1 &
-APP_PID=$!
+start_application
+wait_for_application
 
-for _ in $(seq 1 150); do
-    if curl -fsS "${BASE_URL}/oauth2/jwks" >/dev/null 2>&1; then
-        break
-    fi
-    if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
-        fail "application process exited before becoming ready"
-    fi
-    sleep 1
-done
-if ! curl -fsS "${BASE_URL}/oauth2/jwks" >/dev/null 2>&1; then
-    fail "application did not become ready"
-fi
-
-echo "1/10 Verify Flyway-owned PostgreSQL startup"
+echo "1/13 Verify Flyway-owned PostgreSQL startup"
 [ "$(db_value "
     SELECT count(*)
     FROM uniauth_flyway_schema_history
@@ -261,7 +277,7 @@ echo "1/10 Verify Flyway-owned PostgreSQL startup"
 [ "$(db_value "SELECT to_regclass('public.flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "the default Flyway history table was unexpectedly created"
 
-echo "2/10 Verify fail-closed HTTP security boundaries"
+echo "2/13 Verify fail-closed HTTP security boundaries"
 [ "$(request_status GET /api/user)" = "401" ] \
     || fail "anonymous current-user request did not return 401"
 [ "$(request_status GET /api/auth/check-user)" = "403" ] \
@@ -277,7 +293,7 @@ jwks_response="$(curl -sS "${BASE_URL}/oauth2/jwks")"
 [ "$(jq -er '.keys[0].alg' <<<"$jwks_response")" = "RS256" ] \
     || fail "JWKS did not expose RS256"
 
-echo "3/10 Register and authenticate a local account"
+echo "3/13 Register and authenticate a local account"
 local_username="shell-user-${RUN_ID}"
 local_email="${local_username}@example.invalid"
 local_password="initial-password-${RUN_ID}"
@@ -326,7 +342,7 @@ login_response="$(
 access_token="$(jq -er '.accessToken' <<<"$login_response")"
 refresh_token="$(jq -er '.refreshToken' <<<"$login_response")"
 
-echo "4/10 Verify protected APIs, persistence, and JWT contracts"
+echo "4/13 Verify protected APIs, persistence, and JWT contracts"
 current_user="$(
     curl -sS \
         -H "Authorization: Bearer $access_token" \
@@ -373,7 +389,27 @@ introspection="$(
       AND last_used_at IS NOT NULL;
 ")" = "1" ] || fail "successful login did not persist last_used_at"
 
-echo "5/10 Refresh tokens and reject token type confusion"
+echo "5/13 Restart the application without replaying migrations or losing data"
+stop_application
+start_application
+wait_for_application
+
+[ "$(db_value "
+    SELECT count(*)
+    FROM uniauth_flyway_schema_history
+    WHERE version = '1' AND type = 'SQL' AND success = true;
+")" = "1" ] || fail "application restart changed the Flyway V1 history"
+[ "$(db_value "SELECT count(*) FROM users WHERE id = '$local_user_id';")" = "1" ] \
+    || fail "application restart lost the registered user"
+restarted_user="$(
+    curl -sS \
+        -H "Authorization: Bearer $access_token" \
+        "${BASE_URL}/api/user"
+)"
+[ "$(jq -er '.userId' <<<"$restarted_user")" = "$local_user_id" ] \
+    || fail "the pre-restart access token did not work after restart"
+
+echo "6/13 Refresh tokens and reject token type confusion"
 refresh_response="$(
     curl -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
         -X POST "${BASE_URL}/api/auth/refresh"
@@ -401,16 +437,28 @@ access_as_refresh_status="$(
 [ "$access_as_refresh_status" = "401" ] \
     || fail "access token was accepted as a refresh token"
 
-echo "6/10 Authenticate a new Web3 account with a local signature"
+echo "7/13 Authenticate a new Web3 account and reject message tampering"
 web3_wallet="$(create_wallet)"
 web3_address="$(jq -er '.address' <<<"$web3_wallet")"
 web3_challenge="$(signed_challenge "$web3_wallet")"
+tampered_web3_challenge="$(
+    jq -c '.message = (.message + "\nTampered: true")' <<<"$web3_challenge"
+)"
+tampered_web3_status="$(
+    curl -sS -o "$TEMP_DIR/web3-tampered.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/web3/verify" \
+        -H "Content-Type: application/json" \
+        --data "$tampered_web3_challenge"
+)"
+[ "$tampered_web3_status" = "401" ] \
+    || fail "a Web3 challenge with a tampered message was accepted"
 web3_login="$(post_json /api/auth/web3/verify "$web3_challenge")"
 [ "$(jq -er '.walletAddress' <<<"$web3_login")" = "$web3_address" ] \
     || fail "Web3 login returned the wrong wallet address"
 [ "$(jq -er '.isNewUser' <<<"$web3_login")" = "true" ] \
     || fail "first Web3 login was not marked as a new user"
 web3_user_id="$(jq -er '.userId' <<<"$web3_login")"
+web3_access_token="$(jq -er '.accessToken' <<<"$web3_login")"
 
 replay_status="$(
     curl -sS -o "$TEMP_DIR/web3-replay.json" -w '%{http_code}' \
@@ -431,7 +479,24 @@ repeat_web3_login="$(post_json /api/auth/web3/verify "$repeat_web3_challenge")"
 [ "$(jq -er '.isNewUser' <<<"$repeat_web3_login")" = "false" ] \
     || fail "repeat Web3 login was incorrectly marked as new"
 
-echo "7/10 Bind one Web3 wallet to the local account"
+echo "8/13 Verify header/cookie identity precedence"
+conflicting_identity="$(
+    curl -sS \
+        -H "Authorization: Bearer $web3_access_token" \
+        -H "Cookie: accessToken=$access_token" \
+        "${BASE_URL}/api/user"
+)"
+[ "$(jq -er '.userId' <<<"$conflicting_identity")" = "$web3_user_id" ] \
+    || fail "the access-token cookie overrode the Authorization header"
+manual_cookie_identity="$(
+    curl -sS \
+        -H "Cookie: accessToken=$access_token" \
+        "${BASE_URL}/api/user"
+)"
+[ "$(jq -er '.userId' <<<"$manual_cookie_identity")" = "$local_user_id" ] \
+    || fail "cookie-only authentication selected the wrong identity"
+
+echo "9/13 Bind and manage a Web3 login method for the local account"
 binding_wallet="$(create_wallet)"
 binding_challenge="$(signed_challenge "$binding_wallet")"
 missing_binding_token_status="$(
@@ -480,7 +545,65 @@ second_binding_status="$(
     WHERE user_id = '$local_user_id';
 ")" = "2" ] || fail "Web3 binding was not persisted as a second login method"
 
-echo "8/10 Run the email registration and password-reset HTTP flow"
+managed_methods="$(
+    curl -sS \
+        -H "Authorization: Bearer $new_access_token" \
+        "${BASE_URL}/api/user/login-methods"
+)"
+local_method_id="$(
+    jq -er '.loginMethods[] | select(.authProvider == "local") | .id' \
+        <<<"$managed_methods"
+)"
+bound_web3_method_id="$(
+    jq -er '.loginMethods[] | select(.authProvider == "web3") | .id' \
+        <<<"$managed_methods"
+)"
+
+set_primary_status="$(
+    request_status \
+        PUT \
+        "/api/user/login-methods/${bound_web3_method_id}/primary" \
+        -H "Authorization: Bearer $new_access_token"
+)"
+[ "$set_primary_status" = "200" ] \
+    || fail "the bound Web3 method could not be set as primary"
+[ "$(db_value "
+    SELECT count(*)
+    FROM user_login_methods
+    WHERE user_id = '$local_user_id' AND is_primary = true;
+")" = "1" ] || fail "setting primary did not leave exactly one primary method"
+[ "$(db_value "
+    SELECT id
+    FROM user_login_methods
+    WHERE user_id = '$local_user_id' AND is_primary = true;
+")" = "$bound_web3_method_id" ] || fail "the requested Web3 method was not persisted as primary"
+
+delete_bound_status="$(
+    request_status \
+        DELETE \
+        "/api/user/login-methods/${bound_web3_method_id}" \
+        -H "Authorization: Bearer $new_access_token"
+)"
+[ "$delete_bound_status" = "200" ] \
+    || fail "the bound Web3 login method could not be deleted"
+[ "$(db_value "
+    SELECT count(*)
+    FROM user_login_methods
+    WHERE user_id = '$local_user_id'
+      AND id = '$local_method_id'
+      AND is_primary = true;
+")" = "1" ] || fail "deleting the primary Web3 method did not promote the local method"
+
+delete_last_status="$(
+    request_status \
+        DELETE \
+        "/api/user/login-methods/${local_method_id}" \
+        -H "Authorization: Bearer $new_access_token"
+)"
+[ "$delete_last_status" = "400" ] \
+    || fail "the last login method could be deleted"
+
+echo "10/13 Run the email registration and password-reset HTTP flow"
 if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     BASE_URL="$BASE_URL" \
     EMAIL="shell-email-${RUN_ID}@example.invalid" \
@@ -495,7 +618,61 @@ if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     fail "email registration/password-reset subflow failed"
 fi
 
-echo "9/10 Verify logout cookie clearing"
+echo "11/13 Exhaust an invalid email verification retry budget"
+retry_email="shell-retry-${RUN_ID}@example.invalid"
+retry_send_payload="$(
+    jq -cn \
+        --arg email "$retry_email" \
+        '{
+          email: $email,
+          purpose: "REGISTRATION",
+          password: "retry-test-password"
+        }'
+)"
+retry_send_response="$(
+    post_json /api/auth/send-verification-code "$retry_send_payload"
+)"
+[ "$(jq -er '.success' <<<"$retry_send_response")" = "true" ] \
+    || fail "retry-budget verification code was not created"
+retry_code="$(db_value "
+    SELECT verification_code
+    FROM email_verification_codes
+    WHERE email = '$retry_email'
+      AND purpose = 'REGISTRATION'
+      AND is_used = false
+    ORDER BY created_at DESC
+    LIMIT 1;
+")"
+wrong_retry_code="000000"
+if [ "$retry_code" = "$wrong_retry_code" ]; then
+    wrong_retry_code="111111"
+fi
+for attempt in $(seq 1 5); do
+    expected_remaining=$((5 - attempt))
+    retry_response_file="$TEMP_DIR/retry-${attempt}.json"
+    retry_status="$(
+        curl -sS -o "$retry_response_file" -w '%{http_code}' \
+            -X POST "${BASE_URL}/api/auth/verify-email" \
+            -H "Content-Type: application/json" \
+            --data "$(
+                jq -cn \
+                    --arg email "$retry_email" \
+                    --arg code "$wrong_retry_code" \
+                    '{email: $email, verificationCode: $code}'
+            )"
+    )"
+    [ "$retry_status" = "400" ] \
+        || fail "invalid verification attempt $attempt did not return 400"
+    [ "$(jq -er '.remainingAttempts' "$retry_response_file")" = "$expected_remaining" ] \
+        || fail "invalid verification attempt $attempt returned the wrong retry budget"
+done
+[ "$(db_value "
+    SELECT count(*)
+    FROM email_verification_codes
+    WHERE email = '$retry_email' AND is_used = false;
+")" = "0" ] || fail "exhausted email verification challenge remained usable"
+
+echo "12/13 Verify logout cookie clearing"
 logout_headers="$TEMP_DIR/logout-headers.txt"
 logout_response="$(
     curl -sS -D "$logout_headers" \
@@ -509,7 +686,11 @@ grep -qi 'set-cookie: accessToken=.*Max-Age=0' "$logout_headers" \
 grep -qi 'set-cookie: refreshToken=.*Max-Age=0' "$logout_headers" \
     || fail "logout did not clear the refresh-token cookie"
 
-echo "10/10 Verify final database invariants"
+echo "13/13 Verify final database invariants"
+[ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
+    || fail "the E2E harness connected to an unexpected database"
+[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "1" ] \
+    || fail "Flyway history contained unexpected rows after two application starts"
 [ "$(db_value "SELECT count(*) FROM web3_nonces;")" = "0" ] \
     || fail "consumed Web3 nonces remained in the database"
 [ "$(db_value "
@@ -522,5 +703,14 @@ echo "10/10 Verify final database invariants"
     FROM email_verification_codes
     WHERE is_used = true;
 ")" -ge "2" ] || fail "email verification and reset codes were not consumed"
+[ "$(db_value "
+    SELECT count(*)
+    FROM (
+        SELECT user_id
+        FROM user_login_methods
+        GROUP BY user_id
+        HAVING count(*) FILTER (WHERE is_primary = true) <> 1
+    ) invalid_primary_users;
+")" = "0" ] || fail "one or more users ended without exactly one primary login method"
 
 echo "PASS: HTTP/PostgreSQL/Flyway/Web3/email end-to-end checks completed"

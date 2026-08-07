@@ -20,12 +20,15 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.Map;
+import java.time.Instant;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -57,6 +60,7 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
 
     @BeforeEach
     void configureEmailBoundary() {
+        reset(emailService);
         when(emailService.isAvailable()).thenReturn(true);
         when(emailService.sendTemplateEmail(
                 anyString(),
@@ -190,5 +194,124 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                         .param("username", email)
                         .param("password", newPassword))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void invalidCodeConsumesTheRetryBudgetAndDeletesTheChallenge() throws Exception {
+        String email = uniqueEmail("retry-budget");
+        sendRegistrationCode(email);
+
+        EmailVerificationCode code = latestCode(
+                email,
+                EmailVerificationCode.VerificationPurpose.REGISTRATION
+        );
+        String invalidCode = "000000".equals(code.getVerificationCode())
+                ? "111111"
+                : "000000";
+
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            int expectedRemaining = Math.max(0, 5 - attempt);
+            mockMvc.perform(post("/api/auth/verify-email")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(Map.of(
+                                    "email", email,
+                                    "verificationCode", invalidCode
+                            ))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.success").value(false))
+                    .andExpect(jsonPath("$.remainingAttempts").value(expectedRemaining));
+        }
+
+        assertThat(verificationCodeRepository.findById(code.getId())).isEmpty();
+    }
+
+    @Test
+    void expiredChallengeIsRejectedAndRemoved() throws Exception {
+        String email = uniqueEmail("expired");
+        sendRegistrationCode(email);
+        EmailVerificationCode code = latestCode(
+                email,
+                EmailVerificationCode.VerificationPurpose.REGISTRATION
+        );
+        code.setExpiresAt(Instant.now().minusSeconds(1));
+        verificationCodeRepository.saveAndFlush(code);
+
+        mockMvc.perform(post("/api/auth/verify-email")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "email", email,
+                                "verificationCode", code.getVerificationCode()
+                        ))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Verification code expired"));
+
+        assertThat(verificationCodeRepository.findById(code.getId())).isEmpty();
+    }
+
+    @Test
+    void resendCooldownPreventsASecondPendingChallenge() throws Exception {
+        String email = uniqueEmail("cooldown");
+        sendRegistrationCode(email);
+
+        mockMvc.perform(post("/api/auth/send-verification-code")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "email", email,
+                                "purpose", "REGISTRATION",
+                                "password", "integration-password"
+                        ))))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error").value("COOLDOWN"));
+
+        assertThat(verificationCodeRepository.findByEmail(email)).hasSize(1);
+    }
+
+    @Test
+    void emailBoundaryExceptionDoesNotPersistAUsableChallenge() throws Exception {
+        String email = uniqueEmail("delivery-exception");
+        when(emailService.sendTemplateEmail(
+                anyString(),
+                anyString(),
+                anyString(),
+                any(),
+                anyString()
+        )).thenThrow(new IllegalStateException("simulated email boundary failure"));
+
+        mockMvc.perform(post("/api/auth/send-verification-code")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "email", email,
+                                "purpose", "REGISTRATION",
+                                "password", "integration-password"
+                        ))))
+                .andExpect(status().is5xxServerError());
+
+        assertThat(verificationCodeRepository.findByEmail(email)).isEmpty();
+    }
+
+    private void sendRegistrationCode(String email) throws Exception {
+        mockMvc.perform(post("/api/auth/send-verification-code")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "email", email,
+                                "purpose", "REGISTRATION",
+                                "password", "integration-password",
+                                "displayName", "Email Boundary User"
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    private EmailVerificationCode latestCode(
+            String email,
+            EmailVerificationCode.VerificationPurpose purpose) {
+        return verificationCodeRepository
+                .findFirstByEmailAndPurposeAndIsUsedFalseOrderByCreatedAtDesc(email, purpose)
+                .orElseThrow();
+    }
+
+    private String uniqueEmail(String prefix) {
+        return prefix + "-" + UUID.randomUUID() + "@example.invalid";
     }
 }

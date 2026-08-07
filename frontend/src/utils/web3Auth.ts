@@ -28,7 +28,7 @@ export class Web3Auth {
       return accounts[0];
     } catch (error: any) {
       if (error.code === 4001) {
-        throw new Error('用户拒绝了连接请求');
+        throw new Error('用户拒绝了连接请求', { cause: error });
       }
       throw error;
     }
@@ -48,7 +48,7 @@ export class Web3Auth {
       return await signer.signMessage(message);
     } catch (error: any) {
       if (error.code === 4001) {
-        throw new Error('用户拒绝了签名请求');
+        throw new Error('用户拒绝了签名请求', { cause: error });
       }
       throw error;
     }
