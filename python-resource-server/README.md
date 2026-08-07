@@ -1,7 +1,7 @@
 # Python 异构资源服务器
 
-> 状态：Needs verification。当前代码监听 `5002`，并仍硬编码历史认证服务器域名、
-> 关闭 TLS 证书验证且把 JWT `sub` 当作 username。请先阅读
+> 状态：Live。当前代码监听 `5002`，通过环境变量配置认证服务器/JWKS，
+> 使用 TLS 默认验证，并优先读取 JWT `username` claim。请先阅读
 > [配置基线](../docs/CONFIGURATION.md) 和 [验证指南](../docs/VERIFICATION.md)。
 
 这是一个 Flask 实现的示例资源服务器，展示了如何验证来自 Spring Boot OAuth2 认证服务器的 JWT Token。
@@ -61,7 +61,7 @@ Authorization: Bearer <JWT_TOKEN>
   "message": "Access granted",
   "user": {
     "id": "user-id",
-    "username": "user-id",
+    "username": "actual-username",
     "email": "user@example.com",
     "authorities": ["ROLE_USER"]
   },
@@ -71,8 +71,8 @@ Authorization: Bearer <JWT_TOKEN>
 }
 ```
 
-当前实现把 `sub` 写入 `username`；UniAuth 新 token 的 `sub` 实际是用户 UUID。
-正确用户名应读取 `username` claim。
+当前实现优先把 `username` claim 写入响应；仅在兼容缺少该 claim 的旧 token 时
+回退到 `sub`。UniAuth 新 token 的 `sub` 是用户 UUID，不应作为新 token 的显示用户名。
 
 ### 受保护资源信息
 ```bash
@@ -82,15 +82,17 @@ Authorization: Bearer <JWT_TOKEN>
 
 ## 配置
 
-编辑 `app.py` 中的以下变量以配置认证服务器：
+| 环境变量 | 默认值 |
+|----------|--------|
+| `AUTH_SERVER_URL` | `http://localhost:8081` |
+| `JWKS_URL` | `${AUTH_SERVER_URL}/oauth2/jwks` |
+| `JWT_ISSUER` | `https://auth.example.com` |
+| `JWT_AUDIENCE` | `resource-server` |
+| `RESOURCE_SERVER_PORT` | `5002` |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:8081` |
+| `FLASK_DEBUG` | `false` |
 
-```python
-AUTH_SERVER_URL = "https://api.u2511175.nyat.app:55139"  # 认证服务器地址
-JWKS_URL = f"{AUTH_SERVER_URL}/oauth2/jwks"              # JWKS 端点
-```
-
-上面的值是历史部署地址，不是通用默认值。后续加固会改为环境变量；在此之前，
-本地测试需显式改成 `http://localhost:8081`，生产环境必须恢复 TLS 证书验证。
+HTTPS 使用 `requests` 默认 CA 验证，不提供跳过证书验证的配置。
 
 ## Token 验证流程
 
@@ -118,7 +120,13 @@ JWKS_URL = f"{AUTH_SERVER_URL}/oauth2/jwks"              # JWKS 端点
 
 ## 测试
 
-通过以下方式测试受保护端点：
+离线回归测试使用临时 RSA key 和 mock JWKS，不访问外部网络：
+
+```bash
+python3 -m unittest -v test_app.py
+```
+
+真实联调可通过以下方式测试受保护端点：
 
 ```bash
 # 1. 登录获取 Token
@@ -131,7 +139,7 @@ TOKEN=$(curl -s -X POST "${AUTH_SERVER_URL}/api/auth/login" \
 curl -H "Authorization: Bearer $TOKEN" http://localhost:5002/api/protected
 ```
 
-该测试会依赖已启动的 UniAuth。启动前必须确认所选 profile 的数据库可丢弃。
+该联调会依赖已启动的 UniAuth。启动前必须确认所选 profile 和数据库目标安全。
 
 ## 生产部署
 

@@ -23,9 +23,6 @@ public class Web3NonceService {
         String normalizedAddress = walletAddress.toLowerCase();
         Instant expiresAt = Instant.now().plusSeconds(expirationSeconds);
 
-        log.info("SAVE NONCE - wallet: {}, nonce: {}, expiresAt: {}, now: {}, expirationSeconds: {}",
-                normalizedAddress, nonce, expiresAt, Instant.now(), expirationSeconds);
-
         Optional<Web3Nonce> existingNonce = web3NonceRepository.findByWalletAddress(normalizedAddress);
 
         if (existingNonce.isPresent()) {
@@ -42,7 +39,7 @@ public class Web3NonceService {
                     .build();
             web3NonceRepository.save(web3Nonce);
         }
-        log.debug("Saved nonce for wallet: {}", normalizedAddress);
+        log.debug("Web3 nonce persisted");
     }
 
     @Transactional(readOnly = true)
@@ -51,17 +48,15 @@ public class Web3NonceService {
         Optional<Web3Nonce> existingNonce = web3NonceRepository.findByWalletAddress(normalizedAddress);
 
         if (existingNonce.isEmpty()) {
-            log.info("GET NONCE - no nonce found for wallet: {}", normalizedAddress);
+            log.debug("No active Web3 nonce found");
             return null;
         }
 
         Web3Nonce web3Nonce = existingNonce.get();
         Instant now = Instant.now();
-        log.info("GET NONCE - wallet: {}, nonce: {}, expiresAt: {}, now: {}, isExpired: {}",
-                normalizedAddress, web3Nonce.getNonce(), web3Nonce.getExpiresAt(), now, web3Nonce.getExpiresAt().isBefore(now));
 
         if (web3Nonce.getExpiresAt().isBefore(now)) {
-            log.debug("Nonce expired for wallet: {}", normalizedAddress);
+            log.debug("Web3 nonce expired");
             web3NonceRepository.delete(web3Nonce);
             return null;
         }
@@ -73,6 +68,6 @@ public class Web3NonceService {
     public void deleteNonce(String walletAddress) {
         String normalizedAddress = walletAddress.toLowerCase();
         web3NonceRepository.deleteByWalletAddress(normalizedAddress);
-        log.debug("Deleted nonce for wallet: {}", normalizedAddress);
+        log.debug("Web3 nonce deleted");
     }
 }

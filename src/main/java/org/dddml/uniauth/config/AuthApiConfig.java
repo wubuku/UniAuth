@@ -3,6 +3,7 @@ package org.dddml.uniauth.config;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.web.SecurityFilterChain;
@@ -25,7 +26,26 @@ public class AuthApiConfig {
             .securityMatcher("/api/auth/**")  // 只匹配认证API
             .cors(cors -> {})  // 启用CORS
             .authorizeHttpRequests(authz -> authz
-                .anyRequest().permitAll()  // 所有认证API都公开
+                .requestMatchers(HttpMethod.OPTIONS, "/api/auth/**").permitAll()
+                .requestMatchers(HttpMethod.POST,
+                    "/api/auth/register",
+                    "/api/auth/login",
+                    "/api/auth/logout",
+                    "/api/auth/refresh",
+                    "/api/auth/check-verification-code",
+                    "/api/auth/send-verification-code",
+                    "/api/auth/verify-email",
+                    "/api/auth/forgot-password",
+                    "/api/auth/verify-reset-code",
+                    "/api/auth/web3/verify",
+                    "/api/auth/web3/bind"
+                ).permitAll()
+                .requestMatchers(HttpMethod.GET,
+                    "/api/auth/email/status/*",
+                    "/api/auth/web3/nonce/*",
+                    "/api/auth/web3/status/*"
+                ).permitAll()
+                .anyRequest().denyAll()
             )
             .csrf(csrf -> csrf.disable());  // 认证API通常需要禁用CSRF
 

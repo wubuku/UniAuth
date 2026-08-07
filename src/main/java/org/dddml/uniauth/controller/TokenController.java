@@ -100,7 +100,7 @@ public class TokenController {
 
 
         } catch (Exception e) {
-            log.error("Token refresh failed", e);
+            log.error("Token refresh failed");
             return ResponseEntity.status(401).body(
                 Map.of("error", "Token refresh failed", "details", e.getMessage())
             );

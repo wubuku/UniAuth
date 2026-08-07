@@ -3,6 +3,7 @@ package org.dddml.uniauth.config;
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.dto.UserDto;
+import lombok.extern.slf4j.Slf4j;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -52,6 +53,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Configuration
 @EnableWebSecurity
+@Slf4j
 public class SecurityConfig {
 
     @Value("${app.frontend.url:}")
@@ -105,7 +107,7 @@ public class SecurityConfig {
             @Override
             public void onAuthenticationSuccess(HttpServletRequest request, HttpServletResponse response,
                                               Authentication authentication) throws IOException {
-                System.out.println("=== OAuth2 Authentication Success - Smart Routing ===");
+                log.debug("OAuth2 authentication callback received");
 
                 try {
                     // 🎯 核心：检查用户是否已登录
@@ -118,17 +120,16 @@ public class SecurityConfig {
                             if (userService.getUserById(currentUserId) != null) {
                                 isUserLoggedIn = true;
                             } else {
-                                System.out.println("User ID extracted from token does not exist: " + currentUserId);
+                                log.warn("OAuth2 binding context referenced a missing user");
                                 currentUserId = null;
                             }
                         } catch (Exception e) {
-                            System.out.println("Failed to verify user existence: " + e.getMessage());
+                            log.warn("OAuth2 binding context could not be verified");
                             currentUserId = null;
                         }
                     }
                     
-                    System.out.println("User login status: " + (isUserLoggedIn ? "LOGGED_IN" : "NOT_LOGGED_IN") + 
-                                     ", userId: " + currentUserId);
+                    log.debug("OAuth2 callback mode: {}", isUserLoggedIn ? "binding" : "login");
 
                     UserDto userDto = null;
                     String accessToken = null;
@@ -148,9 +149,7 @@ public class SecurityConfig {
                             isUserLoggedIn, currentUserId
                         );
 
-                        System.out.println("Provider: Google");
-                        System.out.println("User: " + name);
-                        System.out.println("Email: " + email);
+                        log.debug("OAuth2 provider resolved: google");
                     }
                     // 处理GitHub和Twitter用户（OAuth2）
                     else if (authentication.getPrincipal() instanceof OAuth2User oauth2User) {
@@ -158,15 +157,13 @@ public class SecurityConfig {
                         // ✅ 最小修复：registrationId 'x' 对应枚举值 'TWITTER'（UserService 需要枚举值）
                         if (authentication instanceof org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken oauth2Token) {
                             String registrationId = oauth2Token.getAuthorizedClientRegistrationId();
-                            System.out.println("=== OAuth2 Success Handler ===");
-                            System.out.println("Registration ID: " + registrationId);
                             if ("x".equals(registrationId)) {
                                 provider = "TWITTER";  // UserService 需要枚举值 "TWITTER"
                             } else if ("github".equals(registrationId)) {
                                 provider = "GITHUB";  // UserService 需要枚举值 "GITHUB"
                             }
                         }
-                        System.out.println("Final provider: " + provider);
+                        log.debug("OAuth2 provider resolved: {}", provider);
                         String providerUserId = getProviderUserId(oauth2User, provider);
                         String email = getProviderEmail(oauth2User, provider);
                         String name = getProviderName(oauth2User, provider);
@@ -177,9 +174,6 @@ public class SecurityConfig {
                             isUserLoggedIn, currentUserId
                         );
 
-                        System.out.println("Provider: " + provider);
-                        System.out.println("User: " + name);
-                        System.out.println("Email: " + email);
                     }
 
                     if (userDto != null) {
@@ -215,9 +209,9 @@ public class SecurityConfig {
                         response.addCookie(refreshTokenCookie);
 
                         if (isUserLoggedIn) {
-                            System.out.println("Binding completed successfully for user: " + currentUserId);
+                            log.info("OAuth2 account binding completed");
                         } else {
-                            System.out.println("Login completed successfully for user: " + userDto.getId());
+                            log.info("OAuth2 login completed");
                         }
                         
                         // 检测回调模式：使用Accept头判断
@@ -225,12 +219,8 @@ public class SecurityConfig {
                         String redirectUri = "/";
                         
                         // 使用配置文件中的前端地址
-                        System.out.println("Frontend URL from config: " + frontendUrl);
                         if (frontendUrl != null && !frontendUrl.isEmpty()) {
                             redirectUri = frontendUrl.endsWith("/") ? frontendUrl : frontendUrl + "/";
-                            System.out.println("Using config frontend URL for redirect: " + redirectUri);
-                        } else {
-                            System.out.println("No frontend URL in config, using default redirect: /");
                         }
                         
                         // 如果没有指定回调模式，使用Accept头判断
@@ -263,19 +253,18 @@ public class SecurityConfig {
                         } else {
                             // 重定向模式 - 完全由前端主导
                             // 使用state参数中指定的redirect_uri，或使用默认值
-                            System.out.println("OAuth2 redirecting to: " + redirectUri);
+                            log.debug("OAuth2 redirect response selected");
                             response.sendRedirect(redirectUri);
                         }
                     }
 
                 } catch (IllegalArgumentException e) {
                     // 业务逻辑错误（如账户已被绑定）
-                    System.out.println("OAuth2 processing failed: " + e.getMessage());
+                    log.warn("OAuth2 processing rejected by account policy");
                     handleOAuth2Error(request, response, e.getMessage());
                 } catch (Exception e) {
                     // 系统错误
-                    System.err.println("OAuth2 processing error: " + e.getMessage());
-                    e.printStackTrace();
+                    log.error("OAuth2 processing failed");
                     handleOAuth2Error(request, response, "oauth2_processing_failed");
                 }
             }
@@ -307,11 +296,11 @@ public class SecurityConfig {
                     try {
                         return jwtTokenService.getUserIdFromToken(accessToken);
                     } catch (RuntimeException e) {
-                        System.out.println("Invalid or expired access token: " + e.getMessage());
+                        log.debug("OAuth2 binding cookie was invalid or expired");
                         return null;
                     }
                 } catch (Exception e) {
-                    System.out.println("Failed to extract user ID from cookies: " + e.getMessage());
+                    log.debug("OAuth2 binding cookie could not be processed");
                     return null;
                 }
             }
@@ -348,7 +337,7 @@ public class SecurityConfig {
                         }
                     } catch (Exception e) {
                         // 解析失败，使用默认值
-                        System.out.println("Failed to parse state parameter: " + e.getMessage());
+                        log.debug("OAuth2 state could not be parsed");
                     }
                 }
                 
@@ -423,12 +412,7 @@ public class SecurityConfig {
                 .loginPage("/login")
                 .successHandler(oauth2SuccessHandler())
                 .failureHandler((request, response, exception) -> {
-                    System.err.println("=== OAuth2 Login Failure ===");
-                    System.err.println("Request URI: " + request.getRequestURI());
-                    System.err.println("Query String: " + request.getQueryString());
-                    System.err.println("Error: " + exception.getMessage());
-                    System.err.println("Error Class: " + exception.getClass().getName());
-                    exception.printStackTrace();
+                    log.warn("OAuth2 login failed");
                     response.sendRedirect("/login?error=oauth2_failed");
                 })
                 .authorizationEndpoint(authz -> authz
@@ -538,12 +522,12 @@ public class SecurityConfig {
                 String email = getGitHubUserEmail(accessToken.getTokenValue());
                 if (email != null) {
                     attributes.put("email", email);
-                    System.out.println("Successfully retrieved GitHub user email: " + email);
+                    log.debug("Verified primary GitHub email retrieved");
                 } else {
-                    System.out.println("No verified primary email found for GitHub user: " + attributes.get("login"));
+                    log.debug("No verified primary GitHub email available");
                 }
             } catch (Exception e) {
-                System.err.println("Failed to fetch GitHub user email: " + e.getMessage());
+                log.warn("GitHub email lookup failed");
                 // 不要因为邮箱获取失败而影响整个登录流程
                 // 用户仍可以使用其他信息登录
             }
@@ -618,7 +602,6 @@ public class SecurityConfig {
             
             private void saveFrontendUrl(HttpServletRequest request) {
                 String referer = request.getHeader("Referer");
-                System.out.println("Saving frontend URL from referer: " + referer);
                 if (referer != null && !referer.isEmpty()) {
                     try {
                         java.net.URL refererUrl = new java.net.URL(referer);
@@ -628,9 +611,8 @@ public class SecurityConfig {
                             frontendUrl += ":" + refererUrl.getPort();
                         }
                         request.getSession().setAttribute("OAUTH2_FRONTEND_URL", frontendUrl);
-                        System.out.println("Saved frontend URL to session: " + frontendUrl);
                     } catch (Exception e) {
-                        System.out.println("Failed to parse referer: " + e.getMessage());
+                        log.debug("OAuth2 referer origin could not be parsed");
                     }
                 }
             }

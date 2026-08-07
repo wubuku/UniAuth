@@ -40,10 +40,9 @@ public class Web3SignatureUtils {
     public static boolean verifySignature(String message, String signature, String expectedAddress) {
         try {
             String recoveredAddress = recoverAddress(message, signature);
-            log.debug("Signature verification - expected: {}, recovered: {}", expectedAddress, recoveredAddress);
             return expectedAddress.equalsIgnoreCase(recoveredAddress);
         } catch (Exception e) {
-            log.error("Signature verification failed: {}", e.getMessage());
+            log.warn("Web3 signature verification failed");
             return false;
         }
     }
@@ -71,13 +70,9 @@ public class Web3SignatureUtils {
         BigInteger rBI = new BigInteger(1, r);
         BigInteger sBI = new BigInteger(1, s);
 
-        log.debug("Signature components - v: {}, r: {}, s: {}", v, rBI.toString(16), sBI.toString(16));
-
         // EIP-191 message prefix
         String prefix = "\u0019Ethereum Signed Message:\n" + message.length();
         byte[] msgHash = Hash.sha3((prefix + message).getBytes(StandardCharsets.UTF_8));
-
-        log.debug("Message hash: {}", Numeric.toHexString(msgHash));
 
         // Use v value to calculate recovery ID
         int recId = v - 27;
@@ -97,7 +92,6 @@ public class Web3SignatureUtils {
         }
 
         String address = "0x" + Keys.getAddress(publicKey);
-        log.debug("Recovered address: {}", address);
 
         return address.toLowerCase();
     }

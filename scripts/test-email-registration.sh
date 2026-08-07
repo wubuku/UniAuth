@@ -1,574 +1,190 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# 邮箱注册流程测试脚本
-# 功能：测试邮箱注册 + 验证码验证 + 密码重置完整流程
-# 特点：自动从数据库查询验证码，无需用户手动输入
-# 支持两种注册流程：
-#   1. 原有流程：register -> send-verification-code -> verify-email
-#   2. 简化流程：send-verification-code -> register(带验证码)
+# Disposable integration check for email registration, login, and password reset.
+# The script reads verification codes from the isolated test database but never
+# prints passwords, codes, tokens, response bodies, or user identifiers.
 
-# 自动检测脚本所在目录，支持从项目根目录运行
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "${SCRIPT_DIR}")"
-
-set -e
+set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8081}"
-EMAIL="${EMAIL:-xxx@example.com}"
-PASSWORD="${PASSWORD:-TestPassword123!}"
-NEW_PASSWORD="${NEW_PASSWORD:-NewPassword456!}"
-DISPLAY_NAME="${DISPLAY_NAME:-测试用户}"
-REGISTRATION_MODE="${REGISTRATION_MODE:-simplified}"  # 默认使用简化流程："original" 或 "simplified"
+DISPLAY_NAME="${DISPLAY_NAME:-Integration Test User}"
 
-# 数据库配置
-DB_HOST="localhost"
-DB_PORT="5432"
-DB_NAME="blacksheep_dev"
-DB_USER="postgres"
-DB_PASSWORD="123456"
+if [ "${DISPOSABLE_TEST_ENVIRONMENT:-}" != "true" ]; then
+  echo "ERROR: set DISPOSABLE_TEST_ENVIRONMENT=true for an isolated test environment"
+  exit 1
+fi
 
-# 函数：从数据库查询验证码
-get_verification_code() {
-    local purpose="$1"
-    PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -t -c "SELECT verification_code FROM email_verification_codes WHERE email = '${EMAIL}' AND purpose = '${purpose}' AND is_used = false ORDER BY created_at DESC LIMIT 1;" 2>/dev/null | tr -d ' '
+required_variables=(
+  EMAIL
+  PASSWORD
+  NEW_PASSWORD
+  POSTGRES_HOST
+  POSTGRES_PORT
+  POSTGRES_DATABASE
+  POSTGRES_USER
+  POSTGRES_PASSWORD
+)
+
+for variable_name in "${required_variables[@]}"; do
+  if [ -z "${!variable_name:-}" ]; then
+    echo "ERROR: required environment variable is missing: ${variable_name}"
+    exit 1
+  fi
+done
+
+case "${POSTGRES_DATABASE}" in
+  *test*|*demo*|*tmp*|*temp*|*ci*|*local*) ;;
+  *)
+    echo "ERROR: POSTGRES_DATABASE must be an explicitly disposable test database"
+    exit 1
+    ;;
+esac
+
+for command_name in curl jq psql; do
+  if ! command -v "${command_name}" >/dev/null 2>&1; then
+    echo "ERROR: required command is unavailable: ${command_name}"
+    exit 1
+  fi
+done
+
+fail() {
+  echo "FAIL: $1"
+  exit 1
 }
 
-echo "=============================================="
-echo "  邮箱注册流程测试脚本 (自动查询验证码)"
-echo "=============================================="
-echo ""
-echo "测试邮箱: $EMAIL"
-echo "密码: $PASSWORD"
-echo "显示名称: $DISPLAY_NAME"
-echo ""
+json_value() {
+  local response="$1"
+  local filter="$2"
+  jq -er "${filter}" <<<"${response}" 2>/dev/null
+}
 
-# Step 0: 先删除可能存在的旧用户数据（清理）
-echo "=============================================="
-echo "Step 0: 清理旧数据（如有）..."
-echo "=============================================="
-curl -s -X DELETE "${BASE_URL}/api/test/users/${EMAIL}" > /dev/null 2>&1 || true
-echo "清理完成"
-echo ""
+get_verification_code() {
+  local purpose="$1"
+  PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+    -h "${POSTGRES_HOST}" \
+    -p "${POSTGRES_PORT}" \
+    -U "${POSTGRES_USER}" \
+    -d "${POSTGRES_DATABASE}" \
+    -v ON_ERROR_STOP=1 \
+    -v "email=${EMAIL}" \
+    -v "purpose=${purpose}" \
+    -Atc "SELECT verification_code
+          FROM email_verification_codes
+          WHERE email = :'email'
+            AND purpose = :'purpose'
+            AND is_used = false
+          ORDER BY created_at DESC
+          LIMIT 1;" 2>/dev/null | tr -d '[:space:]'
+}
 
-# 检查注册模式
-if [ "${REGISTRATION_MODE}" = "simplified" ]; then
-  echo "=============================================="
-  echo "  使用简化注册流程"
-  echo "  (send-verification-code -> register with code)"
-  echo "=============================================="
-  echo ""
-
-  # Step 1: 发送验证码
-  echo "=============================================="
-  echo "Step 1: 发送验证码到邮箱..."
-  echo "=============================================="
-  echo ""
-
-  SEND_CODE_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/send-verification-code" \
+post_json() {
+  local path="$1"
+  local payload="$2"
+  curl -sS -X POST "${BASE_URL}${path}" \
     -H "Content-Type: application/json" \
-    -d "{
-      \"email\": \"${EMAIL}\",
-      \"purpose\": \"REGISTRATION\"
-    }")
+    --data "${payload}"
+}
 
-  echo "发送验证码响应: ${SEND_CODE_RESPONSE}"
-  echo ""
-
-  SEND_SUCCESS=$(echo "${SEND_CODE_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false')
-
-  if [ "${SEND_SUCCESS}" = "true" ]; then
-    echo "✅ 验证码已发送成功"
-    echo ""
-
-    # Step 2: 从数据库查询验证码
-    echo "=============================================="
-    echo "Step 2: 从数据库查询验证码..."
-    echo "=============================================="
-    echo ""
-
-    sleep 1
-
-    VERIFICATION_CODE=$(get_verification_code "REGISTRATION")
-
-    if [ -z "${VERIFICATION_CODE}" ]; then
-      echo "❌ 未在数据库中找到验证码"
-      exit 1
-    fi
-
-    echo "✅ 已从数据库获取验证码: ${VERIFICATION_CODE}"
-    echo ""
-
-    # Step 2.5: 测试验证码检查接口（预检查验证码）
-    echo "=============================================="
-    echo "Step 2.5: 测试验证码检查接口..."
-    echo "=============================================="
-    echo ""
-
-    # 2.5.1: 测试错误的验证码
-    echo "  2.5.1: 测试错误验证码..."
-    WRONG_CODE_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/check-verification-code" \
-      -H "Content-Type: application/json" \
-      -d "{
-        \"email\": \"${EMAIL}\",
-        \"verificationCode\": \"000000\"
-      }")
-    echo "  错误验证码响应: ${WRONG_CODE_RESPONSE}"
-    echo ""
-
-    # 2.5.2: 测试正确的验证码
-    echo "  2.5.2: 测试正确验证码..."
-    CHECK_CODE_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/check-verification-code" \
-      -H "Content-Type: application/json" \
-      -d "{
-        \"email\": \"${EMAIL}\",
-        \"verificationCode\": \"${VERIFICATION_CODE}\"
-      }")
-    echo "  正确验证码响应: ${CHECK_CODE_RESPONSE}"
-    echo ""
-
-    CHECK_VALID=$(echo "${CHECK_CODE_RESPONSE}" | grep -o '"valid":[^,}]*' | grep -o 'true\|false')
-    if [ "${CHECK_VALID}" = "true" ]; then
-      echo "✅ 验证码检查接口工作正常"
-    else
-      echo "⚠️ 验证码检查接口返回异常"
-    fi
-    echo ""
-
-    # Step 3: 使用简化流程注册（一次完成，验证码+密码）
-    echo "=============================================="
-    echo "Step 3: 简化流程 - 直接注册（带验证码）..."
-    echo "=============================================="
-    echo ""
-
-    REGISTER_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/register" \
-      -H "Content-Type: application/json" \
-      -d "{
-        \"username\": \"${EMAIL}\",
-        \"email\": \"${EMAIL}\",
-        \"password\": \"${PASSWORD}\",
-        \"displayName\": \"${DISPLAY_NAME}\",
-        \"verificationCode\": \"${VERIFICATION_CODE}\"
-      }")
-
-    echo "注册响应: ${REGISTER_RESPONSE}"
-    echo ""
-
-    REGISTER_SUCCESS=$(echo "${REGISTER_RESPONSE}" | grep -o '"message":"[^"]*"' | grep -o 'Registration completed successfully\|success' || true)
-
-    if [ "${REGISTER_SUCCESS}" = "Registration completed successfully" ]; then
-      echo "✅ 简化注册成功！"
-
-      ACCESS_TOKEN=$(echo "${REGISTER_RESPONSE}" | grep -o '"accessToken":"[^"]*"' | sed 's/"accessToken":"//;s/"//')
-      REFRESH_TOKEN=$(echo "${REGISTER_RESPONSE}" | grep -o '"refreshToken":"[^"]*"' | sed 's/"refreshToken":"//;s/"//')
-
-      if [ -n "${ACCESS_TOKEN}" ]; then
-        echo ""
-        echo "访问令牌 (前50字符): ${ACCESS_TOKEN:0:50}..."
-        echo "刷新令牌 (前50字符): ${REFRESH_TOKEN:0:50}..."
-        echo ""
-
-        # Step 4: 获取用户信息
-        echo "=============================================="
-        echo "Step 4: 使用令牌获取用户信息..."
-        echo "=============================================="
-        echo ""
-
-        USER_INFO=$(curl -s -X GET "${BASE_URL}/api/user" \
-          -H "Authorization: Bearer ${ACCESS_TOKEN}")
-
-        echo "用户信息: ${USER_INFO}"
-        echo ""
-
-        USER_ID=$(echo "${USER_INFO}" | grep -o '"id":"[^"]*"' | sed 's/"id":"//;s/"//')
-        USER_EMAIL=$(echo "${USER_INFO}" | grep -o '"email":"[^"]*"' | sed 's/"email":"//;s/"//')
-
-        echo ""
-        echo "=============================================="
-        echo "  🎉 简化注册成功！"
-        echo "=============================================="
-        echo ""
-        echo "用户ID: ${USER_ID}"
-        echo "用户邮箱: ${USER_EMAIL}"
-        echo "用户名: ${EMAIL}"
-        echo ""
-
-        # 测试登录
-        echo "=============================================="
-        echo "Step 5: 测试使用邮箱登录..."
-        echo "=============================================="
-        echo ""
-
-        LOGIN_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/login?username=${EMAIL}&password=${PASSWORD}")
-
-        echo "登录响应: ${LOGIN_RESPONSE}"
-        echo ""
-
-        LOGIN_SUCCESS=$(echo "${LOGIN_RESPONSE}" | grep -o '"authenticated":[^,}]*' | grep -o 'true\|false' || true)
-
-        if [ "${LOGIN_SUCCESS}" = "true" ]; then
-          echo "✅ 登录成功！"
-        else
-          # 检查是否包含 "Login successful" 消息
-          if echo "${LOGIN_RESPONSE}" | grep -q "Login successful"; then
-            echo "✅ 登录成功！"
-          else
-            echo "⚠️ 登录响应异常，请检查"
-          fi
-        fi
-      fi
-    else
-      echo "❌ 简化注册失败"
-      ERROR_MSG=$(echo "${REGISTER_RESPONSE}" | grep -o '"message":"[^"]*"' | sed 's/"message":"//;s/"//' || true)
-      ERROR=$(echo "${REGISTER_RESPONSE}" | grep -o '"error":"[^"]*"' | sed 's/"error":"//;s/"//' || true)
-      if [ -n "${ERROR_MSG}" ]; then
-        echo "错误信息: ${ERROR_MSG}"
-      fi
-      if [ -n "${ERROR}" ]; then
-        echo "错误: ${ERROR}"
-      fi
-    fi
-  else
-    echo "❌ 发送验证码失败"
+echo "Email authentication integration check"
+echo "Waiting for backend..."
+for attempt in {1..30}; do
+  if curl -fsS "${BASE_URL}/" >/dev/null 2>&1; then
+    break
   fi
-
-  echo ""
-  echo "简化流程测试执行完毕"
-  exit 0
-fi
-
-echo "=============================================="
-echo "  使用原有注册流程"
-echo "  (register -> send-verification-code -> verify-email)"
-echo "=============================================="
-echo ""
-
-# Step 1: 调用注册接口
-echo "=============================================="
-echo "Step 1: 调用注册接口..."
-echo "=============================================="
-echo ""
-
-REGISTER_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/register" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"username\": \"${EMAIL}\",
-    \"email\": \"${EMAIL}\",
-    \"password\": \"${PASSWORD}\",
-    \"displayName\": \"${DISPLAY_NAME}\"
-  }")
-
-echo "注册响应: ${REGISTER_RESPONSE}"
-echo ""
-
-# 解析响应
-REQUIRE_EMAIL_VERIFICATION=$(echo "${REGISTER_RESPONSE}" | grep -o '"requireEmailVerification":[^,}]*' | grep -o 'true\|false' || true)
-USERNAME_FROM_RESPONSE=$(echo "${REGISTER_RESPONSE}" | grep -o '"username":"[^"]*"' | head -1 | sed 's/"username":"//;s/"//')
-ERROR_CODE=$(echo "${REGISTER_RESPONSE}" | grep -o '"errorCode":"[^"]*"' | sed 's/"errorCode":"//;s/"//' || true)
-
-if [ "${ERROR_CODE}" = "EMAIL_EXISTS" ] || [ "${ERROR_CODE}" = "USERNAME_EXISTS" ]; then
-  echo "❌ 用户已存在，无需重新注册"
-  echo "   用户名: ${USERNAME_FROM_RESPONSE}"
-  echo ""
-  echo "=============================================="
-  echo "  用户已存在 - 测试密码重置"
-  echo "=============================================="
-  echo ""
-  # 直接执行密码重置测试
-  echo "=============================================="
-  echo "Step 2: 请求密码重置验证码..."
-  echo "=============================================="
-  
-  FORGOT_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/forgot-password" \
-    -H "Content-Type: application/json" \
-    -d "{\"email\": \"${EMAIL}\"}")
-  
-  echo "请求密码重置响应: ${FORGOT_RESPONSE}"
-  FORGOT_SUCCESS=$(echo "${FORGOT_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false' || true)
-  
-  if [ "${FORGOT_SUCCESS}" = "true" ]; then
-    echo "✅ 验证码已发送"
-    echo ""
-    echo "=============================================="
-    echo "Step 3: 从数据库查询验证码..."
-    echo "=============================================="
-    sleep 1
-    RESET_CODE=$(get_verification_code "PASSWORD_RESET")
-    if [ -n "${RESET_CODE}" ]; then
-      echo "✅ 获取验证码: ${RESET_CODE}"
-      echo ""
-      echo "=============================================="
-      echo "Step 4: 验证验证码并重置密码..."
-      echo "=============================================="
-      RESET_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/verify-reset-code" \
-        -H "Content-Type: application/json" \
-        -d "{\"email\": \"${EMAIL}\",\"verificationCode\": \"${RESET_CODE}\",\"newPassword\": \"${NEW_PASSWORD}\"}")
-      echo "密码重置响应: ${RESET_RESPONSE}"
-      RESET_SUCCESS=$(echo "${RESET_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false' || true)
-      if [ "${RESET_SUCCESS}" = "true" ]; then
-        echo "✅ 密码重置成功"
-      fi
-    fi
+  if [ "${attempt}" -eq 30 ]; then
+    fail "backend did not become ready"
   fi
-  echo ""
-  echo "测试脚本执行完毕"
-  exit 0
+  sleep 1
+done
+
+echo "1/8 Request registration verification code"
+send_payload=$(jq -n \
+  --arg email "${EMAIL}" \
+  '{email: $email, purpose: "REGISTRATION"}')
+send_response=$(post_json "/api/auth/send-verification-code" "${send_payload}")
+[ "$(json_value "${send_response}" '.success')" = "true" ] \
+  || fail "registration verification request was rejected"
+
+registration_code=$(get_verification_code "REGISTRATION")
+[ -n "${registration_code}" ] || fail "registration verification code was not persisted"
+
+echo "2/8 Verify rejection and acceptance paths"
+wrong_code="000000"
+if [ "${registration_code}" = "${wrong_code}" ]; then
+  wrong_code="111111"
 fi
+wrong_payload=$(jq -n \
+  --arg email "${EMAIL}" \
+  --arg code "${wrong_code}" \
+  '{email: $email, verificationCode: $code, purpose: "REGISTRATION"}')
+wrong_response=$(post_json "/api/auth/check-verification-code" "${wrong_payload}")
+[ "$(json_value "${wrong_response}" '.valid')" = "false" ] \
+  || fail "incorrect verification code was accepted"
 
-if [ "${REQUIRE_EMAIL_VERIFICATION}" = "true" ]; then
-  echo "✅ 需要邮箱验证"
-  echo "   用户名: ${USERNAME_FROM_RESPONSE}"
-  echo ""
+check_payload=$(jq -n \
+  --arg email "${EMAIL}" \
+  --arg code "${registration_code}" \
+  '{email: $email, verificationCode: $code, purpose: "REGISTRATION"}')
+check_response=$(post_json "/api/auth/check-verification-code" "${check_payload}")
+[ "$(json_value "${check_response}" '.valid')" = "true" ] \
+  || fail "persisted verification code was rejected"
 
-  # Step 3: 发送验证码
-  echo "=============================================="
-  echo "Step 3: 发送验证码到邮箱..."
-  echo "=============================================="
-  echo ""
+echo "3/8 Register using the persisted verification code"
+register_payload=$(jq -n \
+  --arg email "${EMAIL}" \
+  --arg password "${PASSWORD}" \
+  --arg displayName "${DISPLAY_NAME}" \
+  --arg code "${registration_code}" \
+  '{
+    username: $email,
+    email: $email,
+    password: $password,
+    displayName: $displayName,
+    verificationCode: $code
+  }')
+register_response=$(post_json "/api/auth/register" "${register_payload}")
+access_token=$(json_value "${register_response}" '.accessToken')
+[ -n "${access_token}" ] || fail "registration response did not contain an access token"
 
-  SEND_CODE_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/send-verification-code" \
-    -H "Content-Type: application/json" \
-    -d "{
-      \"email\": \"${EMAIL}\",
-      \"purpose\": \"REGISTRATION\",
-      \"password\": \"${PASSWORD}\",
-      \"displayName\": \"${DISPLAY_NAME}\"
-    }")
+echo "4/8 Call the protected current-user endpoint"
+user_status=$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H "Authorization: Bearer ${access_token}" \
+  "${BASE_URL}/api/user")
+[ "${user_status}" = "200" ] || fail "protected current-user endpoint returned ${user_status}"
 
-  echo "发送验证码响应: ${SEND_CODE_RESPONSE}"
-  echo ""
+echo "5/8 Login with the original password"
+login_response=$(curl -sS -X POST "${BASE_URL}/api/auth/login" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "username=${EMAIL}" \
+  --data-urlencode "password=${PASSWORD}")
+[ "$(json_value "${login_response}" '.authenticated')" = "true" ] \
+  || fail "login with the original password failed"
 
-  SEND_SUCCESS=$(echo "${SEND_CODE_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false')
+echo "6/8 Request password reset"
+forgot_payload=$(jq -n --arg email "${EMAIL}" '{email: $email}')
+forgot_response=$(post_json "/api/auth/forgot-password" "${forgot_payload}")
+[ "$(json_value "${forgot_response}" '.success')" = "true" ] \
+  || fail "password reset request failed"
 
-  if [ "${SEND_SUCCESS}" = "true" ]; then
-    echo "✅ 验证码已发送成功"
-    echo ""
+reset_code=$(get_verification_code "PASSWORD_RESET")
+[ -n "${reset_code}" ] || fail "password reset code was not persisted"
 
-    # Step 4: 从数据库查询验证码（调用函数）
-    echo "=============================================="
-    echo "Step 4: 从数据库查询验证码..."
-    echo "=============================================="
-    echo ""
+echo "7/8 Reset password using the persisted code"
+reset_payload=$(jq -n \
+  --arg email "${EMAIL}" \
+  --arg code "${reset_code}" \
+  --arg password "${NEW_PASSWORD}" \
+  '{email: $email, verificationCode: $code, newPassword: $password}')
+reset_response=$(post_json "/api/auth/verify-reset-code" "${reset_payload}")
+[ "$(json_value "${reset_response}" '.success')" = "true" ] \
+  || fail "password reset failed"
 
-    # 等待1秒确保数据已写入数据库
-    sleep 1
+echo "8/8 Login with the new password"
+new_login_response=$(curl -sS -X POST "${BASE_URL}/api/auth/login" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "username=${EMAIL}" \
+  --data-urlencode "password=${NEW_PASSWORD}")
+[ "$(json_value "${new_login_response}" '.authenticated')" = "true" ] \
+  || fail "login with the new password failed"
 
-    # 调用函数查询验证码
-    VERIFICATION_CODE=$(get_verification_code "REGISTRATION")
-
-    if [ -z "${VERIFICATION_CODE}" ]; then
-      echo "❌ 未在数据库中找到验证码"
-      echo "请检查数据库连接或验证码是否已过期"
-      exit 1
-    fi
-
-    echo "✅ 已从数据库获取验证码: ${VERIFICATION_CODE}"
-    echo ""
-
-    # Step 5: 验证验证码
-    echo "=============================================="
-    echo "Step 5: 验证验证码..."
-    echo "=============================================="
-    echo ""
-
-    VERIFY_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/verify-email" \
-      -H "Content-Type: application/json" \
-      -d "{
-        \"email\": \"${EMAIL}\",
-        \"verificationCode\": \"${VERIFICATION_CODE}\"
-      }")
-
-    echo "验证响应: ${VERIFY_RESPONSE}"
-    echo ""
-
-    # 解析验证结果
-    VERIFY_SUCCESS=$(echo "${VERIFY_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false')
-
-    if [ "${VERIFY_SUCCESS}" = "true" ]; then
-      echo "✅ 邮箱验证成功！"
-      echo ""
-
-      # 提取令牌信息
-      ACCESS_TOKEN=$(echo "${VERIFY_RESPONSE}" | grep -o '"accessToken":"[^"]*"' | sed 's/"accessToken":"//;s/"//')
-      REFRESH_TOKEN=$(echo "${VERIFY_RESPONSE}" | grep -o '"refreshToken":"[^"]*"' | sed 's/"refreshToken":"//;s/"//')
-
-      if [ -n "${ACCESS_TOKEN}" ]; then
-        echo "✅ 已获取访问令牌"
-        echo ""
-        echo "访问令牌 (前50字符): ${ACCESS_TOKEN:0:50}..."
-        echo "刷新令牌 (前50字符): ${REFRESH_TOKEN:0:50}..."
-        echo ""
-
-        # Step 6: 使用令牌获取用户信息
-        echo "=============================================="
-        echo "Step 6: 使用令牌获取用户信息..."
-        echo "=============================================="
-        echo ""
-
-        # 注意：用户接口是 /user，不是 /users/me
-        USER_INFO=$(curl -s -X GET "${BASE_URL}/api/user" \
-          -H "Authorization: Bearer ${ACCESS_TOKEN}")
-
-        echo "用户信息: ${USER_INFO}"
-        echo ""
-
-        USER_ID=$(echo "${USER_INFO}" | grep -o '"id":"[^"]*"' | sed 's/"id":"//;s/"//')
-        USER_EMAIL=$(echo "${USER_INFO}" | grep -o '"email":"[^"]*"' | sed 's/"email":"//;s/"//')
-
-        echo ""
-        echo "=============================================="
-        echo "  🎉 注册成功！"
-        echo "=============================================="
-        echo ""
-        echo "用户ID: ${USER_ID}"
-        echo "用户邮箱: ${USER_EMAIL}"
-        echo "用户名: ${EMAIL}"
-        echo ""
-
-        # Step 7: 测试登录
-        echo "=============================================="
-        echo "Step 7: 测试使用邮箱登录..."
-        echo "=============================================="
-        echo ""
-
-        # 注意：登录接口使用 query params (@RequestParam)，不是 JSON body
-        LOGIN_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/login?username=${EMAIL}&password=${PASSWORD}")
-
-        echo "登录响应: ${LOGIN_RESPONSE}"
-        echo ""
-
-        LOGIN_SUCCESS=$(echo "${LOGIN_RESPONSE}" | grep -o '"authenticated":[^,}]*' | grep -o 'true\|false')
-
-        if [ "${LOGIN_SUCCESS}" = "true" ]; then
-          echo "✅ 登录成功！"
-        else
-          # 检查是否包含 "Login successful" 消息
-          if echo "${LOGIN_RESPONSE}" | grep -q "Login successful"; then
-            echo "✅ 登录成功！"
-          else
-            echo "⚠️ 登录响应异常，请检查"
-          fi
-        fi
-        
-        # =============================================
-        # 追加：密码重置测试
-        # =============================================
-        echo ""
-        echo "╔════════════════════════════════════════════════╗"
-        echo "║         追加测试：密码重置                  ║"
-        echo "╚════════════════════════════════════════════════╝"
-        echo ""
-        
-        # Step 8: 请求密码重置验证码
-        echo "=============================================="
-        echo "Step 8: 请求密码重置验证码..."
-        echo "=============================================="
-        
-        FORGOT_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/forgot-password" \
-          -H "Content-Type: application/json" \
-          -d "{\"email\": \"${EMAIL}\"}")
-        
-        echo "请求密码重置响应: ${FORGOT_RESPONSE}"
-        FORGOT_SUCCESS=$(echo "${FORGOT_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false')
-        
-        if [ "${FORGOT_SUCCESS}" = "true" ]; then
-          echo "✅ 验证码已发送"
-          echo ""
-          
-          # Step 9: 查询密码重置验证码（调用函数）
-          echo "=============================================="
-          echo "Step 9: 从数据库查询验证码..."
-          echo "=============================================="
-          sleep 1
-          
-          # 调用函数查询验证码
-          RESET_CODE=$(get_verification_code "PASSWORD_RESET")
-          
-          if [ -n "${RESET_CODE}" ]; then
-            echo "✅ 获取验证码: ${RESET_CODE}"
-            echo ""
-            
-            # Step 10: 重置密码
-            echo "=============================================="
-            echo "Step 10: 验证验证码并重置密码..."
-            echo "=============================================="
-            
-            RESET_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/verify-reset-code" \
-              -H "Content-Type: application/json" \
-              -d "{
-                \"email\": \"${EMAIL}\",
-                \"verificationCode\": \"${RESET_CODE}\",
-                \"newPassword\": \"${NEW_PASSWORD}\"
-              }")
-            
-            echo "密码重置响应: ${RESET_RESPONSE}"
-            RESET_SUCCESS=$(echo "${RESET_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false')
-            
-            if [ "${RESET_SUCCESS}" = "true" ]; then
-              echo "✅ 密码重置成功"
-              echo ""
-              
-              # Step 11: 测试新密码登录
-              echo "=============================================="
-              echo "Step 11: 测试新密码登录..."
-              echo "=============================================="
-              
-              NEW_LOGIN_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/auth/login?username=${EMAIL}&password=${NEW_PASSWORD}")
-              echo "新密码登录响应: ${NEW_LOGIN_RESPONSE}"
-              NEW_LOGIN_SUCCESS=$(echo "${NEW_LOGIN_RESPONSE}" | grep -o '"success":[^,}]*' | grep -o 'true\|false')
-              
-              if [ "${NEW_LOGIN_SUCCESS}" = "true" ]; then
-                echo "✅ 新密码登录成功"
-              else
-                echo "❌ 新密码登录失败"
-              fi
-            else
-              echo "❌ 密码重置失败"
-            fi
-          else
-            echo "❌ 未找到验证码"
-          fi
-        else
-          echo "❌ 发送验证码失败"
-        fi
-      else
-        echo "⚠️ 未获取到令牌，但验证响应显示成功"
-        echo "请检查后端日志获取详细信息"
-      fi
-    else
-      echo "❌ 验证码验证失败"
-      ERROR_MSG=$(echo "${VERIFY_RESPONSE}" | grep -o '"message":"[^"]*"' | sed 's/"message":"//;s/"//')
-      REMAINING=$(echo "${VERIFY_RESPONSE}" | grep -o '"remainingAttempts":[0-9]*' | sed 's/"remainingAttempts"://')
-
-      if [ -n "${ERROR_MSG}" ]; then
-        echo "错误信息: ${ERROR_MSG}"
-      fi
-      if [ -n "${REMAINING}" ]; then
-        echo "剩余尝试次数: ${REMAINING}"
-      fi
-      echo ""
-      echo "=============================================="
-      echo "  ❌ 注册失败 - 验证码错误"
-      echo "=============================================="
-    fi
-  else
-    echo "❌ 发送验证码失败"
-    ERROR_MSG=$(echo "${SEND_CODE_RESPONSE}" | grep -o '"error":"[^"]*"' | sed 's/"error":"//;s/"//')
-    if [ -n "${ERROR_MSG}" ]; then
-      echo "错误信息: ${ERROR_MSG}"
-    fi
-    echo ""
-    echo "=============================================="
-    echo "  ❌ 注册失败 - 无法发送验证码"
-    echo "=============================================="
-  fi
-else
-  echo "⚠️ 无需邮箱验证，可能是配置问题"
-  echo "响应: ${REGISTER_RESPONSE}"
-  echo ""
-  echo "=============================================="
-  echo "  ⚠️ 测试完成 - 无需邮箱验证"
-  echo "=============================================="
-fi
-
-echo ""
-echo "测试脚本执行完毕"
+echo "PASS: email authentication integration check completed"

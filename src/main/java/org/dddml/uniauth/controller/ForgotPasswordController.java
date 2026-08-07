@@ -54,7 +54,7 @@ public class ForgotPasswordController {
         }
     )
     public ResponseEntity<?> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
-        log.info("Received forgot password request for email: {}", request.getEmail());
+        log.info("Forgot-password request received");
 
         try {
             if (!forgotPasswordService.canSend(request.getEmail())) {
@@ -82,7 +82,7 @@ public class ForgotPasswordController {
                 "expiresIn", 600
             ));
         } catch (Exception e) {
-            log.error("Failed to send password reset code", e);
+            log.error("Failed to send password reset code");
             return ResponseEntity.ok(Map.of(
                 "success", false,
                 "message", "发送失败，请稍后重试"
@@ -118,7 +118,7 @@ public class ForgotPasswordController {
         }
     )
     public ResponseEntity<?> verifyResetCode(@Valid @RequestBody ResetPasswordRequest request) {
-        log.info("Received reset password request for email: {}", request.getEmail());
+        log.info("Password reset verification request received");
 
         try {
             forgotPasswordService.resetPassword(
@@ -138,7 +138,7 @@ public class ForgotPasswordController {
                 "message", e.getMessage()
             ));
         } catch (Exception e) {
-            log.error("Password reset failed", e);
+            log.error("Password reset failed");
             return ResponseEntity.internalServerError().body(Map.of(
                 "success", false,
                 "message", "密码重置失败，请稍后重试"

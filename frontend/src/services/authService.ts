@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { TokenRefreshResult } from '../types';
-import { User, TokenValidationResult } from '../types';
+import { User } from '../types';
 
 // API基础URL - 使用相对路径，Vite代理会处理开发环境
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '';
@@ -113,73 +113,6 @@ export class AuthService {
     } catch (error) {
       console.error('Logout error:', error);
       // 登出失败不抛出错误，继续执行
-    }
-  }
-
-  /**
-   * 验证Google Token
-   */
-  static async validateGoogleToken(): Promise<TokenValidationResult> {
-    try {
-      const accessToken = localStorage.getItem('accessToken');
-      const response = await axios.post(`${API_BASE_URL}/api/validate-google-token`,
-        {},
-        {
-          withCredentials: true,
-          headers: {
-            ...(accessToken && { 'Authorization': `Bearer ${accessToken}` })
-          }
-        }
-      );
-      return response.data;
-    } catch (error) {
-      console.error('Validate Google token error:', error);
-      throw this.handleApiError(error, '验证Google Token失败');
-    }
-  }
-
-  /**
-   * 验证GitHub Token
-   */
-  static async validateGithubToken(): Promise<TokenValidationResult> {
-    try {
-      const accessToken = localStorage.getItem('accessToken');
-      const response = await axios.post(`${API_BASE_URL}/api/validate-github-token`,
-        {},
-        {
-          withCredentials: true,
-          headers: {
-            ...(accessToken && { 'Authorization': `Bearer ${accessToken}` })
-          }
-        }
-      );
-      return response.data;
-    } catch (error) {
-      console.error('Validate GitHub token error:', error);
-      throw this.handleApiError(error, '验证GitHub Token失败');
-    }
-  }
-
-  /**
-   * 验证Twitter Token
-   */
-  static async validateXToken(): Promise<TokenValidationResult> {  // ✅ X API v2：方法名更新
-    try {
-      const accessToken = localStorage.getItem('accessToken');
-      const response = await axios.post(`${API_BASE_URL}/api/validate-x-token`,  // ✅ X API v2：API端点更新
-        new URLSearchParams(),
-        {
-          withCredentials: true,
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            ...(accessToken && { 'Authorization': `Bearer ${accessToken}` })
-          }
-        }
-      );
-      return response.data;
-    } catch (error) {
-      console.error('Validate X token error:', error);
-      throw this.handleApiError(error, '验证Twitter Token失败');
     }
   }
 

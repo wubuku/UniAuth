@@ -48,8 +48,7 @@ public class LoginMethodService {
             String providerEmail,
             String providerUsername) {
         
-        log.info("Binding OAuth2 login method: userId={}, provider={}, providerUserId={}",
-                userId, provider, providerUserId);
+        log.info("Binding OAuth2 login method for provider {}", provider);
         
         // 1. 检查用户是否已经绑定该提供商
         if (loginMethodRepository.findByUserIdAndAuthProvider(userId, provider).isPresent()) {
@@ -80,7 +79,7 @@ public class LoginMethodService {
             .build();
         
         UserLoginMethod saved = loginMethodRepository.save(loginMethod);
-        log.info("OAuth2 login method bound successfully: id={}", saved.getId());
+        log.info("OAuth2 login method binding completed");
         
         return saved;
     }
@@ -121,7 +120,7 @@ public class LoginMethodService {
      * @throws IllegalStateException 如果是最后一个登录方式
      */
     public void removeLoginMethod(String userId, String loginMethodId) {
-        log.info("Removing login method: userId={}, loginMethodId={}", userId, loginMethodId);
+        log.info("Removing login method");
         
         // 1. 检查登录方式是否属于该用户
         UserLoginMethod method = loginMethodRepository.findById(loginMethodId)
@@ -146,7 +145,7 @@ public class LoginMethodService {
             
             newPrimary.setPrimary(true);
             loginMethodRepository.save(newPrimary);
-            log.info("Set new primary login method: id={}", newPrimary.getId());
+            log.info("Replacement primary login method selected");
         }
         
         // 4. 删除登录方式
@@ -158,7 +157,7 @@ public class LoginMethodService {
      * 设置主登录方式
      */
     public void setPrimaryLoginMethod(String userId, String loginMethodId) {
-        log.info("Setting primary login method: userId={}, loginMethodId={}", userId, loginMethodId);
+        log.info("Setting primary login method");
         
         // 1. 验证登录方式属于该用户
         UserLoginMethod method = loginMethodRepository.findById(loginMethodId)
@@ -195,7 +194,7 @@ public class LoginMethodService {
             String username,
             String password) {
         
-        log.info("Adding local login method for SSO user: userId={}, username={}", userId, username);
+        log.info("Adding local login method");
         
         // 1. 检查用户是否已有本地登录方式
         if (loginMethodRepository.findByUserIdAndAuthProvider(userId, AuthProvider.LOCAL).isPresent()) {
@@ -223,7 +222,7 @@ public class LoginMethodService {
             .build();
         
         UserLoginMethod saved = loginMethodRepository.save(loginMethod);
-        log.info("Local login method added successfully: id={}", saved.getId());
+        log.info("Local login method added");
         
         return saved;
     }
@@ -237,7 +236,7 @@ public class LoginMethodService {
      * @throws IllegalArgumentException 如果用户不存在
      */
     public void updatePassword(String username, String newPassword) {
-        log.info("Updating password for user: {}", username);
+        log.info("Updating local password");
         
         UserLoginMethod loginMethod = loginMethodRepository.findByLocalUsername(username)
             .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
@@ -249,6 +248,6 @@ public class LoginMethodService {
         loginMethod.setLocalPasswordHash(passwordEncoder.encode(newPassword));
         loginMethodRepository.save(loginMethod);
         
-        log.info("Password updated successfully for user: {}", username);
+        log.info("Local password updated");
     }
 }

@@ -5,8 +5,7 @@
 -- 1. schema-postgresql.sql 负责创建表结构
 -- 2. 本文件仅创建跨环境通用的初始化数据（如果有的话）
 -- 3. 环境相关的测试数据由对应的 Initializer 类动态创建：
---    - Dev环境: DevEnvironmentInitializer.java (使用 SQLite)
---    - Test环境: TestEnvironmentInitializer.java
+--    - dev/test 演示数据: DemoDataInitializer.java（默认关闭且仅允许 disposable 数据库）
 --    - Prod环境: 根据需要创建ProdEnvironmentInitializer.java
 --
 -- 必要的占位符语句（确保脚本不为空）
@@ -68,7 +67,7 @@ SELECT 1 WHERE FALSE;  -- 这是一个无效的占位符，不会改变任何数
 -- SELECT id, 'ROLE_USER' FROM users WHERE username = 'frontenduser'
 -- ON CONFLICT (user_id, authority) DO NOTHING;
 --
--- === 以下为Test环境的测试场景初始化（由TestEnvironmentInitializer.java动态创建）===
+-- === 以下历史示例已由显式 DemoDataInitializer 取代 ===
 -- -- testlocal: 本地登录用户（场景1）
 -- INSERT INTO users (username, email, display_name, enabled, email_verified)
 -- VALUES ('testlocal', 'testlocal@example.com', 'Test Local User', true, true)

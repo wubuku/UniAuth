@@ -3,12 +3,6 @@ import { AuthService } from '../services/authService';
 import { useAuth } from '../hooks/useAuth';
 import { TokenRefreshResult } from '../types';
 
-interface TokenValidationResult {
-  valid: boolean;
-  error?: string;
-  [key: string]: any;
-}
-
 interface LoginMethod {
   id: number;
   authProvider: string;
@@ -195,53 +189,6 @@ export default function TestPage() {
       setTokenValidationLoading(null);
     }
   };
-  const [googleTokenResult, setGoogleTokenResult] = useState<TokenValidationResult | null>(null);
-  const [githubTokenResult, setGithubTokenResult] = useState<TokenValidationResult | null>(null);
-  const [xTokenResult, setXTokenResult] = useState<TokenValidationResult | null>(null);  // ✅ X API v2：变量名更新
-  // Token验证加载状态已在上方声明
-
-  const validateToken = async (provider: 'google' | 'github' | 'x') => {  // ✅ X API v2：提供者名改为 'x'
-    if (!user) return;
-
-    setTokenValidationLoading(provider);
-    try {
-      let result: TokenValidationResult;
-
-      switch (provider) {
-        case 'google':
-          result = await AuthService.validateGoogleToken();
-          break;
-        case 'github':
-          result = await AuthService.validateGithubToken();
-          break;
-        case 'x':  // ✅ X API v2：提供者名改为 'x'
-          result = await AuthService.validateXToken();
-          break;
-        default:
-          result = { valid: false, error: '不支持的提供商' };
-      }
-
-      switch (provider) {
-        case 'google': setGoogleTokenResult(result); break;
-        case 'github': setGithubTokenResult(result); break;
-        case 'x': setXTokenResult(result); break;
-      }
-    } catch (error) {
-      const result = {
-        valid: false,
-        error: error instanceof Error ? error.message : '验证失败'
-      };
-
-      switch (provider) {
-        case 'google': setGoogleTokenResult(result); break;
-        case 'github': setGithubTokenResult(result); break;
-        case 'x': setXTokenResult(result); break;
-      }
-    } finally {
-      setTokenValidationLoading(null);
-    }
-  };
-
   if (!user) {
     return <div style={{ textAlign: 'center', padding: '50px' }}>加载中...</div>;
   }
@@ -271,7 +218,7 @@ export default function TestPage() {
         textAlign: 'center',
         marginBottom: '20px'
       }}>
-        React OAuth2 ID Token 验证测试
+        账户与登录方式
       </h1>
 
       {/* 用户信息显示 */}
@@ -745,211 +692,6 @@ export default function TestPage() {
               fontSize: '14px'
             }}>
               🎉 您已绑定所有可用的登录方式！
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Token验证区域 */}
-      <div style={{
-        background: 'white',
-        padding: '20px',
-        borderRadius: '8px',
-        boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
-        marginBottom: '20px'
-      }}>
-        <h2 style={{ color: '#333', marginBottom: '15px' }}>Token 验证</h2>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-          {/* Google Token验证 */}
-          {user.provider === 'google' && (
-            <div style={{
-              padding: '15px',
-              border: '1px solid #ddd',
-              borderRadius: '5px'
-            }}>
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '10px'
-              }}>
-                <h3 style={{ margin: 0, color: '#333' }}>Google ID Token 验证</h3>
-                <button
-                  onClick={() => validateToken('google')}
-                  disabled={tokenValidationLoading === 'google'}
-                  style={{
-                    backgroundColor: '#007bff',
-                    color: 'white',
-                    border: 'none',
-                    padding: '8px 16px',
-                    borderRadius: '4px',
-                    cursor: tokenValidationLoading === 'google' ? 'not-allowed' : 'pointer',
-                    opacity: tokenValidationLoading === 'google' ? 0.6 : 1
-                  }}
-                >
-                  {tokenValidationLoading === 'google' ? '验证中...' : '验证'}
-                </button>
-              </div>
-              {googleTokenResult && (
-                <div style={{
-                  padding: '10px',
-                  borderRadius: '4px',
-                  backgroundColor: googleTokenResult.valid ? '#d4edda' : '#f8d7da',
-                  color: googleTokenResult.valid ? '#155724' : '#721c24'
-                }}>
-                  <strong>{googleTokenResult.valid ? '✅ Google验证成功!' : '❌ Google验证失败'}</strong>
-                  {googleTokenResult.valid ? (
-                    <pre style={{
-                      marginTop: '10px',
-                      backgroundColor: '#f8f9fa',
-                      padding: '10px',
-                      borderRadius: '4px',
-                      fontSize: '12px',
-                      overflow: 'auto',
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-all',
-                      textAlign: 'left'
-                    }}>
-                      {JSON.stringify(googleTokenResult, null, 2)}
-                    </pre>
-                  ) : (
-                    googleTokenResult.error && (
-                      <div style={{ marginTop: '5px', fontSize: '14px' }}>
-                        {googleTokenResult.error}
-                      </div>
-                    )
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* GitHub Token验证 */}
-          {user.provider === 'github' && (
-            <div style={{
-              padding: '15px',
-              border: '1px solid #ddd',
-              borderRadius: '5px'
-            }}>
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '10px'
-              }}>
-                <h3 style={{ margin: 0, color: '#333' }}>GitHub Access Token 验证</h3>
-                <button
-                  onClick={() => validateToken('github')}
-                  disabled={tokenValidationLoading === 'github'}
-                  style={{
-                    backgroundColor: '#24292e',
-                    color: 'white',
-                    border: 'none',
-                    padding: '8px 16px',
-                    borderRadius: '4px',
-                    cursor: tokenValidationLoading === 'github' ? 'not-allowed' : 'pointer',
-                    opacity: tokenValidationLoading === 'github' ? 0.6 : 1
-                  }}
-                >
-                  {tokenValidationLoading === 'github' ? '验证中...' : '验证'}
-                </button>
-              </div>
-              {githubTokenResult && (
-                <div style={{
-                  padding: '10px',
-                  borderRadius: '4px',
-                  backgroundColor: githubTokenResult.valid ? '#d4edda' : '#f8d7da',
-                  color: githubTokenResult.valid ? '#155724' : '#721c24'
-                }}>
-                  <strong>{githubTokenResult.valid ? '✅ GitHub验证成功!' : '❌ GitHub验证失败'}</strong>
-                  {githubTokenResult.valid ? (
-                    <pre style={{
-                      marginTop: '10px',
-                      backgroundColor: '#f8f9fa',
-                      padding: '10px',
-                      borderRadius: '4px',
-                      fontSize: '12px',
-                      overflow: 'auto',
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-all',
-                      textAlign: 'left'
-                    }}>
-                      {JSON.stringify(githubTokenResult, null, 2)}
-                    </pre>
-                  ) : (
-                    githubTokenResult.error && (
-                      <div style={{ marginTop: '5px', fontSize: '14px' }}>
-                        {githubTokenResult.error}
-                      </div>
-                    )
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Twitter Token验证 */}
-          {user.provider === 'x' && (
-            <div style={{
-              padding: '15px',
-              border: '1px solid #ddd',
-              borderRadius: '5px'
-            }}>
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '10px'
-              }}>
-                <h3 style={{ margin: 0, color: '#333' }}>X Access Token 验证</h3>
-                <button
-                  onClick={() => validateToken('x')}
-                  disabled={tokenValidationLoading === 'x'}
-                  style={{
-                    backgroundColor: '#1da1f2',
-                    color: 'white',
-                    border: 'none',
-                    padding: '8px 16px',
-                    borderRadius: '4px',
-                    cursor: tokenValidationLoading === 'x' ? 'not-allowed' : 'pointer',
-                    opacity: tokenValidationLoading === 'x' ? 0.6 : 1
-                  }}
-                >
-                  {tokenValidationLoading === 'x' ? '验证中...' : '验证'}
-                </button>
-              </div>
-              {xTokenResult && (
-                <div style={{
-                  padding: '10px',
-                  borderRadius: '4px',
-                  backgroundColor: xTokenResult.valid ? '#d4edda' : '#f8d7da',
-                  color: xTokenResult.valid ? '#155724' : '#721c24'
-                }}>
-                  <strong>{xTokenResult.valid ? '✅ X验证成功!' : '❌ X验证失败'}</strong>
-                  {xTokenResult.valid ? (
-                    <pre style={{
-                      marginTop: '10px',
-                      backgroundColor: '#f8f9fa',
-                      padding: '10px',
-                      borderRadius: '4px',
-                      fontSize: '12px',
-                      overflow: 'auto',
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-all',
-                      textAlign: 'left'
-                    }}>
-                      {JSON.stringify(xTokenResult, null, 2)}
-                    </pre>
-                  ) : (
-                    xTokenResult.error && (
-                      <div style={{ marginTop: '5px', fontSize: '14px' }}>
-                        {xTokenResult.error}
-                      </div>
-                    )
-                  )}
-                </div>
-              )}
             </div>
           )}
         </div>

@@ -60,11 +60,11 @@ public class TokenRefreshService {
                 user.getUsername(), user.getId()
             );
 
-            log.info("成功刷新token for user: {}", username);
+            log.info("Token refresh completed");
             return new TokenPair(newAccessToken, newRefreshToken);
 
         } catch (Exception e) {
-            log.error("Token refresh failed: {}", e.getMessage());
+            log.warn("Token refresh failed");
             throw new RuntimeException("Token刷新失败: " + e.getMessage(), e);
         }
     }

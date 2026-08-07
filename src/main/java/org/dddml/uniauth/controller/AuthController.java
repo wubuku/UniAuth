@@ -4,7 +4,6 @@ import org.dddml.uniauth.config.EmailRegistrationProperties;
 import org.dddml.uniauth.dto.RegisterRequest;
 import org.dddml.uniauth.dto.UserDto;
 import org.dddml.uniauth.entity.UserLoginMethod;
-import org.dddml.uniauth.repository.UserRepository;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.service.JwtTokenService;
@@ -18,18 +17,14 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.oauth2.core.user.OAuth2User;
-import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.context.annotation.Profile;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.servlet.http.Cookie;
@@ -47,11 +42,11 @@ import java.util.regex.Pattern;
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
 @Tag(name = "Authentication", description = "用户认证相关API")
+@Slf4j
 public class AuthController {
 
     private final UserService userService;
     private final AuthenticationManager authenticationManager;
-    private final UserRepository userRepository;
     private final UserLoginMethodRepository loginMethodRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
@@ -320,284 +315,6 @@ public class AuthController {
     }
 
     /**
-     * 获取当前用户信息
-     * 这个端点会被Spring Security保护，需要有效的JWT Token
-     */
-    @GetMapping("/user")
-    @Operation(
-        summary = "获取当前用户信息",
-        description = "获取当前登录用户的详细信息",
-        tags = { "Authentication" }
-    )
-    @ApiResponses({
-        @ApiResponse(
-            responseCode = "200",
-            description = "获取成功",
-            content = @Content(
-                mediaType = "application/json",
-                schema = @Schema(
-                    example = "{\"authenticated\": true, \"name\": \"John Doe\", \"email\": \"john@example.com\"}"
-                )
-            )
-        ),
-        @ApiResponse(
-            responseCode = "401",
-            description = "未认证",
-            content = @Content(
-                mediaType = "application/json",
-                schema = @Schema(
-                    example = "{\"error\": \"User not authenticated\"}"
-                )
-            )
-        )
-    })
-    public ResponseEntity<?> getCurrentUser() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        
-        if (authentication == null || !authentication.isAuthenticated()) {
-            return ResponseEntity.status(401).body(Map.of("error", "User not authenticated"));
-        }
-
-        Map<String, Object> userInfo = new java.util.LinkedHashMap<>();
-        userInfo.put("authenticated", true);
-
-        // 处理不同类型的认证主体
-        if (authentication.getPrincipal() instanceof OAuth2User) {
-            // OAuth2登录
-            OAuth2User oauth2User = (OAuth2User) authentication.getPrincipal();
-            userInfo.put("name", oauth2User.getName());
-            userInfo.put("email", oauth2User.getAttribute("email"));
-            userInfo.put("provider", "oauth2");
-        } else if (authentication.getPrincipal() instanceof Jwt) {
-            // JWT token登录
-            Jwt jwt = (Jwt) authentication.getPrincipal();
-            // 优先从 username claim 获取用户名（新版Token），兼容旧版Token（sub即用户名）
-            String username = jwt.getClaim("username");
-            if (username == null) {
-                username = jwt.getSubject();
-            }
-            userInfo.put("name", username);
-            userInfo.put("email", jwt.getClaim("email"));
-            userInfo.put("userId", jwt.getClaim("userId"));
-            userInfo.put("authorities", jwt.getClaim("authorities"));
-            userInfo.put("provider", "local");
-        } else {
-            // 其他类型的认证
-            userInfo.put("name", authentication.getName());
-            userInfo.put("provider", "unknown");
-        }
-
-        return ResponseEntity.ok(userInfo);
-    }
-
-    /**
-     * 检查用户是否存在（测试用）
-     */
-    @GetMapping("/check-user")
-    @Operation(
-        summary = "检查用户是否存在",
-        description = "检查指定用户名是否已存在（测试用）",
-        tags = { "Authentication" }
-    )
-    @ApiResponses({
-        @ApiResponse(
-            responseCode = "200",
-            description = "检查成功",
-            content = @Content(
-                mediaType = "application/json",
-                schema = @Schema(
-                    example = "{\"exists\": true, \"user\": {...}}"
-                )
-            )
-        )
-    })
-    public ResponseEntity<?> checkUser(
-            @Parameter(
-                name = "username",
-                description = "用户名",
-                required = true
-            )
-            @RequestParam String username) {
-        try {
-            var user = userRepository.findByUsername(username);
-            if (user.isPresent()) {
-                return ResponseEntity.ok(Map.of(
-                    "exists", true,
-                    "user", Map.of(
-                        "id", user.get().getId(),
-                        "username", user.get().getUsername(),
-                        "email", user.get().getEmail(),
-                        "enabled", user.get().isEnabled()
-                    )
-                ));
-            } else {
-                return ResponseEntity.ok(Map.of("exists", false));
-            }
-        } catch (Exception e) {
-            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
-        }
-    }
-
-    /**
-     * 生成BCrypt密码哈希（测试用）
-     */
-    @GetMapping("/generate-hash")
-    @Operation(
-        summary = "生成BCrypt密码哈希",
-        description = "生成指定密码的BCrypt哈希值（测试用）",
-        tags = { "Authentication" }
-    )
-    @ApiResponses({
-        @ApiResponse(
-            responseCode = "200",
-            description = "生成成功",
-            content = @Content(
-                mediaType = "application/json",
-                schema = @Schema(
-                    example = "{\"password\": \"test123\", \"hash\": \"$2a$10$...\"}"
-                )
-            )
-        )
-    })
-    public ResponseEntity<?> generateHash(
-            @Parameter(
-                name = "password",
-                description = "密码",
-                required = true
-            )
-            @RequestParam String password) {
-        try {
-            String hash = passwordEncoder.encode(password);
-            return ResponseEntity.ok(Map.of(
-                "password", password,
-                "hash", hash
-            ));
-        } catch (Exception e) {
-            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
-        }
-    }
-
-    /**
-     * 创建测试用户（临时用）
-     */
-    @PostMapping("/create-test-user")
-    @Operation(
-        summary = "创建测试用户",
-        description = "创建测试用的本地用户账号（临时用）",
-        tags = { "Authentication" }
-    )
-    @ApiResponses({
-        @ApiResponse(
-            responseCode = "200",
-            description = "创建成功",
-            content = @Content(
-                mediaType = "application/json",
-                schema = @Schema(
-                    example = "{\"message\": \"User created successfully\", \"user\": {...}}"
-                )
-            )
-        )
-    })
-    public ResponseEntity<?> createTestUser(
-            @Parameter(
-                name = "username",
-                description = "用户名",
-                required = true
-            )
-            @RequestParam String username,
-            @Parameter(
-                name = "password",
-                description = "密码",
-                required = true
-            )
-            @RequestParam String password) {
-        try {
-            if (userRepository.findByUsername(username).isPresent()) {
-                return ResponseEntity.ok(Map.of("message", "User already exists"));
-            }
-
-            UserDto user = userService.register(new RegisterRequest(
-                username,
-                username + "@example.com",
-                password,
-                "Test User",
-                null
-            ));
-
-            return ResponseEntity.ok(Map.of(
-                "message", "User created successfully",
-                "user", user
-            ));
-        } catch (Exception e) {
-            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
-        }
-    }
-
-    /**
-     * 重置用户密码（仅开发环境可用）
-     */
-    @PostMapping("/reset-password")
-    @Profile("dev")
-    @Operation(
-        summary = "重置用户密码",
-        description = "重置指定用户的密码（仅开发环境可用）",
-        tags = { "Authentication" }
-    )
-    @ApiResponses({
-        @ApiResponse(
-            responseCode = "200",
-            description = "重置成功",
-            content = @Content(
-                mediaType = "application/json",
-                schema = @Schema(
-                    example = "{\"message\": \"Password reset successfully\", \"username\": \"testuser\"}"
-                )
-            )
-        ),
-        @ApiResponse(
-            responseCode = "400",
-            description = "重置失败",
-            content = @Content(
-                mediaType = "application/json",
-                schema = @Schema(
-                    example = "{\"error\": \"User not found\"}"
-                )
-            )
-        )
-    })
-    public ResponseEntity<?> resetPassword(
-            @Parameter(
-                name = "username",
-                description = "用户名",
-                required = true
-            )
-            @RequestParam String username,
-            @Parameter(
-                name = "newPassword",
-                description = "新密码",
-                required = true
-            )
-            @RequestParam String newPassword) {
-        try {
-            var loginMethodOptional = loginMethodRepository.findByLocalUsername(username);
-            if (loginMethodOptional.isEmpty()) {
-                return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
-            }
-
-            var loginMethod = loginMethodOptional.get();
-            loginMethod.setLocalPasswordHash(passwordEncoder.encode(newPassword));
-            loginMethodRepository.save(loginMethod);
-
-            return ResponseEntity.ok(Map.of(
-                "message", "Password reset successfully",
-                "username", username
-            ));
-        } catch (Exception e) {
-            return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
-        }
-    }
-
-    /**
      * 登出 - 统一认证方式的登出处理
      */
     @PostMapping("/logout")
@@ -630,31 +347,24 @@ public class AuthController {
     })
     public ResponseEntity<?> logout(HttpServletRequest request, HttpServletResponse response) {
         try {
-            System.out.println("=== AUTH CONTROLLER LOGOUT STARTED ===");
-
             // 1. 清除Spring Security上下文
             SecurityContextHolder.clearContext();
-            System.out.println("SecurityContext cleared");
 
             // 2. 使用SecurityContextLogoutHandler处理OAuth2特定的清理
             new SecurityContextLogoutHandler().logout(request, response, null);
-            System.out.println("SecurityContextLogoutHandler executed");
 
             // 3. 使Session无效（如果存在）
             if (request.getSession(false) != null) {
                 request.getSession(false).invalidate();
-                System.out.println("Session invalidated");
             }
 
             // 4. ✅ 关键：清除所有认证Cookies！
             clearAuthCookies(response);
-            System.out.println("Auth cookies cleared");
 
-            System.out.println("=== AUTH CONTROLLER LOGOUT COMPLETED ===");
+            log.info("Authentication logout completed");
             return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
         } catch (Exception e) {
-            System.err.println("AuthController logout error: " + e.getMessage());
-            e.printStackTrace();
+            log.warn("Authentication logout encountered an error");
             return ResponseEntity.status(500).body(Map.of("error", "Logout failed"));
         }
     }
@@ -678,7 +388,6 @@ public class AuthController {
             cookie.setPath("/");
             cookie.setHttpOnly(true);
             response.addCookie(cookie);
-            System.out.println("Cleared cookie: " + cookieName);
         }
     }
 }

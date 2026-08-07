@@ -37,7 +37,7 @@ public class RestTemplateEmailServiceImpl implements EmailService {
             String emailType) {
 
         if (!isValidEmail(to)) {
-            log.warn("Invalid email address: {}", to);
+            log.warn("Rejected invalid email destination");
             return EmailSendResult.INVALID_EMAIL;
         }
 
@@ -59,16 +59,15 @@ public class RestTemplateEmailServiceImpl implements EmailService {
             Map<String, Object> response = restTemplate.postForEntity(url, request, Map.class).getBody();
 
             if (response != null && Boolean.TRUE.equals(response.get("success"))) {
-                log.info("Email sent successfully to: {}, queueId: {}",
-                    to, response.get("queueId"));
+                log.info("Template email accepted by email service");
                 return EmailSendResult.QUEUED;
             }
 
-            log.error("Failed to send email to: {}, response: {}", to, response);
+            log.warn("Template email was rejected by email service");
             return EmailSendResult.FAILED;
 
         } catch (Exception e) {
-            log.error("Exception while sending email to: {}", to, e);
+            log.warn("Template email request failed");
             return EmailSendResult.FAILED;
         }
     }
@@ -91,15 +90,15 @@ public class RestTemplateEmailServiceImpl implements EmailService {
             Map<String, Object> response = restTemplate.postForEntity(url, request, Map.class).getBody();
 
             if (response != null && Boolean.TRUE.equals(response.get("success"))) {
-                log.info("Simple email sent successfully to: {}", to);
+                log.info("Simple email accepted by email service");
                 return EmailSendResult.QUEUED;
             }
 
-            log.error("Failed to send simple email to: {}, response: {}", to, response);
+            log.warn("Simple email was rejected by email service");
             return EmailSendResult.FAILED;
 
         } catch (Exception e) {
-            log.error("Exception while sending simple email to: {}", to, e);
+            log.warn("Simple email request failed");
             return EmailSendResult.FAILED;
         }
     }
@@ -112,7 +111,7 @@ public class RestTemplateEmailServiceImpl implements EmailService {
             Map<String, Object> response = restTemplate.getForEntity(healthUrl, Map.class).getBody();
             return response != null && "UP".equals(response.get("status"));
         } catch (Exception e) {
-            log.warn("Email service health check failed", e);
+            log.warn("Email service health check failed");
             return false;
         }
     }

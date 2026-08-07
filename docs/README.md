@@ -14,16 +14,17 @@
 | [配置基线](CONFIGURATION.md) | Live | 端口、profile、数据库、外部服务和密钥 |
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
-| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | Draft | 只修复现有能力、不增加新功能的分阶段计划 |
+| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | In progress | Phase 0 H0.1-H0.3 已验证；H1-H8 仍是未实施计划 |
 
 ## 当前关键结论
 
-- 默认 Spring profile 是 `test`，后端端口是 `8081`。
-- `test` 与 `dev` profile 启动都会删除全部用户和登录方式。
+- 默认不激活 Spring profile，后端端口是 `8081`。
+- 演示数据默认关闭且不再全表清理；显式启用仍只允许 test/demo 命名的 disposable 数据库。
 - Vite 使用 `5173`，Python 资源服务器代码实际使用 `5002`。
 - `db/migration/V*.sql` 当前没有 Flyway/Liquibase 执行器。
 - SQLite schema 落后于当前实体和 PostgreSQL schema。
-- Java 构建通过但没有测试源码；前端 build 通过，lint 缺少配置。
+- 已建立 Phase 0 Java 回归测试、前端 Mock Playwright 和 Python 离线 JWT/JWKS 测试；
+  ESLint 配置仍缺失。
 
 详细证据和操作限制见 [配置基线](CONFIGURATION.md) 与
 [验证指南](VERIFICATION.md)。

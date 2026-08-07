@@ -11,7 +11,7 @@ It tests the complete success flow including:
 4. Database verification
 
 Requirements:
-    pip install web3==6.15.1 eth-account==0.10.0
+    pip install eth-account==0.10.0
 
 Usage:
     python3 test_web3_login_real.py [--server-url URL]
@@ -82,24 +82,7 @@ class RealWeb3LoginTester:
         self.binding_wallet_address = self.binding_wallet.address
         self.binding_private_key = self.binding_wallet.key.hex()
         
-        print(f"\n{Colors.CYAN}🧪 Test Wallets Created:{Colors.ENDC}")
-        print(f"   Test Wallet 1: {self.test_wallet_address}")
-        print(f"   Test Wallet 2: {self.binding_wallet_address}")
-    
-    def cleanup_nonces(self):
-        """Cleanup old nonces for test wallets before testing"""
-        try:
-            self.session.delete(
-                f"{self.server_url}/api/auth/web3/nonce/{self.test_wallet_address}",
-                timeout=5
-            )
-            self.session.delete(
-                f"{self.server_url}/api/auth/web3/nonce/{self.binding_wallet_address}",
-                timeout=5
-            )
-            print(f"   ℹ️  Cleaned up old nonces")
-        except Exception:
-            pass
+        print(f"\n{Colors.CYAN}🧪 Ephemeral test wallets created{Colors.ENDC}")
     
     def log_result(self, result: TestResult):
         """Log a test result"""
@@ -153,7 +136,7 @@ class RealWeb3LoginTester:
             wallet_address = self.test_wallet_address
             
             # Step 1: Get nonce
-            print(f"   Step 1: Getting nonce for {wallet_address[:10]}...")
+            print("   Step 1: Getting nonce...")
             nonce_response = self.session.get(
                 f"{self.server_url}/api/auth/web3/nonce/{wallet_address}",
                 timeout=10
@@ -163,8 +146,7 @@ class RealWeb3LoginTester:
                 return TestResult(
                     name="Web3 Login",
                     status=TestStatus.FAIL,
-                    message=f"Failed to get nonce: {nonce_response.status_code}",
-                    details={"response": nonce_response.text[:200]}
+                    message=f"Failed to get nonce: HTTP {nonce_response.status_code}"
                 )
             
             nonce_data = nonce_response.json()
@@ -175,7 +157,6 @@ class RealWeb3LoginTester:
             
             # Step 2: Sign message with real key
             signature = self.sign_message(message, self.test_private_key)
-            print(f"   Signature: {signature[:30]}...")
             
             # Step 3: Verify and login
             print(f"   Step 3: Verifying signature and logging in...")
@@ -194,28 +175,24 @@ class RealWeb3LoginTester:
                 return TestResult(
                     name="Web3 Login",
                     status=TestStatus.FAIL,
-                    message=f"Login failed: {login_response.status_code}",
-                    details={"response": login_response.text}
+                    message=f"Login failed: HTTP {login_response.status_code}"
                 )
             
             login_data = login_response.json()
             access_token = login_data.get('accessToken')
-            user_id = login_data.get('userId')
+            user_id = (login_data.get('user') or {}).get('id')
             is_new_user = login_data.get('isNewUser')
             
             print(f"   ✅ Login successful!")
-            print(f"   User ID: {user_id}")
             print(f"   Is New User: {is_new_user}")
-            print(f"   Token: {access_token[:30]}...")
             
             return TestResult(
                 name="Web3 Login",
                 status=TestStatus.PASS,
                 message="Successfully logged in via Web3 wallet",
                 details={
-                    "user_id": user_id,
-                    "wallet_address": wallet_address,
                     "is_new_user": is_new_user,
+                    "user_id_received": bool(user_id),
                     "token_received": bool(access_token)
                 }
             )
@@ -224,7 +201,7 @@ class RealWeb3LoginTester:
             return TestResult(
                 name="Web3 Login",
                 status=TestStatus.ERROR,
-                message=f"Exception: {str(e)}"
+                message=f"Unexpected {type(e).__name__}"
             )
     
     def test_bind_web3_to_local_user(self) -> TestResult:
@@ -244,7 +221,7 @@ class RealWeb3LoginTester:
             local_email = f"{local_username}@test.local"
             local_password = "Password123!"
             
-            print(f"   Step 1: Registering new local user: {local_username}")
+            print("   Step 1: Registering a new local user")
             
             register_response = self.session.post(
                 f"{self.server_url}/api/auth/register",
@@ -261,8 +238,7 @@ class RealWeb3LoginTester:
                 return TestResult(
                     name="Web3 Binding",
                     status=TestStatus.FAIL,
-                    message=f"Failed to register local user: {register_response.status_code}",
-                    details={"response": register_response.text[:200]}
+                    message=f"Failed to register local user: HTTP {register_response.status_code}"
                 )
             
             print(f"   ✅ Local user registered successfully")
@@ -283,18 +259,17 @@ class RealWeb3LoginTester:
                 return TestResult(
                     name="Web3 Binding",
                     status=TestStatus.FAIL,
-                    message=f"Failed to login with local credentials: {login_response.status_code}",
-                    details={"response": login_response.text[:200]}
+                    message=f"Failed to login with local credentials: HTTP {login_response.status_code}"
                 )
             
             login_data = login_response.json()
             access_token = login_data.get('accessToken')
             user_id = login_data.get('userId')
             
-            print(f"   ✅ Local login successful, user ID: {user_id}")
+            print("   ✅ Local login successful")
             
             # Step 3: Bind binding_wallet to this user
-            print(f"   Step 3: Binding {self.binding_wallet_address[:10]}... to user")
+            print("   Step 3: Binding an ephemeral wallet")
             
             nonce_response = self.session.get(
                 f"{self.server_url}/api/auth/web3/nonce/{self.binding_wallet_address}",
@@ -334,8 +309,7 @@ class RealWeb3LoginTester:
                 return TestResult(
                     name="Web3 Binding",
                     status=TestStatus.FAIL,
-                    message=f"Binding failed: {bind_response.status_code}",
-                    details={"response": bind_response.text[:200]}
+                    message=f"Binding failed: HTTP {bind_response.status_code}"
                 )
             
             print(f"   ✅ Wallet bound successfully!")
@@ -345,8 +319,8 @@ class RealWeb3LoginTester:
                 status=TestStatus.PASS,
                 message="Successfully bound Web3 wallet to new local user",
                 details={
-                    "user_id": user_id,
-                    "bound_wallet": self.binding_wallet_address
+                    "user_id_received": bool(user_id),
+                    "wallet_bound": True
                 }
             )
             
@@ -354,7 +328,7 @@ class RealWeb3LoginTester:
             return TestResult(
                 name="Web3 Binding",
                 status=TestStatus.ERROR,
-                message=f"Exception: {str(e)}"
+                message=f"Unexpected {type(e).__name__}"
             )
     
     def test_repeated_web3_login(self) -> TestResult:
@@ -370,7 +344,7 @@ class RealWeb3LoginTester:
             wallet_address = self.test_wallet_address
             
             # Get nonce for the already registered wallet
-            print(f"   Getting nonce for {wallet_address[:10]}... (existing wallet)")
+            print("   Getting nonce for the existing test wallet")
             
             nonce_response = self.session.get(
                 f"{self.server_url}/api/auth/web3/nonce/{wallet_address}",
@@ -414,7 +388,6 @@ class RealWeb3LoginTester:
             user_id = login_data.get('userId')
             
             print(f"   ℹ️  isNewUser: {is_new_user}")
-            print(f"   ℹ️  User ID: {user_id}")
             print(f"   ✅ Login successful!")
             
             # Verify it's recognized as existing user
@@ -429,14 +402,17 @@ class RealWeb3LoginTester:
                 name="Existing Wallet Login",
                 status=TestStatus.PASS,
                 message="Correctly identified returning user (isNewUser=false)",
-                details={"isNewUser": is_new_user, "user_id": user_id}
+                details={
+                    "isNewUser": is_new_user,
+                    "user_id_received": bool(user_id)
+                }
             )
             
         except Exception as e:
             return TestResult(
                 name="Existing Wallet Login",
                 status=TestStatus.ERROR,
-                message=f"Exception: {str(e)}"
+                message=f"Unexpected {type(e).__name__}"
             )
     
     def test_wallet_status_check(self) -> TestResult:
@@ -479,8 +455,8 @@ class RealWeb3LoginTester:
             wallet1_bound = status1.get('isBound')
             wallet2_bound = status2.get('isBound')
             
-            print(f"   Wallet 1 ({self.test_wallet_address[:10]}...): isBound={wallet1_bound}")
-            print(f"   Wallet 2 ({self.binding_wallet_address[:10]}...): isBound={wallet2_bound}")
+            print(f"   Test wallet 1 bound: {wallet1_bound}")
+            print(f"   Test wallet 2 bound: {wallet2_bound}")
             
             if not wallet1_bound or not wallet2_bound:
                 return TestResult(
@@ -503,7 +479,7 @@ class RealWeb3LoginTester:
             return TestResult(
                 name="Database Verification",
                 status=TestStatus.ERROR,
-                message=f"Exception: {str(e)}"
+                message=f"Unexpected {type(e).__name__}"
             )
     
     def run_all_tests(self) -> bool:
@@ -513,9 +489,6 @@ class RealWeb3LoginTester:
         print("║    Web3 Wallet Login - REAL Success Scenario Tests           ║")
         print("╚════════════════════════════════════════════════════════════════╝")
         print(f"{Colors.ENDC}")
-        
-        print(f"\n{Colors.BLUE}ℹ️  Cleaning up old test data...{Colors.ENDC}")
-        self.cleanup_nonces()
         
         tests = [
             ("Web3 Login", self.test_web3_login_with_new_wallet),
@@ -559,8 +532,16 @@ def main():
         default='http://localhost:8081',
         help='Server URL (default: http://localhost:8081)'
     )
+    parser.add_argument(
+        '--disposable',
+        action='store_true',
+        help='Confirm the target uses an isolated, disposable database'
+    )
     
     args = parser.parse_args()
+
+    if not args.disposable:
+        parser.error("--disposable is required")
     
     print(f"\n{Colors.BLUE}{'='*60}{Colors.ENDC}")
     print(f"{Colors.BLUE}Starting Web3 Wallet Login Tests{Colors.ENDC}")

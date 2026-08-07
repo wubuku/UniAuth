@@ -26,12 +26,12 @@ public class ForgotPasswordService {
 
     @Transactional
     public boolean sendPasswordResetCode(String email) {
-        log.info("Sending password reset code for email: {}", email);
+        log.info("Password reset code requested");
 
         boolean emailExists = loginMethodRepository.findByLocalUsername(email).isPresent();
 
         if (!emailExists) {
-            log.info("Email not found in local login methods: {}", email);
+            log.info("Password reset request did not match a local account");
             return false;
         }
 
@@ -49,20 +49,20 @@ public class ForgotPasswordService {
             ).name();
 
             if (result.equals("FAILED") || result.equals("RATE_LIMITED")) {
-                log.warn("Email service returned: {}", result);
+                log.warn("Email service did not accept the password reset request");
             }
         } else {
             log.warn("Email service is unavailable, verification code will still be created");
         }
 
         verificationCodeService.sendVerificationCode(email, VerificationPurpose.PASSWORD_RESET, null);
-        log.info("Password reset code created for email: {}", email);
+        log.info("Password reset code created");
         return true;
     }
 
     @Transactional
     public void resetPassword(String email, String verificationCode, String newPassword) {
-        log.info("Resetting password for email: {}", email);
+        log.info("Password reset verification started");
 
         UserLoginMethod loginMethod = loginMethodRepository.findByLocalUsername(email)
             .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
@@ -84,7 +84,7 @@ public class ForgotPasswordService {
 
         loginMethod.setLocalPasswordHash(passwordEncoder.encode(newPassword));
         loginMethodRepository.save(loginMethod);
-        log.info("Password reset successfully for email: {}", email);
+        log.info("Password reset completed");
     }
 
     public long getResendCooldown(String email) {

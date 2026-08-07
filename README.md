@@ -1,7 +1,7 @@
 # UniAuth - 统一身份认证系统
 
-> 状态：Needs verification。当前项目正在加固，尚无生产就绪证明。默认 `test` profile 启动会连接 PostgreSQL
-> 并删除全部用户和登录方式；`dev` 也会清空 SQLite 用户数据。
+> 状态：Needs verification。Phase 0 H0.1-H0.3 已完成加固验证，但项目尚无生产就绪证明。仓库不再默认激活 Spring profile，
+> 演示数据默认关闭且不执行全表清理；`test` profile 仍会初始化/更新 schema，只能指向隔离数据库。
 > 开始开发或启动前，请先阅读 [文档导航](docs/README.md)、
 > [配置基线](docs/CONFIGURATION.md)、[开发指南](docs/DEVELOPMENT.md) 和
 > [验证指南](docs/VERIFICATION.md)。
@@ -68,7 +68,7 @@ OAuth2、多登录方式、自定义 JWT、邮箱验证、Web3 和异构资源�
 
 ### JWT 令牌管理
 
-自定义 `JwtTokenService` 使用 RSA-2048/RS256 签发 access token 和 refresh token，并通过 JWKS 暴露公钥。密钥当前存储在本地二进制文件中且 `rsa-keys.ser` 已被 Git 跟踪，不是加密密钥库；issuer、audience、token type、撤销和刷新轮换也尚未形成完整验证链。
+自定义 `JwtTokenService` 使用 RSA-2048/RS256 签发 access token 和 refresh token，并通过 JWKS 暴露公钥。当前默认密钥文件位于 ignored 的 `.local/uniauth/rsa-keys.ser`，仍不是生产密钥库；历史提交中的根目录私钥必须视为已暴露。issuer、audience、token type、撤销和刷新轮换也尚未形成完整验证链。
 
 ### 会话持久化
 
@@ -208,8 +208,8 @@ uni-auth/
 │   │   ├── CorsConfig.java               # 跨域配置
 │   │   ├── WebConfig.java                # Web MVC 配置
 │   │   ├── GlobalExceptionHandler.java   # 全局异常处理
-│   │   ├── DevEnvironmentInitializer.java # 开发环境初始化
-│   │   └── TestEnvironmentInitializer.java # 测试环境初始化
+│   │   ├── DemoDataConfiguration.java    # 显式演示数据开关
+│   │   └── DemoDataInitializer.java      # 受管演示账户 upsert
 │   ├── controller/                       # 控制器层
 │   │   ├── AuthController.java           # 认证控制器
 │   │   ├── OAuth2TokenController.java    # OAuth2 令牌端点
@@ -219,7 +219,6 @@ uni-auth/
 │   │   └── SpaController.java            # SPA 路由控制器
 │   ├── service/                          # 服务层
 │   │   ├── JwtTokenService.java          # JWT 令牌服务
-│   │   ├── JwtValidationService.java     # JWT 验证服务
 │   │   ├── UserService.java              # 用户服务
 │   │   ├── LoginMethodService.java       # 登录方式服务
 │   │   ├── CustomUserDetailsService.java # 用户详情服务
@@ -375,26 +374,29 @@ JWT_SECRET=your-base64-encoded-secret-key
 #### 开发环境启动（使用可丢弃的 SQLite）
 
 ```bash
-# 仅在确认 dev-database.db 可被清空后执行
 SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
 ```
 
-应用启动后访问 `http://localhost:8081`。`DevEnvironmentInitializer` 会在每次
-启动时删除全部用户和登录方式，再创建演示账户。
+应用启动后访问 `http://localhost:8081`。演示数据默认关闭；如需创建三个受管演示账户，
+必须同时设置 `APP_DEMO_DATA_ENABLED=true` 和 `APP_DEMO_DATA_DISPOSABLE=true`，
+并使用 test/demo 命名的数据库。
 
 #### 测试环境启动（使用 PostgreSQL）
 
-`test` profile 同样会清空用户数据。只允许指向隔离且可丢弃的数据库：
+`test` profile 会执行 SQL init 和 Hibernate schema update，只允许指向隔离且可丢弃的数据库，
+并且必须提供完整的 `POSTGRES_*` 变量：
 
 ```bash
-# 激活 test profile，使用 PostgreSQL 数据库
-mvn spring-boot:run -Dspring-boot.run.profiles=test
-
-# 或设置环境变量
-SPRING_PROFILES_ACTIVE=test mvn spring-boot:run
+POSTGRES_HOST=localhost \
+POSTGRES_PORT=5432 \
+POSTGRES_DATABASE=uniauth_test \
+POSTGRES_USER=uniauth_test \
+POSTGRES_PASSWORD='set-explicitly' \
+SPRING_PROFILES_ACTIVE=test \
+mvn spring-boot:run
 ```
 
-测试环境会执行 `schema-postgresql.sql`，随后初始化器删除用户数据并重建演示账户。
+测试环境会执行 `schema-postgresql.sql`；演示账户仍保持默认关闭。
 
 ---
 
@@ -412,11 +414,11 @@ SPRING_PROFILES_ACTIVE=test mvn spring-boot:run
 ./build-frontend.sh
 
 
-# 2. 启动Spring Boot应用
-mvn spring-boot:run
+# 2. 使用安全启动脚本（默认隔离 dev SQLite）
+./start.sh
 
 # 设置环境变量运行测试环境
-# SPRING_PROFILES_ACTIVE=test mvn spring-boot:run
+# SPRING_PROFILES_ACTIVE=test POSTGRES_...=... ./start.sh
 
 # 如果确认可以停止占用默认后端端口的进程
 # lsof -ti tcp:8081 | xargs kill
@@ -1079,105 +1081,8 @@ Content-Type: application/json
 
 **响应**：成功返回 `200 OK`。
 
-#### 验证 Google Token
-
-```
-POST /api/validate-google-token
-```
-
-验证 Google ID Token 的有效性并解析用户信息。
-
-**请求头**：
-```
-Content-Type: application/json
-```
-
-**请求体**：
-```json
-{
-  "idToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
-
-**响应示例**：
-```json
-{
-  "valid": true,
-  "issuer": "https://accounts.google.com",
-  "subject": "123456789",
-  "email": "user@gmail.com",
-  "emailVerified": true,
-  "name": "张三"
-}
-```
-
-#### 验证 GitHub Token
-
-```
-POST /api/validate-github-token
-```
-
-使用 GitHub API 验证访问令牌并获取用户信息。
-
-**请求头**：
-```
-Content-Type: application/json
-```
-
-**请求体**：
-```json
-{
-  "accessToken": "gho_xxxxxxxxxxxxxxxxxxxx"
-}
-```
-
-**响应示例**：
-```json
-{
-  "valid": true,
-  "id": 12345678,
-  "login": "username",
-  "email": "user@example.com",
-  "name": "用户名",
-  "avatarUrl": "https://avatars.githubusercontent.com/u/12345678",
-  "publicRepos": 10,
-  "followers": 50
-}
-```
-
-#### 验证 X Token
-
-```
-POST /api/validate-x-token
-```
-
-使用 X（原 Twitter）API v2 验证访问令牌并获取用户信息。
-
-**请求头**：
-```
-Content-Type: application/json
-```
-
-**请求体**：
-```json
-{
-  "accessToken": "AAAAAAAAAAAAAAAAAAAA..."
-}
-```
-
-**响应示例**：
-```json
-{
-  "valid": true,
-  "id": "1234567890",
-  "username": "username",
-  "name": "显示名称",
-  "profileImageUrl": "https://pbs.twimg.com/profile_images/...",
-  "verified": true,
-  "location": "北京",
-  "description": "个人简介"
-}
-```
+Provider token 诊断端点已移除。OAuth2 登录结果通过当前用户接口和服务端认证状态验证，
+不再向浏览器暴露独立的 provider token 校验入口。
 
 ### 错误响应格式
 

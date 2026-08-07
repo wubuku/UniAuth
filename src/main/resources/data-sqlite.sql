@@ -5,14 +5,13 @@
 -- 1. schema-sqlite.sql 负责创建表结构
 -- 2. 本文件仅创建跨环境通用的初始化数据（如果有的话）
 -- 3. 环境相关的测试数据由对应的 Initializer 类动态创建：
---    - Dev环境: DevEnvironmentInitializer.java
---    - Test环境: TestEnvironmentInitializer.java (使用 PostgreSQL)
+--    - dev/test 演示数据: DemoDataInitializer.java（默认关闭且仅允许 disposable 数据库）
 --
 -- 必要的占位符语句（确保脚本不为空）
 -- 在 Spring Boot 自动创建 SPRING_SESSION 表后，这个占位符不会有任何实际影响
 SELECT 1 WHERE 0;  -- 这是一个无效的占位符，不会改变任何数据
 --
--- === 以下为开发环境的测试数据初始化（由DevEnvironmentInitializer.java动态创建）===
+-- === 以下历史示例已由显式 DemoDataInitializer 取代 ===
 -- 注意：密码使用BCrypt加密，密码都是 'password123'
 --
 -- -- 插入测试用户

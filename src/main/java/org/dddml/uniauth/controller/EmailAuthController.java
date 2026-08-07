@@ -165,12 +165,12 @@ public class EmailAuthController {
                          && email.equalsIgnoreCase(lm.getLocalUsername()));
 
         if (alreadyBound) {
-            log.info("User {} already has email login method bound: {}", user.getId(), email);
+            log.info("Email login method is already bound");
             return;
         }
 
         if (loginMethodRepository.existsByLocalUsername(email)) {
-            log.warn("Email {} already registered as username by another user", email);
+            log.warn("Email login method is already assigned to another account");
             return;
         }
 
@@ -186,7 +186,7 @@ public class EmailAuthController {
 
         user.addLoginMethod(emailLoginMethod);
         userRepository.save(user);
-        log.info("Bound email login method to existing user: userId={}, email={}", user.getId(), email);
+        log.info("Email login method binding completed");
     }
 
     private UserEntity createUserWithEmailLogin(String email, Map<String, Object> metadata) {
@@ -214,7 +214,7 @@ public class EmailAuthController {
 
         user.addLoginMethod(loginMethod);
         userRepository.save(user);
-        log.info("Created new user with email login: userId={}, email={}", user.getId(), email);
+        log.info("Email account creation completed");
         return user;
     }
 

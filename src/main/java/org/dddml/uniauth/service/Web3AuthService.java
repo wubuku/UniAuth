@@ -49,7 +49,7 @@ public class Web3AuthService {
         
         web3NonceService.saveNonce(normalizedAddress, nonce, nonceExpirationSeconds);
 
-        log.info("Generated nonce for wallet: {}", normalizedAddress);
+        log.info("Web3 nonce generated");
 
         return new Web3NonceResponse(nonce, message, nonceExpirationSeconds);
     }
@@ -89,7 +89,7 @@ public class Web3AuthService {
             String storedNonce = web3NonceService.getNonce(normalizedAddress);
 
             if (storedNonce == null || !storedNonce.equals(nonce)) {
-                log.error("Nonce mismatch or expired for wallet: {}", normalizedAddress);
+                log.warn("Web3 nonce mismatch or expiration");
                 return false;
             }
 
@@ -97,14 +97,14 @@ public class Web3AuthService {
 
             if (isValid) {
                 web3NonceService.deleteNonce(normalizedAddress);
-                log.info("Signature verification successful for wallet: {}", normalizedAddress);
+                log.info("Web3 signature verification succeeded");
             } else {
-                log.error("Signature verification failed for wallet: {}", normalizedAddress);
+                log.warn("Web3 signature verification failed");
             }
 
             return isValid;
         } catch (Exception e) {
-            log.error("Error during signature verification", e);
+            log.warn("Web3 signature verification could not be completed");
             return false;
         }
     }
@@ -146,7 +146,7 @@ public class Web3AuthService {
                 .build();
         loginMethodRepository.save(newMethod);
         
-        log.info("Created new user via Web3 wallet: {}", normalizedAddress);
+        log.info("Web3 account created");
         
         return newUser;
     }
@@ -159,7 +159,7 @@ public class Web3AuthService {
                 .findByAuthProviderAndProviderUserId(AuthProvider.WEB3, normalizedAddress);
         
         if (existingMethod.isPresent()) {
-            log.error("Wallet already bound: {}", normalizedAddress);
+            log.warn("Web3 wallet is already bound");
             return false;
         }
         
@@ -181,7 +181,7 @@ public class Web3AuthService {
         
         Optional<UserEntity> userOpt = userRepository.findById(userId);
         if (userOpt.isEmpty()) {
-            log.error("User not found: {}", userId);
+            log.warn("Web3 binding target user was not found");
             return false;
         }
         
@@ -198,7 +198,7 @@ public class Web3AuthService {
                 .build();
         loginMethodRepository.save(newMethod);
         
-        log.info("Bound Web3 wallet {} to user {}", normalizedAddress, userId);
+        log.info("Web3 wallet binding completed");
         
         return true;
     }

@@ -1,10 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# 查看SQLite数据库内容脚本
-# 用法: ./view-db.sh [table_name]
-# 如果不指定表名，则显示所有表和统计信息
+# 查看 SQLite schema 和记录数，不输出表数据。
+# 用法: DEV_DATABASE_FILE=/path/to/file.db ./view-db.sh [table_name]
 
-DB_FILE="./dev-database.db"
+set -euo pipefail
+
+DB_FILE="${DEV_DATABASE_FILE:-./dev-database.db}"
 
 if [ ! -f "$DB_FILE" ]; then
     echo "❌ 数据库文件 $DB_FILE 不存在"
@@ -37,16 +38,13 @@ if [ $# -eq 0 ]; then
     done
     echo ""
 
-    # 显示users表内容
-    echo "👥 Users表内容:"
-    sqlite3 "$DB_FILE" "SELECT id, username, email, auth_provider FROM users;"
-    echo ""
-
-    # 显示user_authorities表内容
-    echo "🔐 User Authorities表内容:"
-    sqlite3 "$DB_FILE" "SELECT * FROM user_authorities;"
 else
     TABLE_NAME="$1"
+    if [[ ! "${TABLE_NAME}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        echo "❌ 表名格式无效"
+        exit 1
+    fi
+
     echo "📋 表: $TABLE_NAME"
     echo "----------------------------------------"
 
@@ -55,12 +53,8 @@ else
     sqlite3 "$DB_FILE" ".schema $TABLE_NAME"
     echo ""
 
-    # 显示表数据
-    echo "数据:"
-    sqlite3 "$DB_FILE" "SELECT * FROM $TABLE_NAME;" | head -20
-
     # 统计行数
-    COUNT=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM $TABLE_NAME;")
+    COUNT=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM \"$TABLE_NAME\";")
     echo ""
     echo "总行数: $COUNT"
 fi

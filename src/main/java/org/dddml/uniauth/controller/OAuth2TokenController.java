@@ -55,7 +55,7 @@ public class OAuth2TokenController {
                 List<Map<String, Object>> keys = new ArrayList<>();
                 keys.add(jwk.toJSONObject());
                 
-                log.debug("JWKS returned successfully with kid: " + kid);
+                log.debug("JWKS returned successfully");
                 return ResponseEntity.ok(Map.of("keys", keys));
             } else {
                 log.error("Public key is not RSA key");
@@ -65,10 +65,10 @@ public class OAuth2TokenController {
                 ));
             }
         } catch (Exception e) {
-            log.error("Error generating JWKS", e);
+            log.error("Error generating JWKS");
             return ResponseEntity.status(500).body(Map.of(
                     "error", "Internal server error",
-                    "message", e.getMessage()
+                    "message", "JWKS generation failed"
             ));
         }
     }
@@ -117,7 +117,7 @@ public class OAuth2TokenController {
                     }
                 }
             } catch (Exception e) {
-                log.debug("Error reading request body", e);
+                log.debug("Introspection request body could not be parsed");
             }
         }
         
@@ -134,7 +134,7 @@ public class OAuth2TokenController {
                     .parseClaimsJws(tokenValue)
                     .getBody();
             
-            log.debug("Token verified successfully, user: {}", claims.getSubject());
+            log.debug("Token introspection succeeded");
             
             // 构造内省响应
             Map<String, Object> response = new LinkedHashMap<>();
@@ -165,7 +165,7 @@ public class OAuth2TokenController {
                     "error", "Invalid signature"
             ));
         } catch (Exception e) {
-            log.warn("Token introspection error", e);
+            log.warn("Token introspection failed");
             return ResponseEntity.ok(Map.of(
                     "active", false,
                     "error", "Invalid token"
@@ -173,43 +173,4 @@ public class OAuth2TokenController {
         }
     }
     
-    /**
-     * Token 内省测试端点（GET方法）
-     * 用于测试端点是否能够成功响应
-     */
-    @GetMapping("/introspect-test")
-    public ResponseEntity<?> introspectTest() {
-        log.debug("Token introspection test request received");
-        
-        // 直接返回 active: false，测试是否能够成功响应
-        return ResponseEntity.ok(Map.of("active", false, "test", "success"));
-    }
-
-    /**
-     * Token 验证测试端点
-     * 用于前端测试 Token 是否有效
-     */
-    @PostMapping("/validate")
-    public ResponseEntity<?> validateToken(@RequestParam String token) {
-        log.debug("Token validation request received");
-        
-        try {
-            Claims claims = Jwts.parserBuilder()
-                    .setSigningKey(jwtTokenService.getPublicKey())
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-            
-            return ResponseEntity.ok(Map.of(
-                    "valid", true,
-                    "message", "Token is valid",
-                    "user", claims.getSubject()
-            ));
-        } catch (Exception e) {
-            return ResponseEntity.ok(Map.of(
-                    "valid", false,
-                    "message", "Token is invalid: " + e.getMessage()
-            ));
-        }
-    }
 }

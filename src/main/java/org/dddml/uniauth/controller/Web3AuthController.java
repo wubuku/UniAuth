@@ -18,14 +18,12 @@ import org.dddml.uniauth.dto.web3.Web3NonceResponse;
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.Web3AuthService;
-import org.dddml.uniauth.service.Web3NonceService;
 import org.dddml.uniauth.util.Web3SignatureUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
-import java.util.Map;
 
 @Slf4j
 @RestController
@@ -53,7 +51,6 @@ public class Web3AuthController {
     }
 
     private final Web3AuthService web3AuthService;
-    private final Web3NonceService web3NonceService;
     private final JwtTokenService jwtTokenService;
 
     @GetMapping("/nonce/{walletAddress}")
@@ -80,32 +77,17 @@ public class Web3AuthController {
             Web3NonceResponse response = web3AuthService.generateNonce(walletAddress);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            log.error("Error generating nonce", e);
+            log.error("Web3 nonce generation failed");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(ErrorResponse.builder()
                             .status(500)
                             .errorCode("INTERNAL_ERROR")
                             .message("Failed to generate nonce")
-                            .detail(e.getMessage())
                             .timestamp(LocalDateTime.now())
                             .build());
         }
     }
     
-    @DeleteMapping("/nonce/{walletAddress}")
-    @Operation(summary = "Delete nonce for testing",
-               description = "Deletes the nonce for a given wallet address (for testing purposes)")
-    public ResponseEntity<?> deleteNonce(@PathVariable String walletAddress) {
-        try {
-            String normalizedAddress = Web3SignatureUtils.normalizeAddress(walletAddress);
-            web3NonceService.deleteNonce(normalizedAddress);
-            return ResponseEntity.ok(Map.of("message", "Nonce deleted"));
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", e.getMessage()));
-        }
-    }
-
     @PostMapping("/verify")
     @Operation(summary = "Verify signature and authenticate",
                description = "Verifies the signature and returns JWT tokens on success")
@@ -163,19 +145,18 @@ public class Web3AuthController {
                     .isNewUser(!web3AuthService.isWalletBound(normalizedAddress))
                     .build();
 
-            log.info("Web3 login successful for wallet: {}, userId: {}", normalizedAddress, user.getId());
+            log.info("Web3 login completed");
 
             setTokenCookies(response, accessToken, refreshToken);
 
             return ResponseEntity.ok(responseBody);
         } catch (Exception e) {
-            log.error("Error during Web3 authentication", e);
+            log.error("Web3 authentication failed");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(ErrorResponse.builder()
                             .status(500)
                             .errorCode("INTERNAL_ERROR")
                             .message("Authentication failed")
-                            .detail(e.getMessage())
                             .timestamp(LocalDateTime.now())
                             .build());
         }
@@ -227,7 +208,7 @@ public class Web3AuthController {
 
             web3AuthService.bindWalletToUser(userId, normalizedAddress);
 
-            log.info("Wallet {} bound to user {}", normalizedAddress, userId);
+            log.info("Web3 wallet binding completed");
 
             return ResponseEntity.ok()
                     .body(ErrorResponse.builder()
@@ -245,13 +226,12 @@ public class Web3AuthController {
                             .timestamp(LocalDateTime.now())
                             .build());
         } catch (Exception e) {
-            log.error("Error binding wallet", e);
+            log.error("Web3 wallet binding failed");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(ErrorResponse.builder()
                             .status(500)
                             .errorCode("INTERNAL_ERROR")
                             .message("Failed to bind wallet")
-                            .detail(e.getMessage())
                             .timestamp(LocalDateTime.now())
                             .build());
         }
@@ -278,13 +258,12 @@ public class Web3AuthController {
             return ResponseEntity.ok()
                     .body(new WalletStatusResponse(normalizedAddress, isBound));
         } catch (Exception e) {
-            log.error("Error checking wallet status", e);
+            log.error("Web3 wallet status check failed");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(ErrorResponse.builder()
                             .status(500)
                             .errorCode("INTERNAL_ERROR")
                             .message("Failed to check wallet status")
-                            .detail(e.getMessage())
                             .timestamp(LocalDateTime.now())
                             .build());
         }

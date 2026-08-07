@@ -20,7 +20,7 @@
 | 文档 | 状态 | 用途 |
 |------|------|------|
 | [DOCUMENTATION_PLAN.md](DOCUMENTATION_PLAN.md) | Draft | 本次文档体系建设范围、顺序和验收标准 |
-| [HARDENING_IMPLEMENTATION_PLAN.md](HARDENING_IMPLEMENTATION_PLAN.md) | Draft | 现有能力全面加固实施规划；2026-08-07 已连续三轮零修改复核通过（SHA-256 `4cfd9364...2ae00`），代码尚未实施 |
+| [HARDENING_IMPLEMENTATION_PLAN.md](HARDENING_IMPLEMENTATION_PLAN.md) | In progress | 现有能力全面加固实施规划；Phase 0 H0.1-H0.3 已通过 2026-08-07 门禁，H1-H8 未实施 |
 
 ## 邮箱与密码
 

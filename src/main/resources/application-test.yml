@@ -3,10 +3,10 @@
 
 spring:
   datasource:
-    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DATABASE:blacksheep_dev}
+    url: jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DATABASE}
     driver-class-name: org.postgresql.Driver
-    username: ${POSTGRES_USER:postgres}
-    password: ${POSTGRES_PASSWORD:123456}
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2
@@ -16,7 +16,7 @@ spring:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
       ddl-auto: update  # 由schema-postgresql.sql处理
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
@@ -28,8 +28,7 @@ spring:
     init:
       mode: always  # 总是执行初始化脚本
       schema-locations: classpath:schema-postgresql.sql
-      # 注意：测试数据不再由SQL脚本提供，而是由TestEnvironmentInitializer动态创建
-      # 这确保密码哈希正确匹配当前的PasswordEncoder
+      # 演示数据默认关闭；仅在 disposable 数据库上显式启用。
 
   # Spring Session JDBC 配置 - 在 test 环境使用 PostgreSQL 持久化
   # 演示多个 test 实例共享同一个 session 存储
@@ -56,10 +55,10 @@ spring:
 
 logging:
   level:
-    com.example.oauth2demo: INFO
+    org.dddml.uniauth: INFO
     org.springframework.security: INFO
     org.springframework.web: INFO
-    org.hibernate.SQL: DEBUG
+    org.hibernate.SQL: INFO
 
 app:
   web3:

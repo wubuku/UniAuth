@@ -46,7 +46,7 @@ public class LoginMethodController {
                 "count", methodDtos.size()
             ));
         } catch (Exception e) {
-            log.error("Failed to get login methods", e);
+            log.error("Failed to get login methods");
             return ResponseEntity.status(500).body(
                 Map.of("error", "获取登录方式失败", "details", e.getMessage())
             );
@@ -76,7 +76,7 @@ public class LoginMethodController {
                 Map.of("error", e.getMessage())
             );
         } catch (Exception e) {
-            log.error("Failed to remove login method", e);
+            log.error("Failed to remove login method");
             return ResponseEntity.status(500).body(
                 Map.of("error", "移除登录方式失败", "details", e.getMessage())
             );
@@ -106,7 +106,7 @@ public class LoginMethodController {
                 Map.of("error", e.getMessage())
             );
         } catch (Exception e) {
-            log.error("Failed to set primary login method", e);
+            log.error("Failed to set primary login method");
             return ResponseEntity.status(500).body(
                 Map.of("error", "设置主登录方式失败", "details", e.getMessage())
             );
@@ -179,7 +179,7 @@ public class LoginMethodController {
                 Map.of("error", e.getMessage())
             );
         } catch (Exception e) {
-            log.error("Failed to add local login method", e);
+            log.error("Failed to add local login method");
             return ResponseEntity.status(500).body(
                 Map.of("error", "添加本地登录方式失败", "details", e.getMessage())
             );

@@ -48,7 +48,7 @@ public class EmailVerificationCodeService {
 
     @Transactional
     public void sendVerificationCode(String email, VerificationPurpose purpose, Map<String, Object> metadata) {
-        log.info("Sending verification code for email: {}, purpose: {}", email, purpose);
+        log.info("Sending verification code for purpose {}", purpose);
 
         if (emailService.isAvailable()) {
             String result = emailService.sendTemplateEmail(
@@ -60,7 +60,7 @@ public class EmailVerificationCodeService {
             ).name();
 
             if (result.equals("FAILED") || result.equals("RATE_LIMITED")) {
-                log.warn("Email service returned: {}", result);
+                log.warn("Email service did not accept the verification request");
             }
         } else {
             log.warn("Email service is unavailable, verification code will still be created");
@@ -78,7 +78,7 @@ public class EmailVerificationCodeService {
             .build();
 
         verificationCodeRepository.save(code);
-        log.info("Verification code created for email: {}", email);
+        log.info("Verification code created for purpose {}", purpose);
     }
 
     @Transactional
@@ -87,7 +87,7 @@ public class EmailVerificationCodeService {
     }
 
     public CodeCheckResult checkVerificationCode(String email, String code, VerificationPurpose purpose) {
-        log.info("Checking verification code for email: {}, purpose: {}", email, purpose);
+        log.debug("Checking verification code for purpose {}", purpose);
 
         EmailVerificationCode codeRecord = verificationCodeRepository
             .findFirstByEmailAndPurposeAndIsUsedFalseOrderByCreatedAtDesc(email, purpose)
@@ -110,7 +110,7 @@ public class EmailVerificationCodeService {
     }
 
     public VerificationResult verifyCode(String email, String code, VerificationPurpose purpose) {
-        log.info("Verifying code for email: {}, purpose: {}", email, purpose);
+        log.debug("Verifying code for purpose {}", purpose);
 
         EmailVerificationCode codeRecord = verificationCodeRepository
             .findFirstByEmailAndPurposeAndIsUsedFalseOrderByCreatedAtDesc(email, purpose)
@@ -208,7 +208,7 @@ public class EmailVerificationCodeService {
         try {
             return objectMapper.writeValueAsString(metadata);
         } catch (JsonProcessingException e) {
-            log.error("Failed to serialize metadata", e);
+            log.error("Failed to serialize verification metadata");
             return null;
         }
     }
@@ -220,7 +220,7 @@ public class EmailVerificationCodeService {
         try {
             return objectMapper.readValue(metadata, new TypeReference<Map<String, Object>>() {});
         } catch (JsonProcessingException e) {
-            log.error("Failed to deserialize metadata", e);
+            log.error("Failed to deserialize verification metadata");
             return new HashMap<>();
         }
     }

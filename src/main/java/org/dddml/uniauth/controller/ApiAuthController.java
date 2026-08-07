@@ -2,11 +2,11 @@ package org.dddml.uniauth.controller;
 
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.repository.UserRepository;
-import org.dddml.uniauth.service.JwtValidationService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.core.user.OAuth2User;
@@ -21,13 +21,11 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api")
+@RequiredArgsConstructor
+@Slf4j
 public class ApiAuthController {
 
-    @Autowired
-    private JwtValidationService jwtValidationService;
-
-    @Autowired
-    private UserRepository userRepository;
+    private final UserRepository userRepository;
 
     /**
      * 获取当前用户信息
@@ -111,119 +109,24 @@ public class ApiAuthController {
     @PostMapping("/logout")
     public ResponseEntity<?> logout(HttpServletRequest request, HttpServletResponse response) {
         try {
-            System.out.println("=== LOGOUT API CALLED ===");
-            System.out.println("Session ID before: " + (request.getSession(false) != null ? request.getSession(false).getId() : "null"));
-            System.out.println("Authentication before: " + org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication());
-
             // 清除Spring Security认证
             org.springframework.security.core.context.SecurityContextHolder.clearContext();
 
             // 使当前session无效
             if (request.getSession(false) != null) {
                 request.getSession(false).invalidate();
-                System.out.println("Session invalidated");
             }
 
             // 清除cookies
             clearAuthCookies(response);
 
-            System.out.println("Authentication after: " + org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication());
-            System.out.println("=== LOGOUT COMPLETED ===");
-
+            log.info("API logout completed");
             return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
         } catch (Exception e) {
-            System.err.println("Logout error: " + e.getMessage());
-            e.printStackTrace();
+            log.warn("API logout encountered an error");
             // 即使出错也要尝试清除cookies
             clearAuthCookies(response);
             return ResponseEntity.ok(Map.of("message", "Logged out with warnings"));
-        }
-    }
-
-    /**
-     * 验证Google ID Token
-     * POST /api/validate-google-token
-     */
-    @PostMapping("/validate-google-token")
-    public ResponseEntity<?> validateGoogleToken(HttpServletRequest request) {
-        try {
-            // 从cookie中获取Google ID Token
-            String token = null;
-            if (request.getCookies() != null) {
-                for (jakarta.servlet.http.Cookie cookie : request.getCookies()) {
-                    if ("id_token".equals(cookie.getName())) {
-                        token = cookie.getValue();
-                        break;
-                    }
-                }
-            }
-
-            if (token == null || token.trim().isEmpty()) {
-                return ResponseEntity.badRequest().body(Map.of("valid", false, "error", "未找到Google ID Token"));
-            }
-
-            Map<String, Object> result = jwtValidationService.validateIdToken(token);
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("valid", false, "error", e.getMessage()));
-        }
-    }
-
-    /**
-     * 验证GitHub Access Token
-     * POST /api/validate-github-token
-     */
-    @PostMapping("/validate-github-token")
-    public ResponseEntity<?> validateGithubToken(HttpServletRequest request) {
-        try {
-            // 从cookie中获取GitHub Access Token
-            String token = null;
-            if (request.getCookies() != null) {
-                for (jakarta.servlet.http.Cookie cookie : request.getCookies()) {
-                    if ("github_access_token".equals(cookie.getName())) {
-                        token = cookie.getValue();
-                        break;
-                    }
-                }
-            }
-
-            if (token == null || token.trim().isEmpty()) {
-                return ResponseEntity.badRequest().body(Map.of("valid", false, "error", "未找到GitHub Access Token"));
-            }
-
-            Map<String, Object> result = jwtValidationService.validateGitHubToken(token);
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("valid", false, "error", e.getMessage()));
-        }
-    }
-
-    /**
-     * 验证X Access Token
-     * POST /api/validate-x-token
-     */
-    @PostMapping("/validate-x-token")
-    public ResponseEntity<?> validateTwitterToken(HttpServletRequest request) {
-        try {
-            // 从cookie中获取Twitter Access Token
-            String token = null;
-            if (request.getCookies() != null) {
-                for (jakarta.servlet.http.Cookie cookie : request.getCookies()) {
-                    if ("twitter_access_token".equals(cookie.getName())) {
-                        token = cookie.getValue();
-                        break;
-                    }
-                }
-            }
-
-            if (token == null || token.trim().isEmpty()) {
-                return ResponseEntity.badRequest().body(Map.of("valid", false, "error", "未找到Twitter Access Token"));
-            }
-
-            Map<String, Object> result = jwtValidationService.validateTwitterToken(token);
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("valid", false, "error", e.getMessage()));
         }
     }
 

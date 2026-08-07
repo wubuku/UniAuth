@@ -3,6 +3,8 @@ package org.dddml.uniauth.service;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.stereotype.Service;
@@ -11,10 +13,12 @@ import jakarta.annotation.PostConstruct;
 import java.security.*;
 import java.security.spec.X509EncodedKeySpec;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.nio.file.FileStore;
 import java.util.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermission;
 
 /**
  * JWT Token生成和管理服务
@@ -24,11 +28,17 @@ import java.nio.file.Paths;
 @Service
 @Getter
 @ConfigurationProperties(prefix = "jwt")
+@Slf4j
 public class JwtTokenService {
 
     private final PrivateKey privateKey;
     private final PublicKey publicKey;
+    private final Path rsaKeyFile;
     private static final int RSA_KEY_SIZE = 2048;
+    private static final Set<PosixFilePermission> PRIVATE_KEY_PERMISSIONS = Set.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.OWNER_WRITE
+    );
 
     // JWT配置属性
     private RsaConfig rsa;
@@ -101,11 +111,12 @@ public class JwtTokenService {
         }
     }
 
-    public JwtTokenService() {
-        // 构造函数中只初始化密钥对，不设置配置默认值
-        // 配置默认值将在 @PostConstruct 方法中设置，确保 Spring 的配置注入已完成
-        String rsaKeyFilePath = "rsa-keys.ser"; // 临时使用默认值
-        KeyPair keyPair = loadOrGenerateKeyPair(rsaKeyFilePath);
+    public JwtTokenService(@Value("${jwt.rsa.key-file}") String rsaKeyFilePath) {
+        if (rsaKeyFilePath == null || rsaKeyFilePath.isBlank()) {
+            throw new IllegalArgumentException("jwt.rsa.key-file must be configured");
+        }
+        this.rsaKeyFile = Path.of(rsaKeyFilePath).toAbsolutePath().normalize();
+        KeyPair keyPair = loadOrGenerateKeyPair(rsaKeyFile);
         this.privateKey = keyPair.getPrivate();
         this.publicKey = keyPair.getPublic();
     }
@@ -120,9 +131,7 @@ public class JwtTokenService {
         if (rsa == null) {
             rsa = new RsaConfig();
         }
-        if (rsa.getKeyFile() == null || rsa.getKeyFile().isEmpty()) {
-            rsa.setKeyFile("rsa-keys.ser");
-        }
+        rsa.setKeyFile(rsaKeyFile.toString());
         
         if (expires == null) {
             expires = new ExpiresConfig();
@@ -147,72 +156,31 @@ public class JwtTokenService {
             token.setKid("key-1");
         }
         
-        // 打印配置信息（此时配置已经注入完成）
-        System.out.println("\n========================================");
-        System.out.println("📋 JWT Configuration Status");
-        System.out.println("========================================");
-        System.out.println("✅ JwtTokenService initialized with RSA-2048 keys");
-        System.out.println("   Public Key Algorithm: " + publicKey.getAlgorithm());
-        System.out.println("   Key Size: " + RSA_KEY_SIZE);
-        System.out.println("   Public Key Format: " + publicKey.getFormat());
-        System.out.println("   Key File Path: " + rsa.getKeyFile());
-        System.out.println("\n⏱️  Token Expiration Configuration:");
-        System.out.println("   Access Token Expires In: " + expires.getAccessToken() / 1000 + " seconds (" + expires.getAccessToken() / 60000 + " minutes)");
-        System.out.println("   Refresh Token Expires In: " + expires.getRefreshToken() / 1000 + " seconds (" + expires.getRefreshToken() / 86400000 + " days)");
-        System.out.println("\n🎫 Token Claims Configuration:");
-        System.out.println("   Token Issuer (iss): " + token.getIssuer());
-        System.out.println("   Token Audience (aud): " + token.getAudience());
-        System.out.println("   Token Key ID (kid): " + token.getKid());
-        System.out.println("========================================\n");
-        
-        // 打印公钥的Base64编码，用于调试
-        if (publicKey instanceof java.security.interfaces.RSAPublicKey) {
-            java.security.interfaces.RSAPublicKey rsaPublicKey = (java.security.interfaces.RSAPublicKey) publicKey;
-            System.out.println("🔐 RSA Public Key Details:");
-            System.out.println("   RSA Public Key Modulus Length: " + rsaPublicKey.getModulus().bitLength());
-            System.out.println("   RSA Public Key Exponent: " + rsaPublicKey.getPublicExponent());
-            System.out.println("========================================\n");
-        }
+        log.info("JWT signing service initialized with RSA-{} keys", RSA_KEY_SIZE);
     }
 
     /**
      * 加载或生成 RSA 密钥对
      */
-    private KeyPair loadOrGenerateKeyPair(String rsaKeyFilePath) {
-        try {
-            // 尝试从文件加载密钥对
-            Path keyFile = Paths.get(rsaKeyFilePath);
-            if (Files.exists(keyFile)) {
-                System.out.println("🔑 Loading RSA key pair from file: " + rsaKeyFilePath);
+    private KeyPair loadOrGenerateKeyPair(Path keyFile) {
+        if (Files.exists(keyFile)) {
+            try {
+                requirePrivateKeyPermissions(keyFile);
                 return loadKeyPairFromFile(keyFile);
+            } catch (Exception e) {
+                throw new IllegalStateException("Configured RSA key file could not be loaded", e);
             }
-        } catch (Exception e) {
-            System.out.println("⚠️ Failed to load key pair from file: " + e.getMessage());
         }
 
-        // 生成新的密钥对
-        System.out.println("🔄 Generating new RSA-2048 key pair...");
         try {
             KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
             keyGen.initialize(RSA_KEY_SIZE);
             KeyPair keyPair = keyGen.generateKeyPair();
-            
-            // 尝试保存到文件
-            try {
-                saveKeyPairToFile(keyPair, Paths.get(rsaKeyFilePath));
-                System.out.println("💾 Key pair saved to: " + rsaKeyFilePath);
-                System.out.println("\n⚠️  IMPORTANT: A new RSA key pair has been generated and saved to " + rsaKeyFilePath);
-                System.out.println("   For production environments, it is recommended to:");
-                System.out.println("   1. Backup this key file to a secure location");
-                System.out.println("   2. Specify this key file path in your configuration using 'jwt.rsa.key-file' property");
-                System.out.println("   3. Ensure this key file is not committed to version control\n");
-            } catch (Exception e) {
-                System.out.println("⚠️ Failed to save key pair to file: " + e.getMessage());
-            }
-            
+            saveKeyPairToFile(keyPair, keyFile);
+            log.warn("A new RSA key pair was generated; verify external key management before production use");
             return keyPair;
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("Failed to generate RSA key pair", e);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to generate and persist RSA key pair", e);
         }
     }
 
@@ -221,12 +189,18 @@ public class JwtTokenService {
      */
     private KeyPair loadKeyPairFromFile(Path keyFile) throws Exception {
         byte[] keyData = Files.readAllBytes(keyFile);
+        if (keyData.length < 5) {
+            throw new IllegalArgumentException("RSA key file is truncated");
+        }
         
         // 简单的格式：privateKey长度(4字节) + privateKeyData + publicKeyData
         int privateKeyLength = ((keyData[0] & 0xFF) << 24) |
                               ((keyData[1] & 0xFF) << 16) |
                               ((keyData[2] & 0xFF) << 8) |
                               (keyData[3] & 0xFF);
+        if (privateKeyLength <= 0 || privateKeyLength >= keyData.length - 4) {
+            throw new IllegalArgumentException("RSA key file has an invalid private key length");
+        }
         
         byte[] privateKeyData = new byte[privateKeyLength];
         byte[] publicKeyData = new byte[keyData.length - 4 - privateKeyLength];
@@ -241,9 +215,9 @@ public class JwtTokenService {
         
         X509EncodedKeySpec publicKeySpec = new X509EncodedKeySpec(publicKeyData);
         PublicKey publicKey = keyFactory.generatePublic(publicKeySpec);
-        
+
         KeyPair loadedKeyPair = new KeyPair(publicKey, privateKey);
-        System.out.println("✅ RSA key pair loaded from file");
+        log.info("RSA key pair loaded");
         return loadedKeyPair;
     }
 
@@ -265,7 +239,34 @@ public class JwtTokenService {
         System.arraycopy(privateKeyData, 0, keyFileData, 4, privateKeyData.length);
         System.arraycopy(publicKeyData, 0, keyFileData, 4 + privateKeyData.length, publicKeyData.length);
         
-        Files.write(keyFile, keyFileData);
+        Path parent = keyFile.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+        Files.write(
+                keyFile,
+                keyFileData,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE
+        );
+        restrictKeyFilePermissions(keyFile);
+        requirePrivateKeyPermissions(keyFile);
+    }
+
+    private void restrictKeyFilePermissions(Path keyFile) throws Exception {
+        FileStore fileStore = Files.getFileStore(keyFile);
+        if (fileStore.supportsFileAttributeView("posix")) {
+            Files.setPosixFilePermissions(keyFile, PRIVATE_KEY_PERMISSIONS);
+        }
+    }
+
+    private void requirePrivateKeyPermissions(Path keyFile) throws Exception {
+        FileStore fileStore = Files.getFileStore(keyFile);
+        if (fileStore.supportsFileAttributeView("posix")
+                && !Files.getPosixFilePermissions(keyFile).equals(PRIVATE_KEY_PERMISSIONS)) {
+            throw new IllegalStateException("RSA key file must be readable and writable only by its owner");
+        }
     }
 
     /**

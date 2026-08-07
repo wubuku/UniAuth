@@ -19,24 +19,17 @@
 
 ## Spring Profiles
 
-`application.yml` 当前硬编码：
-
-```yaml
-spring:
-  profiles:
-    active: test
-```
-
-因此裸跑 `mvn spring-boot:run` 会激活 `test`。
+`application.yml` 不再设置 `spring.profiles.active`。直接运行 Maven 时必须显式选择
+`dev`、`test` 或 `prod`；根启动脚本默认使用隔离的 `dev` SQLite 目标。
 
 | Profile | 数据库 | 启动时 SQL/Hibernate | 数据风险 |
 |---------|--------|----------------------|----------|
-| `dev` | `jdbc:sqlite:./dev-database.db` | SQL init always；`ddl-auto: none` | 初始化器删除全部用户/登录方式 |
-| `test` | PostgreSQL，默认库 `blacksheep_dev` | SQL init always；`ddl-auto: update` | 初始化器删除全部用户/登录方式 |
-| `prod` | 环境变量指定 PostgreSQL | SQL init never；`ddl-auto: validate` | 不清空用户，但依赖外部 schema |
+| `dev` | 默认 `jdbc:sqlite:./dev-database.db`；启动脚本覆盖为 `uniauth-demo.db` | SQL init always；`ddl-auto: none` | 不删除用户；SQLite schema 仍不完整 |
+| `test` | 必须显式提供 PostgreSQL 五项连接变量 | SQL init always；`ddl-auto: update` | 会改变 schema，只能使用 disposable 数据库 |
+| `prod` | 环境变量指定 PostgreSQL | SQL init never；`ddl-auto: validate` | 依赖外部 schema |
 
-`test` 不是 Maven 自动化测试专用的隔离内存环境。它默认连接真实 PostgreSQL，
-且回退密码在配置中明文存在。
+`test` 不是 Maven 自动化测试专用的隔离内存环境。配置已移除 host、database、
+username 和 password 回退，但运行者仍必须确保目标确实可丢弃。
 
 ## 数据初始化
 
@@ -44,12 +37,11 @@ spring:
 
 - `schema-sqlite.sql`
 - `data-sqlite.sql`
-- `DevEnvironmentInitializer`
+- Hibernate `ddl-auto: none`
 
 ### test
 
 - `schema-postgresql.sql`
-- `TestEnvironmentInitializer`
 - Hibernate `ddl-auto: update`
 
 ### prod
@@ -57,6 +49,17 @@ spring:
 - 不自动执行 SQL init。
 - Hibernate 只验证 schema。
 - Spring Session 表必须由部署流程创建。
+
+### 演示数据
+
+旧的 profile 初始化器已删除。`DemoDataInitializer` 只有在以下条件同时成立时才加载：
+
+- profile 是 `dev` 或 `test`；
+- `app.demo-data.enabled=true`；
+- `app.demo-data.disposable=true`；
+- JDBC 数据库名符合 test/demo 安全规则。
+
+初始化器只 upsert `testlocal`、`testsso`、`testboth` 三个受管账户，不执行 `deleteAll()`。
 
 ### Migration 目录
 
@@ -109,8 +112,8 @@ CORS 来源目前由多处共同定义：
 | 配置 | 当前值/行为 |
 |------|-------------|
 | 算法 | RS256 |
-| key file 配置 | `jwt.rsa.key-file: rsa-keys.ser` |
-| 实际构造加载 | 硬编码 `rsa-keys.ser` |
+| key file 配置 | `${JWT_RSA_KEY_FILE:.local/uniauth/rsa-keys.ser}` |
+| 实际构造加载 | 构造阶段读取 `jwt.rsa.key-file` |
 | issuer | `https://auth.example.com` |
 | audience | `resource-server` |
 | key id | `key-1` |
@@ -119,12 +122,12 @@ CORS 来源目前由多处共同定义：
 
 - `.env`
 - `jwt-secret.key`
-- `rsa-keys.ser`
+- `.local/uniauth/rsa-keys.ser`
 - OAuth2 client secret
 - PostgreSQL password
 
-`.env`、数据库和 `jwt-secret.key` 被忽略；`rsa-keys.ser` 当前已被 Git 跟踪。
-不要打印、复制到文档或无意覆盖密钥。
+`.env`、数据库、`jwt-secret.key` 和本地 RSA key 被忽略。历史提交中的根目录
+`rsa-keys.ser` 已暴露，不能继续用于真实环境；生产部署必须显式配置外部 key 路径并轮换。
 
 ## 前端构建
 
@@ -142,11 +145,12 @@ Vite：
 当前代码：
 
 - 监听 `5002`。
-- 认证服务器和 JWKS URL 硬编码为历史隧道域名。
-- HTTPS 请求禁用了证书验证。
-- issuer/audience 硬编码。
+- `AUTH_SERVER_URL` 默认 `http://localhost:8081`，可用 `JWKS_URL` 覆盖 JWKS。
+- HTTPS 使用 `requests` 默认的证书验证。
+- `JWT_ISSUER`、`JWT_AUDIENCE`、`RESOURCE_SERVER_PORT` 和 CORS origins 均可由环境变量覆盖。
+- JWT 只接受 RS256，并要求精确匹配 `kid`。
 
-组件 README 中的 `5001` 是历史值。后续应改为环境变量驱动，并恢复 TLS 验证。
+详细运行和离线测试命令见组件 README。
 
 ## 配置优先级
 

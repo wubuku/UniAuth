@@ -2,6 +2,9 @@ server:
   port: 8081  # 隧道暴露端口
 
 app:
+  demo-data:
+    enabled: false
+    disposable: false
   frontend:
     type: react  # 可选值: thymeleaf（传统模板）, react（现代SPA）
     url: https://blacksheepmedia.xyz  # 前端地址，用于OAuth2回调重定向
@@ -68,7 +71,7 @@ app:
 jwt:
   # RSA密钥配置
   rsa:
-    key-file: rsa-keys.ser
+    key-file: ${JWT_RSA_KEY_FILE:.local/uniauth/rsa-keys.ser}
   # Token过期时间配置（毫秒）
   expires:
     access-token: 3600000  # 1小时
@@ -82,10 +85,9 @@ jwt:
 spring:
   application:
     name: uni-auth
-  profiles:
-    active: test
-    # dev 默认使用 SQLite 数据库，test 使用 PostgreSQL 数据库，prod 使用 PostgreSQL 数据库。
-    # 当需要使用 PostgreSQL 测试时，请使用 test 环境。
+
+  # 启动时必须显式选择 dev、test 或 prod profile。
+  # 仓库默认配置不连接任何数据库。
 
   # 数据库配置由环境特定的配置文件（application-{profile}.yml）接管
   # - application-dev.yml: SQLite配置
@@ -112,23 +114,23 @@ spring:
       client:
         registration:
           google:
-            client-id: ${GOOGLE_CLIENT_ID:your-client-id}
-            client-secret: ${GOOGLE_CLIENT_SECRET:your-client-secret}
+            client-id: ${GOOGLE_CLIENT_ID}
+            client-secret: ${GOOGLE_CLIENT_SECRET}
             scope:
               - openid
               - profile
               - email
             redirect-uri: https://blacksheepmedia.xyz/oauth2/callback
           github:
-            client-id: ${GITHUB_CLIENT_ID:your-github-client-id}
-            client-secret: ${GITHUB_CLIENT_SECRET:your-github-client-secret}
+            client-id: ${GITHUB_CLIENT_ID}
+            client-secret: ${GITHUB_CLIENT_SECRET}
             scope:
               - user:email
               - read:user
             redirect-uri: https://blacksheepmedia.xyz/oauth2/callback
           x:  # ✅ X API v2：提供者名改为 'x'
-            client-id: ${TWITTER_CLIENT_ID:your-twitter-client-id}
-            client-secret: ${TWITTER_CLIENT_SECRET:your-twitter-client-secret}
+            client-id: ${TWITTER_CLIENT_ID}
+            client-secret: ${TWITTER_CLIENT_SECRET}
             authorization-grant-type: authorization_code
             scope:
               - tweet.read
@@ -170,9 +172,9 @@ spring:
 
 logging:
   level:
-    org.dddml.uniauth: DEBUG
-    org.springframework.security: DEBUG
-    org.springframework.web: DEBUG
-    org.springframework.security.oauth2: DEBUG
-    org.springframework.session: DEBUG                    # 显示 Session 操作日志
-    org.springframework.session.jdbc.JdbcOperationsSessionRepository: DEBUG  # 显示 JDBC Session 详细操作
+    org.dddml.uniauth: INFO
+    org.springframework.security: INFO
+    org.springframework.web: INFO
+    org.springframework.security.oauth2: INFO
+    org.springframework.session: INFO
+    org.springframework.session.jdbc.JdbcOperationsSessionRepository: INFO

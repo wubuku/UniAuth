@@ -1,5 +1,6 @@
 # Development Environment Configuration
 # 使用SQLite数据库进行快速开发和测试
+# 演示数据默认关闭。显式启用时请将数据库文件改为符合 demo/test 命名规则的可丢弃目标。
 
 spring:
   datasource:
@@ -12,7 +13,7 @@ spring:
     database-platform: org.hibernate.community.dialect.SQLiteDialect
     hibernate:
       ddl-auto: none  # 不自动创建表，由schema.sql处理
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         dialect: org.hibernate.community.dialect.SQLiteDialect
@@ -34,7 +35,7 @@ spring:
 
 logging:
   level:
-    com.example.oauth2demo: DEBUG
-    org.springframework.security: DEBUG
-    org.springframework.web: DEBUG
-    org.springframework.security.oauth2: DEBUG
+    org.dddml.uniauth: INFO
+    org.springframework.security: INFO
+    org.springframework.web: INFO
+    org.springframework.security.oauth2: INFO

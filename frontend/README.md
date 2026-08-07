@@ -84,6 +84,7 @@ npm run dev
 ### 构建生产版本
 
 ```bash
+npx tsc --noEmit
 npm run build
 ```
 
@@ -97,12 +98,23 @@ npm run preview
 
 ## 环境变量
 
-创建 `.env.local` 文件配置API地址：
+日常开发可通过 shell 环境变量配置 API 地址：
 
-```env
+```bash
 VITE_API_BASE_URL=http://localhost:8081
 VITE_OAUTH_REDIRECT_URL=http://localhost:5173/oauth2/callback
+npm run dev
 ```
+
+自动化验收不要持久化 `.env.local`；Playwright 通过进程环境和 route mock 注入测试配置。
+
+### 浏览器测试
+
+```bash
+npm run test:e2e
+```
+
+该命令启动隔离 Vite server，并使用 Mock API 覆盖核心账户页面。
 
 ## API接口
 
@@ -110,9 +122,6 @@ VITE_OAUTH_REDIRECT_URL=http://localhost:5173/oauth2/callback
 
 - `GET /api/user` - 获取当前用户信息
 - `POST /api/auth/logout` - 用户登出
-- `POST /api/validate-google-token` - 验证Google Token
-- `POST /api/validate-github-token` - 验证GitHub Token
-- `POST /api/validate-x-token` - 验证 X Token
 
 ### OAuth2登录
 
@@ -184,7 +193,7 @@ try {
    cd frontend
    npm run build  # 构建并自动复制到 ../src/main/resources/static/
    cd ..
-   # 仅在确认 dev-database.db 可清空后启动
+   # dev 仍应使用隔离、可丢弃的 SQLite；演示初始化器默认关闭且不会全表清理
    SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
    ```
 4. **访问地址**：前端和后端都在 `http://localhost:8081`
@@ -193,7 +202,7 @@ try {
 
 前端运行在 `http://localhost:5173`，后端运行在 `http://localhost:8081`。
 - 前端：`npm run dev`
-- 后端：显式选择 profile；不要裸跑默认 `test`
+- 后端：显式选择 profile；仓库没有默认 profile
 
 ### 生产环境
 

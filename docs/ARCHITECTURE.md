@@ -64,7 +64,8 @@ Authorization Server 协议已经完整接通。
 1. Flask 从 Authorization header 获取 bearer token。
 2. 从 UniAuth `/oauth2/jwks` 获取并缓存公钥。
 3. 验证签名、`exp`、audience 和 issuer。
-4. 当前代码仍把 `sub` 当 username 展示；实际 `sub` 是用户 UUID。
+4. 响应优先展示 `username` claim；仅为兼容旧 token 回退到 `sub`。
+   新 token 的 `sub` 是用户 UUID，不是显示用户名。
 
 ## 安全过滤器链
 
@@ -72,7 +73,7 @@ Authorization Server 协议已经完整接通。
 
 | Order | 配置 | Matcher | 当前行为 |
 |-------|------|---------|----------|
-| 0 | `AuthApiConfig` | `/api/auth/**` | 全部 `permitAll`，CSRF 禁用 |
+| 0 | `AuthApiConfig` | `/api/auth/**` | method/path 公开 allowlist；其余 `denyAll`；CSRF 禁用 |
 | 1 | `AuthorizationServerConfig` | 指定 `/oauth2/*` 端点 | 全部 `permitAll`，CSRF 禁用 |
 | 2 | `ResourceServerConfig` | `/api/**` | JWT Resource Server；除认证 API 外默认需要认证 |
 | 3 | `SecurityConfig` | 其余请求 | OAuth2 登录、SPA/Web、CSRF 和授权规则 |
@@ -120,9 +121,9 @@ access token 使用 RS256，当前默认：
 
 access token 默认 1 小时，refresh token 默认 7 天。
 
-`jwt.rsa.key-file` 目前不能决定构造阶段加载的文件：
-`JwtTokenService` 构造函数先硬编码读取 `rsa-keys.ser`。仓库还跟踪了该私钥文件，
-这是后续加固的 P0 问题。
+`JwtTokenService` 构造阶段读取 `jwt.rsa.key-file`。默认路径是 ignored 的
+`.local/uniauth/rsa-keys.ser`，新生成文件在 POSIX 文件系统上限制为 owner read/write。
+该格式仍是本地二进制文件而非生产密钥库；历史提交中的根目录私钥必须视为已暴露。
 
 ## 数据持久化
 
@@ -134,7 +135,7 @@ access token 默认 1 小时，refresh token 默认 7 天。
 
 当前问题：
 
-- `dev` 与 `test` 初始化器启动时都会删除全部用户和登录方式。
+- 演示数据默认关闭；显式启用时只允许 disposable test/demo 数据库并只 upsert 受管账户。
 - `src/main/resources/db/migration/V*.sql` 没有迁移工具执行。
 - SQLite schema 缺少 `web3_nonces`、`email_verification_codes` 和部分登录方式列。
 - Spring Session 生产表需要外部预置。

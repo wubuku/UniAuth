@@ -16,7 +16,7 @@
 
 1. 不要裸跑 `mvn spring-boot:run`。
 2. 启动前明确 profile、数据库 URL、端口和数据是否可丢弃。
-3. `dev` 和 `test` 都会清空用户与登录方式。
+3. 演示数据默认关闭；启用时必须同时设置 disposable 标志并使用 test/demo 数据库名。
 4. 不打印或提交 `.env`、数据库密码、OAuth2 secret 和私钥。
 5. 不手改 `src/main/resources/static/`。
 6. 不把 `docs/drafts/` 中的代码片段当作当前实现。
@@ -26,16 +26,19 @@
 后端编译与 Maven 测试生命周期：
 
 ```bash
-mvn clean test
+mvn clean compile test-compile
+mvn test
 ```
 
-当前没有 Java 测试源码，因此成功只证明编译和测试生命周期可完成。
+当前已有 Phase 0 配置、危险端点和敏感输出回归测试；必须检查实际 test count。
 
 前端生产构建：
 
 ```bash
 cd frontend
+npx tsc --noEmit
 npm run build
+npm run test:e2e
 ```
 
 构建会重建 Spring Boot 静态资源目录。
@@ -61,20 +64,17 @@ UI 可以加载，但认证 API 会失败。
 
 ## Spring 应用启动
 
-仓库当前没有“不会清数据”的本地 profile。
-
-若只使用可丢弃 SQLite 数据进行开发：
-
-1. 确认 `dev-database.db` 可被清空。
-2. 确认没有把重要数据库映射到该路径。
-3. 显式启动：
+仓库不再默认选择 profile。若使用 SQLite 开发，显式启动：
 
 ```bash
 SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
 ```
 
+根 `start.sh` 和 `start-with-frontend.sh` 默认将 `dev` 数据库覆盖为 ignored 的
+`uniauth-demo.db`，并关闭 JDBC Session 存储以保证本地启动路径可复现。
+
 不要把 `test` profile 指向共享、生产或不可恢复的 PostgreSQL。必须使用 PostgreSQL
-集成验证时，先创建隔离数据库并显式覆盖所有连接变量。
+集成验证时，先创建 test/demo 命名的隔离数据库并显式提供全部连接变量。
 
 ## 日常改动路径
 
@@ -95,7 +95,7 @@ SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
 
 1. 修改 `python-resource-server/app.py` 或配套脚本。
 2. 保持 issuer、audience、claim 和 JWKS 契约与后端一致。
-3. 运行 Python 语法检查。
+3. 运行 Python 语法检查和 `python3 -m unittest -v test_app.py`。
 4. 外部网络集成测试必须使用显式 URL 和有效 TLS。
 
 ### 数据库
@@ -137,7 +137,8 @@ entity 或 schema 变更至少核对：
 - `.env`
 - 测试报告和临时日志
 
-`rsa-keys.ser` 当前已被跟踪，处理方式将在加固计划中单独设计；不要在普通开发改动中轮换。
+默认本地 RSA key 写入 ignored 的 `.local/uniauth/rsa-keys.ser`。历史根目录 key
+已从当前索引移除且必须视为已暴露；真实环境应通过 `JWT_RSA_KEY_FILE` 使用外部管理路径。
 
 ## 文档工作流
 
