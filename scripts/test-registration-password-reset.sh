@@ -48,7 +48,7 @@ value_or_empty() {
 echo "Registration and password-reset API contract check"
 echo "Waiting for backend..."
 for attempt in {1..30}; do
-  if curl -fsS "${BASE_URL}/" >/dev/null 2>&1; then
+  if curl -fsS "${BASE_URL}/oauth2/jwks" >/dev/null 2>&1; then
     break
   fi
   if [ "${attempt}" -eq 30 ]; then
