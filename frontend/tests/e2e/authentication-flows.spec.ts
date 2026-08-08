@@ -116,8 +116,8 @@ test('email registration sends one code and completes verification', async ({ pa
       body: JSON.stringify({
         success: true,
         message: 'sent',
-        expiresIn: 600,
-        resendAfter: 60,
+        expiresIn: 120,
+        resendAfter: 7,
       }),
     });
   });
@@ -166,6 +166,54 @@ test('email registration sends one code and completes verification', async ({ pa
   })).toBe('browser-registration-id');
 });
 
+test('email registration keeps verification open when delivery is rejected', async ({ page }) => {
+  const email = 'browser-delivery-failure@example.invalid';
+  let sendCount = 0;
+
+  await page.route(/\/api\/auth\/register$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        requireEmailVerification: true,
+        username: email,
+        message: 'Please verify your email',
+      }),
+    });
+  });
+  await page.route(/\/api\/auth\/send-verification-code$/, async (route) => {
+    sendCount += 1;
+    expect(route.request().postDataJSON()).toMatchObject({
+      email,
+      purpose: 'REGISTRATION',
+    });
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: false,
+        error: 'EMAIL_SERVICE_UNAVAILABLE',
+        message: 'Email delivery is temporarily unavailable',
+      }),
+    });
+  });
+
+  await page.goto('/login');
+  await page.getByRole('button', { name: '注册', exact: true }).first().click();
+  await page.getByPlaceholder('用户名').fill(email);
+  await page.getByPlaceholder('显示名称').fill('Delivery Failure');
+  await page.getByPlaceholder('密码').fill('browser-password');
+  await page.locator('form').getByRole('button', { name: '注册' }).click();
+
+  await expect(page.getByRole('heading', { name: '邮箱验证' })).toBeVisible();
+  await expect(page.getByText('EMAIL_SERVICE_UNAVAILABLE')).toBeVisible();
+  await expect(page.getByRole('button', { name: '重新发送验证码' })).toBeVisible();
+  await expect(page).toHaveURL('/login');
+  await expect.poll(() => sendCount).toBe(1);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('accessToken')))
+    .toBeNull();
+});
+
 test('forgot-password flow reaches the success state with matching passwords', async ({ page }) => {
   const email = 'browser-reset@example.invalid';
   let resetRequest: Record<string, string> | undefined;
@@ -179,7 +227,7 @@ test('forgot-password flow reaches the success state with matching passwords', a
         success: true,
         message: 'sent',
         expiresIn: 600,
-        resendAfter: 60,
+        resendAfter: 7,
       }),
     });
   });
@@ -201,6 +249,7 @@ test('forgot-password flow reaches the success state with matching passwords', a
   await page.getByRole('button', { name: '发送验证码' }).click();
 
   await expect(page.getByRole('heading', { name: '输入验证码' })).toBeVisible();
+  await expect(page.getByText('7 秒后可重新发送')).toBeVisible();
   await page.getByPlaceholder('请输入6位验证码').fill('654321');
   await page.getByPlaceholder('请输入新密码').fill('updated-password');
   await page.getByPlaceholder('请确认新密码').fill('updated-password');

@@ -21,12 +21,12 @@
 | 邮件发送 | 外部 HTTP 服务，默认端口 `8095`；`reference/email-service/` 提供独立参考实现 |
 | 数据库 | PostgreSQL-only |
 | Migration | Flyway V1 baseline + V2 + V3 + V4，history `uniauth_flyway_schema_history` |
-| Java 验证 | 98 tests |
+| Java 验证 | 120 tests |
 | 邮件参考服务 | 124 tests；其中 20 个 PostgreSQL/ApplicationContext E2E；另有 runtime 27/27、HTTP 9/9、Flyway guard 9/9 |
-| HTTP E2E | 14/14 |
-| Flyway baseline guard | 12/12 |
-| Playwright | 19 tests |
-| Python | 14 tests |
+| HTTP E2E | 15/15 |
+| Flyway baseline guard | 13/13 |
+| Playwright | 20 tests |
+| Python | 14 个资源服务器测试 + 6 个邮件 REST stub 契约测试 |
 | 前端 lint/type/build | 通过 |
 
 安全启动、测试和 baseline 操作见 [开发指南](docs/DEVELOPMENT.md) 与
@@ -71,6 +71,13 @@ userinfo/query/fragment 的绝对 HTTP/HTTPS 地址。参考实现自身还要�
 实现如果不使用 SMTP，也必须为其下游供应商连接提供等价的防降级和身份校验保护。
 参考实现的 `SMTP_HOST` 只能是无 URI 语法或空白字符的 host/IP token，
 `SMTP_PORT` 必须在 `1..65535`。
+
+外部服务只有同步接受请求后，UniAuth 才保存验证码 challenge；拒绝、限流、超时和
+网络异常都失败关闭。正确验证码只按已选 challenge id 做一次 PostgreSQL 条件消费；
+注册控制器不会再按 email/purpose 二次标记，避免误消费验证期间新建的 challenge。
+该保证不等同于可靠投递：外部服务已接受后本地事务仍可能失败，异步投递失败也不会
+自动撤销 challenge。当前实现没有 transactional outbox 或统一 delivery/challenge
+状态机。
 
 | 属性 | 说明 |
 |------|------|

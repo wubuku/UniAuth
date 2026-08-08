@@ -113,9 +113,10 @@
 - Flyway V1 baseline + V2 + V3 + V4 已接管 8 张认证/Session 表，并加固登录方式
   行形状、primary、集合变更 CAS 以及其余目标实体约束和 email repository 索引；
   旧 SQL 已归档到 runtime classpath 外。
-- Java 已有 PostgreSQL/Testcontainers 集成测试，当前完整门禁为 98 tests。
-- HTTP Shell E2E 当前 14/14，Flyway baseline guard 12/12，
-  Mock Playwright 19 tests，Python 14 tests。
+- Java 已有 PostgreSQL/Testcontainers 集成测试，当前完整门禁为 120 tests。
+- HTTP Shell E2E 当前 15/15，Flyway baseline guard 13/13，
+  Mock Playwright 20 tests，Python 资源服务器 14 tests，邮件 REST stub contract
+  6 tests。
 - 前端严格 `npm ci`、high/critical 依赖审计、lint、typecheck 和生产构建通过；
   `scripts/verify.sh` 与 GitHub Actions 使用统一验证入口。
 - npm audit 仍有 2 个 React Router moderate advisories；当前客户端路由 pathname
@@ -131,7 +132,11 @@
   以及 claim 异常不泄漏限流 reservation、旧窗口迟到释放不影响新窗口额度的语义
   也已纳入 live 配置和验证文档。邮件 Shell HTTP/Flyway guard 已分别扩展为 9/9，
   覆盖 queue detail 披露边界和 checksum drift 失败关闭、原样保持与显式恢复。
-- 邮箱验证码发送值已与持久化值一致；失败、频控和并发语义仍待修复。
+- 邮箱验证码发送值已与持久化值一致；同步拒绝/限流/异常不保存 challenge，动态
+  有效期/cooldown、按 challenge id 的正确验证码原子消费、禁止 controller 二次
+  email/purpose 消费和错误重试 CAS 已有 PostgreSQL、HTTP、Playwright 与 Python
+  stub 契约覆盖。外部接受后本地事务失败、异步 delivery 失败、单一 pending
+  challenge、canonical email 和可靠 outbox 状态机仍待修复。
 - token blacklist 尚未接入验证、刷新和登出流程。
 - Web3 的 `isNewUser`、bind 返回处理和 EIP-191 字节长度已修复；
   SIWE 字段绑定、nonce 原子消费和并发重放仍待修复。

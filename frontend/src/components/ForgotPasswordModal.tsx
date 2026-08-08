@@ -32,7 +32,7 @@ export const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen
       const response = await AuthService.requestPasswordReset(email);
       if (response.success) {
         setStep('verify');
-        setCountdown(60);
+        setCountdown(response.resendAfter);
         const timer = setInterval(() => {
           setCountdown((prev) => {
             if (prev <= 1) {

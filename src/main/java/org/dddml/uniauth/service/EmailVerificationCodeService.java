@@ -5,20 +5,20 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.dddml.uniauth.config.EmailVerificationProperties;
 import org.dddml.uniauth.entity.EmailVerificationCode;
 import org.dddml.uniauth.entity.EmailVerificationCode.VerificationPurpose;
 import org.dddml.uniauth.repository.EmailVerificationCodeRepository;
 import org.dddml.uniauth.service.email.EmailSendResult;
 import org.dddml.uniauth.service.email.EmailService;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -30,18 +30,7 @@ public class EmailVerificationCodeService {
     private final EmailVerificationCodeRepository verificationCodeRepository;
     private final EmailService emailService;
     private final ObjectMapper objectMapper;
-
-    @Value("${app.email.verification.code-length:6}")
-    private int codeLength;
-
-    @Value("${app.email.verification.expiry-minutes:10}")
-    private int expiryMinutes;
-
-    @Value("${app.email.verification.max-send-per-day:10}")
-    private int maxSendPerDay;
-
-    @Value("${app.email.verification.resend-cooldown-seconds:60}")
-    private int resendCooldownSeconds;
+    private final EmailVerificationProperties properties;
 
     private static final String EMAIL_VERIFY_TEMPLATE = "email/email-verify";
     private static final String PASSWORD_RESET_TEMPLATE = "email/password-reset";
@@ -52,36 +41,47 @@ public class EmailVerificationCodeService {
         log.info("Sending verification code for purpose {}", purpose);
 
         String verificationCode = generateVerificationCode();
-        if (emailService.isAvailable()) {
-            Map<String, Object> templateVariables = new HashMap<>();
-            templateVariables.put("code", verificationCode);
-            templateVariables.put("verificationCode", verificationCode);
-            templateVariables.put("username", email);
-            templateVariables.put("expiryMinutes", expiryMinutes);
+        Map<String, Object> templateVariables = new HashMap<>();
+        templateVariables.put("code", verificationCode);
+        templateVariables.put("verificationCode", verificationCode);
+        templateVariables.put("username", email);
+        templateVariables.put("expiryMinutes", properties.getExpiryMinutes());
 
-            String template = purpose == VerificationPurpose.PASSWORD_RESET
-                    ? PASSWORD_RESET_TEMPLATE
-                    : EMAIL_VERIFY_TEMPLATE;
-            String subject = purpose == VerificationPurpose.PASSWORD_RESET
-                    ? "重置您的密码"
-                    : "Verify your email";
-            String emailType = purpose == VerificationPurpose.PASSWORD_RESET
-                    ? "PASSWORD_RESET"
-                    : "VERIFICATION";
+        String template = purpose == VerificationPurpose.PASSWORD_RESET
+                ? PASSWORD_RESET_TEMPLATE
+                : EMAIL_VERIFY_TEMPLATE;
+        String subject = purpose == VerificationPurpose.PASSWORD_RESET
+                ? "重置您的密码"
+                : "Verify your email";
+        String emailType = purpose == VerificationPurpose.PASSWORD_RESET
+                ? "PASSWORD_RESET"
+                : "VERIFICATION";
 
-            EmailSendResult result = emailService.sendTemplateEmail(
+        EmailSendResult result;
+        try {
+            result = emailService.sendTemplateEmail(
                 email,
                 subject,
                 template,
                 templateVariables,
                 emailType
             );
-
-            if (result == EmailSendResult.FAILED || result == EmailSendResult.RATE_LIMITED) {
-                log.warn("Email service did not accept the verification request");
-            }
-        } else {
-            log.warn("Email service is unavailable, verification code will still be created");
+        } catch (RuntimeException exception) {
+            log.warn(
+                "Email service boundary failed with {}",
+                exception.getClass().getSimpleName()
+            );
+            throw new VerificationCodeDeliveryException(
+                EmailSendResult.FAILED,
+                exception
+            );
+        }
+        if (result == null) {
+            result = EmailSendResult.FAILED;
+        }
+        if (result != EmailSendResult.SUCCESS && result != EmailSendResult.QUEUED) {
+            log.warn("Email service did not accept the verification request");
+            throw new VerificationCodeDeliveryException(result);
         }
 
         EmailVerificationCode code = EmailVerificationCode.builder()
@@ -90,7 +90,7 @@ public class EmailVerificationCodeService {
             .verificationCode(verificationCode)
             .purpose(purpose)
             .metadata(serializeMetadata(metadata))
-            .expiresAt(Instant.now().plus(expiryMinutes, ChronoUnit.MINUTES))
+            .expiresAt(Instant.now().plus(properties.getExpiryMinutes(), ChronoUnit.MINUTES))
             .isUsed(false)
             .retryCount(0)
             .build();
@@ -120,13 +120,17 @@ public class EmailVerificationCodeService {
         }
 
         if (!codeRecord.getVerificationCode().equals(code)) {
-            int remainingAttempts = 5 - codeRecord.getRetryCount();
+            int remainingAttempts = Math.max(
+                0,
+                properties.getMaxRetryAttempts() - codeRecord.getRetryCount()
+            );
             return CodeCheckResult.invalid(remainingAttempts);
         }
 
         return CodeCheckResult.valid();
     }
 
+    @Transactional
     public VerificationResult verifyCode(String email, String code, VerificationPurpose purpose) {
         log.debug("Verifying code for purpose {}", purpose);
 
@@ -143,26 +147,56 @@ public class EmailVerificationCodeService {
             return VerificationResult.expired();
         }
 
-        if (!codeRecord.getVerificationCode().equals(code)) {
-            codeRecord.incrementRetryCount();
-            verificationCodeRepository.save(codeRecord);
+        Instant now = Instant.now();
+        if (codeRecord.getVerificationCode().equals(code)) {
+            Map<String, Object> metadataMap = deserializeMetadata(codeRecord.getMetadata());
+            int consumed = verificationCodeRepository.consumeIfUsable(
+                codeRecord.getId(),
+                code
+            );
+            return consumed == 1
+                ? VerificationResult.success(metadataMap)
+                : VerificationResult.notFound();
+        }
 
-            if (codeRecord.getRetryCount() >= 5) {
-                verificationCodeRepository.delete(codeRecord);
+        return recordInvalidAttempt(codeRecord, now);
+    }
+
+    private VerificationResult recordInvalidAttempt(
+            EmailVerificationCode initialRecord,
+            Instant now) {
+        EmailVerificationCode current = initialRecord;
+        int maxRetryAttempts = properties.getMaxRetryAttempts();
+
+        while (true) {
+            int currentRetryCount = current.getRetryCount();
+            if (currentRetryCount >= maxRetryAttempts) {
+                verificationCodeRepository.deleteById(current.getId());
                 return VerificationResult.maxRetriesExceeded();
             }
 
-            int remainingAttempts = 5 - codeRecord.getRetryCount();
-            return VerificationResult.invalid(remainingAttempts);
+            int updated = verificationCodeRepository.incrementRetryCountIfCurrent(
+                current.getId(),
+                currentRetryCount
+            );
+            if (updated == 1) {
+                int newRetryCount = currentRetryCount + 1;
+                if (newRetryCount >= maxRetryAttempts) {
+                    verificationCodeRepository.deleteById(current.getId());
+                    return VerificationResult.maxRetriesExceeded();
+                }
+                return VerificationResult.invalid(maxRetryAttempts - newRetryCount);
+            }
+
+            current = verificationCodeRepository.findById(initialRecord.getId()).orElse(null);
+            if (current == null || Boolean.TRUE.equals(current.getIsUsed())) {
+                return VerificationResult.notFound();
+            }
+            if (!current.getExpiresAt().isAfter(now)) {
+                verificationCodeRepository.delete(current);
+                return VerificationResult.expired();
+            }
         }
-
-        codeRecord.setIsUsed(true);
-        verificationCodeRepository.save(codeRecord);
-
-        String metadata = codeRecord.getMetadata();
-        Map<String, Object> metadataMap = deserializeMetadata(metadata);
-
-        return VerificationResult.success(metadataMap);
     }
 
     public boolean canSend(String email) {
@@ -170,25 +204,33 @@ public class EmailVerificationCodeService {
             email,
             Instant.now().truncatedTo(ChronoUnit.DAYS)
         );
-        return todayCount < maxSendPerDay;
+        return todayCount < properties.getMaxSendPerDay();
     }
 
-    public long getResendCooldown(String email) {
-        List<EmailVerificationCode> codes = verificationCodeRepository.findByEmail(email);
-        if (codes.isEmpty()) {
-            return 0;
-        }
-
-        return codes.stream()
-            .filter(c -> Boolean.FALSE.equals(c.getIsUsed()))
-            .findFirst()
+    public long getResendCooldown(String email, VerificationPurpose purpose) {
+        return verificationCodeRepository
+            .findFirstByEmailAndPurposeOrderByCreatedAtDesc(email, purpose)
             .map(c -> {
                 Instant lastSend = c.getCreatedAt();
-                Instant cooldownEnd = lastSend.plus(resendCooldownSeconds, ChronoUnit.SECONDS);
-                long remaining = Instant.now().until(cooldownEnd, ChronoUnit.SECONDS);
-                return Math.max(0, remaining);
+                Instant cooldownEnd = lastSend.plus(
+                    properties.getResendCooldownSeconds(),
+                    ChronoUnit.SECONDS
+                );
+                long remainingMillis = Duration.between(
+                    Instant.now(),
+                    cooldownEnd
+                ).toMillis();
+                return Math.max(0, (remainingMillis + 999) / 1000);
             })
             .orElse(0L);
+    }
+
+    public int getExpirySeconds() {
+        return Math.multiplyExact(properties.getExpiryMinutes(), 60);
+    }
+
+    public int getResendCooldownSeconds() {
+        return properties.getResendCooldownSeconds();
     }
 
     @Transactional
@@ -202,16 +244,8 @@ public class EmailVerificationCodeService {
         return verificationCodeRepository.existsByEmailAndPurposeAndIsUsedFalse(email, purpose);
     }
 
-    @Transactional
-    public void markAsUsed(String email, VerificationPurpose purpose) {
-        verificationCodeRepository.findFirstByEmailAndPurposeAndIsUsedFalseOrderByCreatedAtDesc(email, purpose)
-            .ifPresent(code -> {
-                code.setIsUsed(true);
-                verificationCodeRepository.save(code);
-            });
-    }
-
     private String generateVerificationCode() {
+        int codeLength = properties.getCodeLength();
         StringBuilder code = new StringBuilder(codeLength);
         for (int i = 0; i < codeLength; i++) {
             code.append(SECURE_RANDOM.nextInt(10));

@@ -62,7 +62,14 @@ public class ForgotPasswordService {
     }
 
     public long getResendCooldown(String email) {
-        return verificationCodeService.getResendCooldown(email);
+        return verificationCodeService.getResendCooldown(
+            email,
+            VerificationPurpose.PASSWORD_RESET
+        );
+    }
+
+    public int getExpirySeconds() {
+        return verificationCodeService.getExpirySeconds();
     }
 
     public boolean canSend(String email) {

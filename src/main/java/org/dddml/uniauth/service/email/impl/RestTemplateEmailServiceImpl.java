@@ -10,6 +10,8 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
 import lombok.extern.slf4j.Slf4j;
@@ -71,8 +73,20 @@ public class RestTemplateEmailServiceImpl implements EmailService {
             log.warn("Template email was rejected by email service");
             return EmailSendResult.FAILED;
 
+        } catch (HttpClientErrorException.TooManyRequests e) {
+            log.warn("Template email request was rate limited");
+            return EmailSendResult.RATE_LIMITED;
+        } catch (RestClientResponseException e) {
+            log.warn(
+                "Template email request was rejected with HTTP status {}",
+                e.getStatusCode().value()
+            );
+            return EmailSendResult.FAILED;
         } catch (Exception e) {
-            log.warn("Template email request failed");
+            log.warn(
+                "Template email request failed with {}",
+                e.getClass().getSimpleName()
+            );
             return EmailSendResult.FAILED;
         }
     }
@@ -100,8 +114,20 @@ public class RestTemplateEmailServiceImpl implements EmailService {
             log.warn("Simple email was rejected by email service");
             return EmailSendResult.FAILED;
 
+        } catch (HttpClientErrorException.TooManyRequests e) {
+            log.warn("Simple email request was rate limited");
+            return EmailSendResult.RATE_LIMITED;
+        } catch (RestClientResponseException e) {
+            log.warn(
+                "Simple email request was rejected with HTTP status {}",
+                e.getStatusCode().value()
+            );
+            return EmailSendResult.FAILED;
         } catch (Exception e) {
-            log.warn("Simple email request failed");
+            log.warn(
+                "Simple email request failed with {}",
+                e.getClass().getSimpleName()
+            );
             return EmailSendResult.FAILED;
         }
     }

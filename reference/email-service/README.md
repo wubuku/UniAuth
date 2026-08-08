@@ -81,7 +81,10 @@ UniAuth 只依赖以下最小契约：
 `success=true` 解释为“已接受/入队”，不是“邮件已送达”。
 
 客户端不自动重试邮件服务请求。非 2xx、超时、空响应、不可解析 JSON 或
-`success != true` 都映射为失败。
+`success != true` 都映射为失败。UniAuth 只有在本接口同步接受后才保存验证码
+challenge；拒绝、限流和网络失败不会留下可验证记录。该顺序仍存在一个明确窗口：
+本服务已经接受或入队后，如果 UniAuth 本地 challenge 事务失败，收件人可能收到
+无法使用的验证码；后续异步投递失败也不会自动撤销 challenge。
 
 ## 结构
 
@@ -277,7 +280,20 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - V2 不兼容数据拒绝、外键删除行为和非空 schema 不自动 baseline。
 - migration checksum 失配时失败关闭，并保留已有 migration history 和业务数据。
 
-2026-08-07 当前基线：
+2026-08-08 当前组合基线：
+
+- 本组件 Maven：124 tests，0 failures/errors/skips；其中 20 个
+  PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime guard tests。
+- 本组件 Shell runtime 27/27、HTTP/PostgreSQL E2E 9/9、Flyway guard 9/9。
+- UniAuth 根项目：Java 120 tests、HTTP 15/15、Flyway 13/13、
+  Mock Playwright 20/20、Python 资源服务器 14/14、邮件 REST stub contract 6/6，
+  前端 lint/type/build 和文档检查通过。
+- 根 Shell HTTP E2E 使用受控 loopback REST stub 走真实 UniAuth
+  `RestTemplateEmailServiceImpl`，覆盖接受、拒绝、限流和失败不保存 challenge。
+- 默认门禁仍不连接真实 SMTP/供应商，也不证明最终收件、退信、外部 TLS 或
+  “外部已接受后 UniAuth 本地事务失败”窗口。
+
+2026-08-07 初始纳入基线：
 
 - Maven：94 tests，0 failures/errors/skips。
 - 其中 14 个完整 ApplicationContext E2E、10 个 Java runtime guard tests、

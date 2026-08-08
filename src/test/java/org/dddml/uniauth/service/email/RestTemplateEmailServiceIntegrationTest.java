@@ -84,11 +84,28 @@ class RestTemplateEmailServiceIntegrationTest {
         assertThat(result).isEqualTo(EmailSendResult.FAILED);
     }
 
+    @Test
+    void rateLimitedTemplateRequestReturnsTheDedicatedResult() {
+        EmailSendResult result = emailService.sendTemplateEmail(
+            "rate-limited@example.test",
+            "Verify",
+            "email/email-verify",
+            Map.of("verificationCode", "123456"),
+            "VERIFICATION"
+        );
+
+        assertThat(result).isEqualTo(EmailSendResult.RATE_LIMITED);
+    }
+
     private static HttpServer startServer() {
         try {
             HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             server.createContext("/mail/api/email/template", exchange -> {
                 capture(exchange);
+                if (LAST_REQUEST_BODY.get().contains("rate-limited@example.test")) {
+                    respond(exchange, 429, "{\"success\":false}");
+                    return;
+                }
                 respond(exchange, 200, "{\"success\":true,\"queueId\":1}");
             });
             server.createContext("/mail/api/email/health", exchange -> {

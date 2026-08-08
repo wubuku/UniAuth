@@ -1,7 +1,7 @@
 # UniAuth 当前架构
 
 > 状态：Live
-> 核验日期：2026-08-07
+> 核验日期：2026-08-08
 > 主要来源：`pom.xml`、`src/main/java/`、`src/main/resources/`、`frontend/`、
 > `python-resource-server/app.py`
 
@@ -56,12 +56,15 @@ Authorization Server 协议已经完整接通。
 ### 邮箱注册、密码登录与密码重置
 
 1. 邮箱地址注册先由 `EmailAuthController` 请求验证码。
-2. `EmailVerificationCodeService` 生成验证码，通过 `EmailService` 调用外部邮件服务，
-   并把 challenge 保存到 `email_verification_codes`。
-3. 用户提交验证码后，后端创建用户及 `LOCAL` 登录方式并签发 JWT。
-4. 已建立账户后的登录走普通本地用户名/密码流程，邮箱只是 `local_username`，
+2. `EmailVerificationCodeService` 生成验证码，并通过 `EmailService` 请求外部邮件服务。
+3. 只有外部服务同步返回 `SUCCESS`/`QUEUED`，后端才把 challenge 保存到
+   `email_verification_codes`；拒绝、限流、超时、网络异常和空结果都失败关闭。
+4. 用户提交验证码后，`verifyCode` 按已选 challenge id 和 code 做 PostgreSQL
+   条件更新；注册事务随后创建用户及 `LOCAL` 登录方式并签发 JWT。controller 不再
+   按 email/purpose 二次标记，避免消费验证期间新建的 challenge。
+5. 已建立账户后的登录走普通本地用户名/密码流程，邮箱只是 `local_username`，
    不会在每次登录时发送验证码。
-5. 密码重置复用同一邮件服务边界和验证码表，purpose 为 `PASSWORD_RESET`。
+6. 密码重置复用同一邮件服务边界和验证码表，purpose 为 `PASSWORD_RESET`。
 
 UniAuth 主应用内的 `RestTemplateEmailServiceImpl` 只是 HTTP 客户端，不直接连接
 SMTP 或邮件供应商。外部服务必须提供 health、模板邮件端点、模板和约定的 JSON 响应；
@@ -76,7 +79,11 @@ timeout，也拒绝超过 1024 字符或包含 CR/LF 的 API key。详细契约�
 无密码登录 endpoint。
 
 当前发送流程只把外部 `success=true` 解释为“已接受/入队”，不证明最终送达。
-外部服务不可用或拒绝请求时，代码仍可能保存验证码并返回发送成功，这是待加固行为。
+同步拒绝、限流、超时、网络异常和空结果不会保存 challenge，也不会返回发送成功。
+该流程仍不是可靠投递状态机：外部服务已经接受后，如果本地 challenge 事务失败，
+用户可能收到无法验证的验证码；外部服务后续异步投递失败也不会自动撤销已保存的
+challenge。解决这些窗口需要 transactional outbox 或 delivery/challenge 双状态机，
+不属于当前实现。
 参考服务自己的恢复 worker 只有在邮件总开关、队列和 recovery 都启用时才处理
 存量，避免停用投递后定时任务继续发送。参考服务提供至少一次而非恰好一次投递：
 SMTP 已接受后若数据库提交或进程失败，stuck recovery 可能使用相同 queue id 再次发送。

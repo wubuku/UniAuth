@@ -1,7 +1,7 @@
 # UniAuth 配置基线
 
 > 状态：Live
-> 核验日期：2026-08-07
+> 核验日期：2026-08-08
 > 重要：不要在未确认数据库目标和数据可丢弃前启动 Spring 应用。
 
 ## 当前默认拓扑
@@ -37,7 +37,8 @@ JavaMailSender 或邮件供应商 SDK 实现；`RestTemplateEmailServiceImpl` �
 
 服务地址由 `app.email.service.url` 控制，`application.yml` 的显式环境变量入口是
 `EMAIL_SERVICE_URL`，默认值为 `http://localhost:8095`。Spring 标准环境变量
-`APP_EMAIL_SERVICE_URL` 也可覆盖同一属性，Shell E2E 使用该形式指向不可达测试地址。
+`APP_EMAIL_SERVICE_URL` 也可覆盖同一属性。Shell E2E 使用该形式指向受控的 loopback
+REST stub，并通过真实 HTTP client 覆盖接受、拒绝和限流路径。
 该值必须是带真实 host 的绝对 HTTP/HTTPS URL，禁止 userinfo、query 和 fragment；
 允许非空 context path 和尾部斜杠，客户端会在其后追加 `/api/email/*`。
 客户端连接和读取超时共用 `app.email.service.timeout`，通过
@@ -154,10 +155,14 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 完整启动、Flyway 和验证说明见
 [邮件服务参考实现 README](../reference/email-service/README.md)。
 
-当前实现还有一个必须显式知晓的限制：
+当前实现还有几个必须显式知晓的限制：
 
-- 邮件服务不可用、超时、返回失败或后续异步投递失败时，UniAuth 仍可能保存验证码，
-  `/api/auth/send-verification-code` 和忘记密码接口仍可能返回发送成功。
+- 邮件服务同步返回失败、限流、非法邮箱，或发生超时、网络异常、空结果时，UniAuth
+  不保存 challenge，并让注册发送或密码重置发送请求失败关闭。
+- 外部服务已经返回接受后，如果 UniAuth 本地 challenge 保存事务失败，邮件可能已经
+  入队，但收件人拿到的验证码无法使用；当前没有 outbox 或补偿协议关闭这个窗口。
+- 外部服务后续异步投递失败不会自动撤销已保存的 challenge，UniAuth 也不保存
+  `queueId` 或跟踪最终 delivery 状态。
 - 参考服务的队列恢复是至少一次语义；SMTP 已接受后若数据库提交失败、进程崩溃或
   stuck 记录被 recovery worker 重新领取，可能重复发送同一 queue id 的邮件。
 

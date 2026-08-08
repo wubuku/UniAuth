@@ -15,7 +15,11 @@ DATABASE_USER="uniauth"
 DATABASE_PASSWORD="uniauth-e2e-${RUN_ID}"
 DATABASE_PORT=""
 APP_PID=""
+EMAIL_STUB_PID=""
 APP_LOG="$TEMP_DIR/application.log"
+EMAIL_STUB_LOG="$TEMP_DIR/email-service-stub.log"
+EMAIL_STUB_API_KEY="email-e2e-${RUN_ID}"
+EMAIL_STUB_PORT=""
 COOKIE_JAR="$TEMP_DIR/cookies.txt"
 SERVER_PORT="${UNIAUTH_E2E_SERVER_PORT:-}"
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}localhost,127.0.0.1,::1"
@@ -26,6 +30,10 @@ fail() {
     if [ -s "$APP_LOG" ]; then
         echo "Last application log lines:" >&2
         tail -80 "$APP_LOG" >&2
+    fi
+    if [ -s "$EMAIL_STUB_LOG" ]; then
+        echo "Last email stub log lines:" >&2
+        tail -40 "$EMAIL_STUB_LOG" >&2
     fi
     exit 1
 }
@@ -56,6 +64,11 @@ cleanup() {
         wait "$APP_PID" >/dev/null 2>&1 || true
     fi
 
+    if [ -n "$EMAIL_STUB_PID" ]; then
+        terminate_process_tree "$EMAIL_STUB_PID"
+        wait "$EMAIL_STUB_PID" >/dev/null 2>&1 || true
+    fi
+
     if docker ps -a --format '{{.Names}}' 2>/dev/null \
         | grep -Fxq "$CONTAINER_NAME"; then
         docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
@@ -76,19 +89,26 @@ if ! docker info >/dev/null 2>&1; then
     fail "Docker is unavailable"
 fi
 
-if [ -z "$SERVER_PORT" ]; then
-    SERVER_PORT="$(
-        python3 - <<'PY'
+allocate_port() {
+    python3 - <<'PY'
 import socket
 
 with socket.socket() as sock:
     sock.bind(("127.0.0.1", 0))
     print(sock.getsockname()[1])
 PY
-    )"
+}
+
+if [ -z "$SERVER_PORT" ]; then
+    SERVER_PORT="$(allocate_port)"
 fi
+EMAIL_STUB_PORT="$(allocate_port)"
+while [ "$EMAIL_STUB_PORT" = "$SERVER_PORT" ]; do
+    EMAIL_STUB_PORT="$(allocate_port)"
+done
 
 BASE_URL="http://127.0.0.1:${SERVER_PORT}"
+EMAIL_STUB_URL="http://127.0.0.1:${EMAIL_STUB_PORT}"
 
 db_value() {
     local sql="$1"
@@ -127,6 +147,26 @@ request_status() {
         "${BASE_URL}${path}"
 }
 
+start_email_stub() {
+    EMAIL_STUB_API_KEY="$EMAIL_STUB_API_KEY" \
+        python3 "$PROJECT_DIR/scripts/email_service_stub.py" \
+            --port "$EMAIL_STUB_PORT" >"$EMAIL_STUB_LOG" 2>&1 &
+    EMAIL_STUB_PID=$!
+
+    for _ in $(seq 1 50); do
+        if curl -fsS \
+                -H "X-Email-Service-Key: $EMAIL_STUB_API_KEY" \
+                "$EMAIL_STUB_URL/api/email/health" >/dev/null 2>&1; then
+            return
+        fi
+        if ! kill -0 "$EMAIL_STUB_PID" >/dev/null 2>&1; then
+            fail "email service stub exited before becoming ready"
+        fi
+        sleep 0.1
+    done
+    fail "email service stub did not become ready"
+}
+
 start_application() {
     (
         export SPRING_PROFILES_ACTIVE=test
@@ -145,7 +185,10 @@ start_application() {
         export TWITTER_CLIENT_SECRET=e2e-x-secret
         export APP_DEMO_DATA_ENABLED=false
         export APP_DEMO_DATA_DISPOSABLE=false
-        export APP_EMAIL_SERVICE_URL=http://127.0.0.1:1
+        export EMAIL_SERVICE_URL="$EMAIL_STUB_URL"
+        export EMAIL_SERVICE_API_KEY="$EMAIL_STUB_API_KEY"
+        export APP_EMAIL_SERVICE_URL="$EMAIL_STUB_URL"
+        export APP_EMAIL_SERVICE_API_KEY="$EMAIL_STUB_API_KEY"
         export APP_FRONTEND_URL="$BASE_URL"
         export APP_WEB3_DOMAIN="127.0.0.1:${SERVER_PORT}"
         exec "$PROJECT_DIR/start.sh"
@@ -257,11 +300,14 @@ if ! PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
     fail "disposable PostgreSQL did not become ready"
 fi
 
+echo "HTTP E2E: starting the controlled email REST service"
+start_email_stub
+
 echo "HTTP E2E: starting the real application through start.sh"
 start_application
 wait_for_application
 
-echo "1/14 Verify Flyway-owned PostgreSQL startup"
+echo "1/15 Verify Flyway-owned PostgreSQL startup"
 [ "$(db_value "
     SELECT count(*)
     FROM uniauth_flyway_schema_history
@@ -419,7 +465,7 @@ expect_db_rejection "
     COMMIT;
 " "database accepted an invalid provider login-method shape"
 
-echo "2/14 Verify fail-closed HTTP security boundaries"
+echo "2/15 Verify fail-closed HTTP security boundaries"
 [ "$(request_status GET /api/user)" = "401" ] \
     || fail "anonymous current-user request did not return 401"
 [ "$(request_status GET /api/auth/check-user)" = "403" ] \
@@ -435,7 +481,7 @@ jwks_response="$(curl -sS "${BASE_URL}/oauth2/jwks")"
 [ "$(jq -er '.keys[0].alg' <<<"$jwks_response")" = "RS256" ] \
     || fail "JWKS did not expose RS256"
 
-echo "3/14 Register and authenticate a local account"
+echo "3/15 Register and authenticate a local account"
 local_username="shell-user-${RUN_ID}"
 local_email="${local_username}@example.invalid"
 local_password="initial-password-${RUN_ID}"
@@ -484,7 +530,7 @@ login_response="$(
 access_token="$(jq -er '.accessToken' <<<"$login_response")"
 refresh_token="$(jq -er '.refreshToken' <<<"$login_response")"
 
-echo "4/14 Verify protected APIs, persistence, and JWT contracts"
+echo "4/15 Verify protected APIs, persistence, and JWT contracts"
 current_user="$(
     curl -sS \
         -H "Authorization: Bearer $access_token" \
@@ -531,7 +577,7 @@ introspection="$(
       AND last_used_at IS NOT NULL;
 ")" = "1" ] || fail "successful login did not persist last_used_at"
 
-echo "5/14 Restart the application without replaying migrations or losing data"
+echo "5/15 Restart the application without replaying migrations or losing data"
 stop_application
 start_application
 wait_for_application
@@ -551,7 +597,7 @@ restarted_user="$(
 [ "$(jq -er '.userId' <<<"$restarted_user")" = "$local_user_id" ] \
     || fail "the pre-restart access token did not work after restart"
 
-echo "6/14 Refresh tokens and reject token type confusion"
+echo "6/15 Refresh tokens and reject token type confusion"
 refresh_response="$(
     curl -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
         -X POST "${BASE_URL}/api/auth/refresh"
@@ -579,7 +625,7 @@ access_as_refresh_status="$(
 [ "$access_as_refresh_status" = "401" ] \
     || fail "access token was accepted as a refresh token"
 
-echo "7/14 Authenticate a new Web3 account and reject message tampering"
+echo "7/15 Authenticate a new Web3 account and reject message tampering"
 web3_wallet="$(create_wallet)"
 web3_address="$(jq -er '.address' <<<"$web3_wallet")"
 web3_challenge="$(signed_challenge "$web3_wallet")"
@@ -621,7 +667,7 @@ repeat_web3_login="$(post_json /api/auth/web3/verify "$repeat_web3_challenge")"
 [ "$(jq -er '.isNewUser' <<<"$repeat_web3_login")" = "false" ] \
     || fail "repeat Web3 login was incorrectly marked as new"
 
-echo "8/14 Verify header/cookie identity precedence"
+echo "8/15 Verify header/cookie identity precedence"
 conflicting_identity="$(
     curl -sS \
         -H "Authorization: Bearer $web3_access_token" \
@@ -638,7 +684,7 @@ manual_cookie_identity="$(
 [ "$(jq -er '.userId' <<<"$manual_cookie_identity")" = "$local_user_id" ] \
     || fail "cookie-only authentication selected the wrong identity"
 
-echo "9/14 Bind and manage a Web3 login method for the local account"
+echo "9/15 Bind and manage a Web3 login method for the local account"
 binding_wallet="$(create_wallet)"
 binding_challenge="$(signed_challenge "$binding_wallet")"
 missing_binding_token_status="$(
@@ -867,7 +913,7 @@ delete_last_status="$(
 [ "$delete_last_status" = "400" ] \
     || fail "the last login method could be deleted"
 
-echo "10/14 Run the email registration and password-reset HTTP flow"
+echo "10/15 Run the email registration and password-reset HTTP flow"
 email_flow_address="shell-email-${RUN_ID}@example.invalid"
 if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     BASE_URL="$BASE_URL" \
@@ -883,7 +929,7 @@ if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     fail "email registration/password-reset subflow failed"
 fi
 
-echo "11/14 Run registration and password-reset rejection contracts"
+echo "11/15 Run registration and password-reset rejection contracts"
 if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     BASE_URL="$BASE_URL" \
     EMAIL_EXISTS="$email_flow_address" \
@@ -893,7 +939,55 @@ if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     fail "registration/password-reset rejection contract subflow failed"
 fi
 
-echo "12/14 Exhaust an invalid email verification retry budget"
+echo "12/15 Reject unsupported purpose and failed email acceptance"
+before_failed_send_count="$(db_value "SELECT count(*) FROM email_verification_codes;")"
+for unsupported_purpose in LOGIN PASSWORD_RESET UNKNOWN; do
+    unsupported_status="$(
+        request_status \
+            POST \
+            /api/auth/send-verification-code \
+            -H "Content-Type: application/json" \
+            --data "$(
+                jq -cn \
+                    --arg email "unsupported-${RUN_ID}@example.invalid" \
+                    --arg purpose "$unsupported_purpose" \
+                    '{email: $email, purpose: $purpose}'
+            )"
+    )"
+    [ "$unsupported_status" = "400" ] \
+        || fail "unsupported email purpose $unsupported_purpose did not return 400"
+done
+
+for delivery_case in rejected rate-limited; do
+    delivery_email="${delivery_case}-${RUN_ID}@example.invalid"
+    expected_status=503
+    if [ "$delivery_case" = "rate-limited" ]; then
+        expected_status=429
+    fi
+    delivery_status="$(
+        request_status \
+            POST \
+            /api/auth/send-verification-code \
+            -H "Content-Type: application/json" \
+            --data "$(
+                jq -cn \
+                    --arg email "$delivery_email" \
+                    '{email: $email, purpose: "REGISTRATION"}'
+            )"
+    )"
+    [ "$delivery_status" = "$expected_status" ] \
+        || fail "$delivery_case email acceptance returned $delivery_status"
+    [ "$(db_value "
+        SELECT count(*)
+        FROM email_verification_codes
+        WHERE email = '$delivery_email';
+    ")" = "0" ] || fail "$delivery_case email acceptance persisted a challenge"
+done
+[ "$(db_value "SELECT count(*) FROM email_verification_codes;")" \
+    = "$before_failed_send_count" ] \
+    || fail "rejected purpose or delivery attempt changed challenge state"
+
+echo "13/15 Exhaust an invalid email verification retry budget"
 retry_email="shell-retry-${RUN_ID}@example.invalid"
 retry_send_payload="$(
     jq -cn \
@@ -947,7 +1041,7 @@ done
     WHERE email = '$retry_email' AND is_used = false;
 ")" = "0" ] || fail "exhausted email verification challenge remained usable"
 
-echo "13/14 Verify logout cookie clearing"
+echo "14/15 Verify logout cookie clearing"
 logout_headers="$TEMP_DIR/logout-headers.txt"
 logout_response="$(
     curl -sS -D "$logout_headers" \
@@ -961,7 +1055,7 @@ grep -qi 'set-cookie: accessToken=.*Max-Age=0' "$logout_headers" \
 grep -qi 'set-cookie: refreshToken=.*Max-Age=0' "$logout_headers" \
     || fail "logout did not clear the refresh-token cookie"
 
-echo "14/14 Verify final database invariants"
+echo "15/15 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
     || fail "the E2E harness connected to an unexpected database"
 [ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "4" ] \

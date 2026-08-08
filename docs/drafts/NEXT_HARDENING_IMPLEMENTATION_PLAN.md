@@ -1,7 +1,7 @@
 # UniAuth 下一轮加固实施计划
 
-> 状态：Batch A、Batch B1、Batch B2a、Batch B2b 与邮件服务边界加固已完成；
-> 下一批待重新探索后冻结
+> 状态：Batch A、Batch B1、Batch B2a、Batch B2b、邮件服务边界和邮箱 challenge
+> 投递接受/原子消费切片已完成；下一批待重新探索后冻结
 > 事实基线：2026-08-07；邮件 SMTP、持久化投递和限流异常路径增量：2026-08-08
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
 > 前置成果：PostgreSQL-only、Flyway V1 baseline + V2 + V3 + V4、Testcontainers、
@@ -31,12 +31,12 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | 当前 migration | V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束/索引对齐 |
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
-| Java | `mvn clean compile test-compile` 和 98 tests 已通过 |
+| Java | `mvn clean compile test-compile` 和 120 tests 已通过 |
 | 邮件参考服务 | 124 tests；20 个完整 ApplicationContext E2E；Java runtime guard 24 tests；Shell runtime 27/27、HTTP 9/9、Flyway guard 9/9 |
-| HTTP E2E | `scripts/test-http-e2e.sh` 14/14 已通过 |
-| Flyway guard | `scripts/test-flyway-baseline-guard.sh` 12/12 已通过 |
-| 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、19 个 Mock Playwright tests 已通过 |
-| Python | 14 个离线 JWT/JWKS/Flask tests 已通过 |
+| HTTP E2E | `scripts/test-http-e2e.sh` 15/15 已通过 |
+| Flyway guard | `scripts/test-flyway-baseline-guard.sh` 13/13 已通过 |
+| 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、20 个 Mock Playwright tests 已通过 |
+| Python | 14 个离线 JWT/JWKS/Flask tests 和 6 个邮件 REST stub contract tests 已通过 |
 | 统一入口 | `scripts/verify.sh` 本地通过；CI 使用同一入口 |
 | 既有库演练 | `blacksheep_dev` 只读 rehearsal 已通过 |
 | Schema fingerprint | `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
@@ -812,12 +812,61 @@ Batch B 通过后执行，H2.5 与 H3.1/H3.2 作为原子切换批次。
 
 Batch C 通过后执行。
 
+### 邮箱 challenge 投递接受与原子消费切片
+
+#### 2026-08-08 固定实施范围
+
+本切片只加固现有邮箱注册和密码重置流程，不引入新功能或新的公开成功契约。
+
+纳入范围：
+
+1. 外部邮件服务只有返回 `SUCCESS`/`QUEUED` 才能创建可验证 challenge；
+   `FAILED`、`RATE_LIMITED`、`INVALID_EMAIL` 和网络不可达均失败关闭，不能返回
+   “已发送成功”或留下可验证数据库记录。
+2. 发送请求本身是权威接受边界，不再把一次易竞态的 health 预检查当作发送成功证据；
+   health endpoint 仍属于部署、诊断和参考服务 REST 契约。
+3. `max-retry-attempts`、`expiry-minutes` 和 `resend-cooldown-seconds` 由受校验的
+   configuration properties 驱动；响应中的有效期和 cooldown 不再硬编码。
+4. resend cooldown 按 `email + purpose + created_at DESC` 查询；注册发送接口只接受
+   服务端支持的 `REGISTRATION`，拒绝 `LOGIN`、`PASSWORD_RESET` 和未知 purpose。
+5. PostgreSQL 条件更新原子消费正确验证码；同一 challenge 并发验证只有一个请求成功。
+   controller 不再按 email/purpose 二次标记，避免误消费原子验证后新建的 challenge。
+   错误尝试使用 retry-count CAS，不能因并发覆盖而丢失计数，达到配置上限后沿用
+   现有“删除 challenge”语义。
+6. ApplicationContext/PostgreSQL 集成测试覆盖接受/拒绝结果、配置覆盖、并发正确消费和
+   并发错误计数；Shell E2E 使用受控 REST stub 覆盖真实 HTTP client 契约和失败路径。
+7. Flyway baseline guard 增加无效 email verification state 的独立失败矩阵；Playwright
+   固定邮件发送失败时停留在验证界面并显示错误；Python 契约测试固定 REST stub 的
+   API key、健康、接受、拒绝和频控语义。
+
+明确不纳入：
+
+- transactional outbox、delivery/challenge 双状态机、幂等 delivery id。
+- opaque challenge id、HMAC/加密验证码存储、密钥轮换。
+- canonical email、forgot-password 防枚举协议重构、移除只读预检查 endpoint。
+- public response schema 的全面重设计或新增无密码邮箱登录。
+
+任何超出上述范围的问题记入后续 Batch D，不在本切片顺手实现。
+
+#### 2026-08-08 实施结果
+
+- 同步接受边界、配置校验、动态响应、purpose 拒绝、正确验证码条件消费和错误重试
+  CAS 已实现。
+- PostgreSQL/ApplicationContext 集成测试、真实 client loopback HTTP 测试、Shell
+  真实进程 E2E、Flyway guard、Playwright 和 Python stub contract 已覆盖本切片。
+- 完整统一门禁结果：Java 120 tests、HTTP 15/15、Flyway 13/13、
+  Mock Playwright 20/20、
+  Python 资源服务器 14/14、邮件 REST stub 6/6，前端 lint/type/build 通过。
+- 保留边界：外部已接受后本地 challenge 事务失败、异步 delivery 失败撤销、
+  transactional outbox、单一 pending challenge、canonical email 和
+  forgot-password 防枚举协议仍归后续 Batch D。
+
 #### Email/password
 
-- challenge 先持久化，再通过可靠发送状态/outbox 投递。
-- 邮件失败不返回“已发送成功”。
+- 通过可靠 outbox/delivery 状态关闭“外部先接受、本地 challenge 后失败”的窗口。
+- 把异步 delivery 最终失败与 challenge 可用状态关联起来。
 - 同一 email/purpose 只存在一个有效 challenge。
-- 重试、频控和消费使用原子条件更新。
+- 保留已完成的原子消费/retry CAS，并继续加固发送频控和并发创建。
 - 注册和密码重置使用统一 canonical email。
 - 不在 verification metadata 中长期保存可直接使用的密码 hash。
 - forgot-password 对存在/不存在账户保持一致外部语义。

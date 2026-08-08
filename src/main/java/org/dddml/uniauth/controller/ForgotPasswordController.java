@@ -79,7 +79,7 @@ public class ForgotPasswordController {
                 "success", true,
                 "message", "验证码已发送到邮箱",
                 "resendAfter", cooldown,
-                "expiresIn", 600
+                "expiresIn", forgotPasswordService.getExpirySeconds()
             ));
         } catch (Exception e) {
             log.error("Failed to send password reset code");

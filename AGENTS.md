@@ -9,7 +9,7 @@
 - `docs/ARCHITECTURE.md`: 当前模块、安全链、身份和 JWT 模型。
 - `docs/CONFIGURATION.md`: 端口、profile、数据库、回调、CORS 和密钥基线。
 - `docs/DEVELOPMENT.md`: 安全构建、启动前检查和日常工作流。
-- `docs/VERIFICATION.md`: 权威交付门槛、验证层级、2026-08-07 基线和测试缺口。
+- `docs/VERIFICATION.md`: 权威交付门槛、验证层级、2026-08-08 基线和测试缺口。
 - `docs/drafts/README.md`: 既有计划、调查和历史记录索引。
 - `docs/drafts/DOCUMENTATION_PLAN.md`: 文档体系建设计划。
 - `docs/drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md`: 下一轮测试优先实施切片。
@@ -174,11 +174,17 @@ JWKS、旧 token 和 Python 资源服务器；真实环境仍需外部密钥管�
 `POST /api/auth/login` 的邮箱加密码登录不调用邮件服务；虽然 enum 和前端类型仍有
 `LOGIN` purpose，当前没有受支持的邮箱验证码登录 endpoint。
 
-当前失败语义不是生产可靠状态机：邮件服务不可用、拒绝或异步投递失败时，UniAuth
-仍可能持久化验证码并向客户端返回“已发送”。UniAuth Java 集成测试 mock
-`EmailService`，Shell E2E 使用不可达地址并从隔离数据库读取验证码；它们不证明外部
-服务行为。`reference/email-service` 的默认 E2E 通过真实 HTTP、Flyway/PostgreSQL、
-真实 Spring Beans、Thymeleaf、异步队列和 GreenMail 验证兼容实现，但不证明真实供应商送达。
+只有外部邮件服务同步返回 `SUCCESS`/`QUEUED` 时 UniAuth 才保存 challenge；拒绝、
+限流、非法邮箱、超时、网络异常和空结果都失败关闭。正确验证码只允许通过按已选
+challenge id 和 code 的 PostgreSQL 条件更新消费一次；controller 不得再按
+email/purpose 二次标记，否则可能误消费验证期间新建的 challenge。该流程仍不是生产
+可靠状态机：
+外部服务已接受后，如果本地 challenge 事务失败，用户可能收到不可用验证码；异步
+delivery 失败也不会自动撤销 challenge。Java 测试使用完整 ApplicationContext、
+PostgreSQL 和真实业务 Bean，只 mock 最外层 `EmailService`；独立 client 集成测试和
+Shell E2E 使用 loopback HTTP server/stub 走真实 `RestTemplate`。这些测试不证明真实
+供应商送达。`reference/email-service` 的默认 E2E 通过真实 HTTP、
+Flyway/PostgreSQL、Spring Beans、Thymeleaf、异步队列和 GreenMail 验证兼容实现。
 
 参考邮件服务的 schema 由其自己的 Flyway V1/V2 管理，history table 是
 `email_service_flyway_schema_history`；所有 profile 使用 Hibernate `validate`，
@@ -282,10 +288,10 @@ python3 -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") fo
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-历史基线（2026-08-07 工作树）：
+当前验证基线（2026-08-08 工作树；每次后续变更仍须重跑）：
 
-- Maven：98 tests，0 failures/errors/skips。
-- 邮件参考服务：94 tests，0 failures/errors/skips；另有 runtime guard 15/15、
+- Maven：120 tests，0 failures/errors/skips。
+- 邮件参考服务初始纳入基线：94 tests，0 failures/errors/skips；另有 runtime guard 15/15、
   Shell HTTP 8/8 和 Flyway guard 8/8。
 - 2026-08-08 SMTP transport 加固增量：邮件参考服务 101 tests，
   Java runtime guard 17 tests，Shell runtime guard 21/21；HTTP 8/8 和 Flyway
@@ -304,10 +310,10 @@ PYTHON_BIN=python3 scripts/verify.sh
   HTTP 9/9、Flyway guard 9/9。HTTP E2E 断言 queue detail 不返回 HTML/metadata，
   且当前验证码夹具值不出现在响应中；Flyway guard 断言 checksum drift 失败关闭、
   漂移 checksum 保持、数据不变且可显式恢复。
-- Shell HTTP E2E：14/14。
-- Flyway baseline guard：12/12。
-- Mock Playwright：19 tests。
-- Python：14 tests。
+- Shell HTTP E2E：15/15。
+- Flyway baseline guard：13/13。
+- Mock Playwright：20 tests。
+- Python 资源服务器：14 tests；邮件 REST stub contract：6 tests。
 - 前端 ESLint、TypeScript 和生产构建通过。
 - 每个未提交批次仍必须在完整门禁后重新执行连续三轮无修改检查；无问题轮次只记录在
   当次工作报告，不为留痕修改仓库文件。
@@ -342,6 +348,11 @@ PYTHON_BIN=python3 scripts/verify.sh
 
 当前增量状态（2026-08-08）：
 
+- 邮箱 challenge 投递接受与原子消费加固已通过完整统一门禁：外部同步拒绝/限流/异常
+  不保存 challenge，注册 purpose 受限，配置驱动动态响应，正确验证码条件更新原子
+  消费，controller 不再二次按 email/purpose 标记，错误重试使用 CAS；根 Java
+  120 tests、HTTP 15/15、Flyway 13/13、
+  Mock Playwright 20/20、Python 资源服务器 14/14 和邮件 stub 6/6 通过。
 - 持久化队列投递边界加固已通过完整邮件组件门禁：邮件参考服务 110 tests、
   16 个 PostgreSQL/GreenMail ApplicationContext E2E、Java runtime guard 24 tests、
   Shell runtime 27/27、HTTP/Flyway 各 8/8；根 Java 98 tests、HTTP 14/14、
@@ -386,7 +397,9 @@ PYTHON_BIN=python3 scripts/verify.sh
 - refresh token 仍出现在 JSON，前端多处写入 localStorage；header/cookie token 来源可能冲突。
 - CORS 有 YAML 和多个 Java 配置来源；OAuth2 redirect/Referer 缺少统一 allowlist。
 - `ApiAuthController` 对 JWT 用户把 provider 默认标成 `local`，不能反映真实主登录方式。
-- 邮件投递失败、频控、retry 和 challenge 并发消费尚未形成可靠状态机。
+- 邮件同步接受失败和 challenge 消费并发已经失败关闭/原子化；外部接受后本地事务
+  失败、异步 delivery 失败、单一 pending challenge、canonical email 和可靠
+  outbox/补偿状态机仍未解决。
 - Web3 尚未严格绑定完整 SIWE message，nonce 也不是原子消费。
 - 登录方式并发 bind 与 set-primary 已由数据库约束和稳定冲突映射加固；删除与
   其他登录方式变更并发时仍可能产生零登录方式或零 primary，归下一批处理。

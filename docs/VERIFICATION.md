@@ -139,33 +139,34 @@ while counter < 3:
 
 L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 
-## 2026-08-07 当前加固门禁
+## 2026-08-08 当前加固门禁
 
 > 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1、Batch B2a、
-> Batch B2b 和邮件服务边界加固触达路径；
+> Batch B2b、邮件服务边界和邮箱 challenge 投递接受/原子消费触达路径；
 > 不代表 H1.4-H8、完整认证正确性或生产就绪。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 98 tests，0 failures/errors/skips |
-| `scripts/test-http-e2e.sh` | 通过 | 14/14；真实应用、PostgreSQL、重启、JWT、Web3、email、登录方式 |
-| `scripts/test-flyway-baseline-guard.sh` | 通过 | 12/12；exact schema、V2/V4 初始及 apply 前数据预检、post-baseline 失败恢复与其他拒绝/清理路径 |
+| `mvn test` | 通过 | 120 tests，0 failures/errors/skips |
+| `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、PostgreSQL、受控邮件 REST stub、重启、JWT、Web3、email、登录方式 |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 13/13；exact schema、V2/V4 初始及 apply 前数据预检、非法 email verification state、post-baseline 失败恢复与其他拒绝/清理路径 |
 | Flyway integration | 通过 | fresh V1→V4、existing baseline V1→V4、V3→V4、Hibernate validate、Session、checksum/failure recovery |
-| 邮件参考服务 | 通过 | 94 tests；14 个完整 ApplicationContext E2E、10 个 Java runtime guard tests、6 个 Flyway migration tests、6 个 context-path/matrix-parameter API key filter tests；Shell runtime 15/15、HTTP 8/8、Flyway guard 8/8 |
+| 邮件参考服务 | 通过 | 124 tests；20 个 PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime guard tests；Shell runtime 27/27、HTTP 9/9、Flyway guard 9/9 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
 | `npm audit --audit-level=high` | 通过 | 0 high/critical；2 个 React Router moderate advisories 见下文 |
 | `npx tsc --noEmit` | 通过 | 无 TypeScript 错误 |
 | `npm run build` | 通过 | Vite 生产构建成功，保留 chunk warning |
-| `npm run test:e2e` | 通过 | 19/19 Chrome-channel Mock Playwright tests |
+| `npm run test:e2e` | 通过 | 20/20 Chrome-channel Mock Playwright tests |
 | Python | 通过 | 14/14 离线 RSA/JWKS/Flask tests |
+| 邮件 REST stub contract | 通过 | 6/6；API key、health、接受、拒绝、限流、坏请求和 chunked client 形状 |
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 | Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
 
 Shell HTTP E2E 使用 `test` profile、disposable PostgreSQL、临时 RSA key、dummy OAuth
-和不可达邮件服务地址。它验证：
+和受控 loopback 邮件 REST stub。它验证：
 
 - Flyway V1/V2/V3/V4 和自定义 history table。
 - 应用重启后的 migration 幂等和用户数据保留。
@@ -175,16 +176,29 @@ Shell HTTP E2E 使用 `test` profile、disposable PostgreSQL、临时 RSA key、
 - 本地签名 Web3 登录、message tamper、replay 拒绝和钱包绑定。
 - 登录方式 primary/delete/最后方式拒绝，以及真实并发 mutation 的 `200/409` 和最终
   “至少一个登录方式、恰好一个 primary”不变量。
-- 邮箱注册、持久化验证码、重试耗尽和密码重置。
+- 邮箱注册、动态有效期/cooldown、外部接受后持久化 challenge、同步拒绝/限流失败关闭、
+  不支持 purpose 拒绝、重试耗尽和密码重置。
 - logout cookie 清理、Flyway history 和最终数据库不变量。
 
 未执行真实 OAuth provider、真实邮件或共享开发库写操作。
 
-UniAuth 主应用的邮件相关门禁只验证内部状态机和 HTTP 边界：
+UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状态机和真实 HTTP
+客户端边界：
 
-- `EmailAuthenticationIntegrationTest` 使用 mock `EmailService`。
-- Shell HTTP E2E 把邮件服务地址指向不可达端口，并从 disposable PostgreSQL 读取验证码。
-- 外部服务返回 `success=true` 也只表示接受或入队，不证明收件箱已收到邮件。
+- `EmailAuthenticationIntegrationTest` 使用完整 Spring ApplicationContext、MockMvc、
+  Testcontainers PostgreSQL 和真实 repository/service Bean；只在最外层 `EmailService`
+  边界使用可控 mock，覆盖接受/拒绝结果、动态配置、原子消费和 retry-count CAS；
+  两个回归场景在原子消费后插入更新 challenge，分别验证 `/verify-email` 和
+  `/register` 不会再按 email/purpose 二次消费该记录。
+- `RestTemplateEmailServiceIntegrationTest` 使用 Spring context 中的真实邮件 client Bean
+  和 loopback HTTP server，覆盖 API key、context path、超时和 429 映射。
+- Shell HTTP E2E 启动真实应用和受控邮件 REST stub，通过生产 `RestTemplate` 调用链
+  覆盖接受、拒绝、限流以及数据库中不留下失败 challenge 的契约。
+- `scripts/test_email_service_stub.py` 独立固定 stub 的 API key、health、接受、拒绝、
+  限流、坏请求和 chunked request 兼容性。
+- 外部服务返回 `success=true` 仍只表示接受或入队，不证明收件箱已收到邮件。
+- 外部服务已接受后，本地 challenge 保存事务失败的窗口，以及异步 delivery 失败后
+  撤销 challenge，仍需要 outbox 或 delivery/challenge 双状态机解决。
 
 独立参考实现补充了默认无外部副作用的组件级 E2E：
 

@@ -1,7 +1,7 @@
 # UniAuth 开发指南
 
 > 状态：Live
-> 核验日期：2026-08-07
+> 核验日期：2026-08-08
 > 本指南优先保护数据和密钥；启动前先阅读 [配置基线](CONFIGURATION.md)。
 
 ## 前置条件
@@ -45,8 +45,9 @@ npm run test:e2e
 
 构建会重建 Spring Boot 静态资源目录。
 
-完整仓库门禁使用一次性 PostgreSQL、真实后端 HTTP E2E、Flyway guard、Mock
-Playwright 和离线 Python 测试，并先通过无宽松参数的 `npm ci` 安装前端依赖：
+完整仓库门禁使用一次性 PostgreSQL、受控 loopback 邮件 REST stub、真实后端 HTTP
+E2E、Flyway guard、Mock Playwright 和离线 Python 测试，并先通过无宽松参数的
+`npm ci` 安装前端依赖：
 
 ```bash
 PYTHON_BIN=python3 scripts/verify.sh
@@ -185,8 +186,9 @@ SMTP 或发送真实邮件。入口在进程专属临时源码快照中运行，
 7. 使用隔离账户执行显式 opt-in 的真实收件测试；不要把它加入默认门禁。
 
 邮件服务未启动不会阻止 Spring Boot 启动，也不会影响已验证账户的邮箱加密码登录。
-但当前降级行为会让注册/重置接口在部分投递失败场景下仍报告成功，因此不能把
-“接口返回成功”当作邮件能力已配置完成的证据。
+注册/重置请求遇到同步拒绝、限流、超时或网络异常时会失败关闭且不保存 challenge。
+但“接口返回成功”仍只证明外部服务同步接受了请求：它不证明最终送达，也不能消除
+外部已接受后本地 challenge 事务失败的窗口。
 
 参考服务的恢复扫描间隔必须在 `1..10080` 分钟。关闭邮件总开关、队列或 recovery
 任一项后，恢复任务不得发送既有 pending/stuck 队列；重新启用前应先确认积压和真实
