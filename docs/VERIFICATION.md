@@ -49,9 +49,9 @@ scripts/verify.sh
 - `scripts/test-runtime-guard.sh`：profile、独立数据库、env 权限、暴露鉴权以及
   STARTTLS/implicit SSL/server identity 配置矩阵。
 - `scripts/test-http-e2e.sh`：真实 JAR、真实 HTTP、Flyway/PostgreSQL、API key、
-  模板渲染、边界拒绝和重启持久化。
+  重复鉴权 header 拒绝、模板渲染、边界拒绝和重启持久化。
 - `scripts/test-flyway-baseline-guard.sh`：dirty schema 拒绝、V2 坏数据失败关闭和
-  forward-fix。
+  forward-fix；在 V1 migrated 应用启用 API key 后仍拒绝重复同名凭据。
 
 ### 前端
 
@@ -142,26 +142,27 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 ## 2026-08-08 当前加固门禁
 
 > 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1、Batch B2a、
-> Batch B2b、邮件服务边界和邮箱 challenge 投递接受/原子消费触达路径；
+> Batch B2b、邮件服务边界、邮箱 challenge 投递接受/原子消费、敏感响应、API key
+> 单值鉴权，以及认证 Cookie/浏览器 refresh 存储预备切片；
 > 不代表 H1.4-H8、完整认证正确性或生产就绪。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 120 tests，0 failures/errors/skips |
+| `mvn test` | 通过 | 127 tests，0 failures/errors/skips |
 | `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、PostgreSQL、受控邮件 REST stub、重启、JWT、Web3、email、登录方式 |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 13/13；exact schema、V2/V4 初始及 apply 前数据预检、非法 email verification state、post-baseline 失败恢复与其他拒绝/清理路径 |
 | Flyway integration | 通过 | fresh V1→V4、existing baseline V1→V4、V3→V4、Hibernate validate、Session、checksum/failure recovery |
-| 邮件参考服务 | 通过 | 127 tests；21 个 PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime guard tests；Shell runtime 27/27、HTTP 10/10、Flyway guard 10/10 |
+| 邮件参考服务 | 通过 | 129 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime guard tests；Shell runtime 27/27、HTTP 10/10、Flyway guard 11/11 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
 | `npm audit --audit-level=high` | 通过 | 0 high/critical；2 个 React Router moderate advisories 见下文 |
 | `npx tsc --noEmit` | 通过 | 无 TypeScript 错误 |
 | `npm run build` | 通过 | Vite 生产构建成功，保留 chunk warning |
-| `npm run test:e2e` | 通过 | 20/20 Chrome-channel Mock Playwright tests |
-| Python | 通过 | 14/14 离线 RSA/JWKS/Flask tests |
-| 邮件 REST stub contract | 通过 | 7/7；API key、health、接受、拒绝、限流、坏请求、chunked client 形状和安全响应 header |
+| `npm run test:e2e` | 通过 | 21/21 Chrome-channel Mock Playwright tests |
+| Python | 通过 | 16/16 离线 RSA/JWKS/Flask tests |
+| 邮件 REST stub contract | 通过 | 8/8；API key 单值/重复 header、health、接受、拒绝、限流、坏请求、chunked client 形状和安全响应 header |
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 | Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
 
@@ -180,6 +181,17 @@ Shell HTTP E2E 使用 `test` profile、disposable PostgreSQL、临时 RSA key、
   不支持 purpose 拒绝、重试耗尽和密码重置。
 - logout cookie 清理、Flyway history 和最终数据库不变量。
 
+认证 Cookie/浏览器 refresh 存储预备切片还验证：
+
+- local、邮箱、Web3、OAuth2 和 refresh 使用同一个 Cookie writer，写入与清除的
+  Path/Secure/SameSite 一致，非默认 JWT TTL 会改变对应 Cookie Max-Age。
+- `prod` 中认证 Cookie 或 Session Cookie 的 Secure 最终值被高优先级配置覆盖为
+  false 时，ApplicationContext 启动失败。
+- 前端启动、local/email/Web3/OAuth2、401 refresh 后都不保留
+  `localStorage.refreshToken`；当前 access token localStorage 演示兼容性保持不变。
+- Python 资源服务器在签名、kid、issuer、audience 和 expiry 正确时仍拒绝
+  refresh token 和缺少 `type` 的 token。
+
 未执行真实 OAuth provider、真实邮件或共享开发库写操作。
 
 UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状态机和真实 HTTP
@@ -194,8 +206,8 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
   和 loopback HTTP server，覆盖 API key、context path、超时和 429 映射。
 - Shell HTTP E2E 启动真实应用和受控邮件 REST stub，通过生产 `RestTemplate` 调用链
   覆盖接受、拒绝、限流以及数据库中不留下失败 challenge 的契约。
-- `scripts/test_email_service_stub.py` 独立固定 stub 的 API key、health、接受、拒绝、
-  限流、坏请求和 chunked request 兼容性。
+- `scripts/test_email_service_stub.py` 独立固定 stub 的 API key 单值/重复 header、
+  health、接受、拒绝、限流、坏请求和 chunked request 兼容性。
 - 外部服务返回 `success=true` 仍只表示接受或入队，不证明收件箱已收到邮件。
 - 外部服务已接受后，本地 challenge 保存事务失败的窗口，以及异步 delivery 失败后
   撤销 challenge，仍需要 outbox 或 delivery/challenge 双状态机解决。
@@ -206,6 +218,9 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
 - Flyway V1/V2、独立 history table、PostgreSQL 16 和 Hibernate `validate`。
 - 两个必需模板经过真实 service/repository/event Bean、Thymeleaf、队列和 GreenMail 收件。
 - API key、输入和分页边界、未知模板拒绝、SMTP 连接失败后的失败日志和可重试状态。
+- 配置 API key 时，真实 Tomcat HTTP 入口只接受恰好一个精确匹配的
+  `X-Email-Service-Key`；重复正确值、正确/错误和错误/正确组合均返回 `401`，
+  单个正确 header 的成功契约保持不变。
 - Java/Shell 双重 runtime guard 拒绝 STARTTLS 降级、STARTTLS 与 implicit SSL
   同时启用、生产明文 SMTP 和关闭 server identity verification；H2 与 PostgreSQL
   ApplicationContext 都验证该属性进入真实 `JavaMailSender` Bean。

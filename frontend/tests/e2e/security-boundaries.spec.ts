@@ -116,6 +116,8 @@ test('mock EIP-1193 wallet completes the Web3 login contract', async ({ page }) 
   });
   await expect.poll(() => page.evaluate(() => localStorage.getItem('accessToken')))
     .toBe('wallet.access.token');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('refreshToken')))
+    .toBeNull();
 });
 
 test('Web3 login reports a rejected wallet connection without API calls', async ({ page }) => {
@@ -230,6 +232,22 @@ test('one protected 401 refreshes once and retries with the new access token', a
   expect(authorizationHeaders).toContain('Bearer refreshed.access.token');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('accessToken')))
     .toBe('refreshed.access.token');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('refreshToken')))
+    .toBeNull();
+});
+
+test('application startup removes only the legacy refresh-token key', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('refreshToken', 'legacy.refresh.token');
+    localStorage.setItem('unrelated-preference', 'keep-me');
+  });
+
+  await page.goto('/login');
+
+  await expect.poll(() => page.evaluate(() => ({
+    refresh: localStorage.getItem('refreshToken'),
+    unrelated: localStorage.getItem('unrelated-preference'),
+  }))).toEqual({ refresh: null, unrelated: 'keep-me' });
 });
 
 test('refresh failure clears auth state without retrying the refresh endpoint', async ({ page }) => {

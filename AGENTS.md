@@ -52,7 +52,8 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - UniAuth 主应用只实现邮件服务 HTTP 适配器；真实邮箱注册验证和密码重置需要独立
   邮件服务满足当前 HTTP、模板和响应契约。`reference/email-service/` 提供可运行参考，
   但不会由根应用自动启动；普通邮箱加密码登录不发信。客户端 timeout 默认 5 秒，
-  可选通过 `X-Email-Service-Key` 使用共享密钥。
+  可选通过 `X-Email-Service-Key` 使用共享密钥。配置密钥时，兼容服务必须只接受
+  恰好一个该 header 且整值精确匹配；缺失、错误或重复同名凭据都必须返回 `401`。
 - 参考邮件服务的 `prod` profile 只接受强制 STARTTLS 或 implicit SSL，禁止两者同时
   启用，并要求 SMTP server identity verification。`dev/test` 明文 SMTP 只用于
   loopback GreenMail 等隔离夹具；Shell 与 Spring ApplicationContext 都执行保护。
@@ -131,8 +132,12 @@ JWT 由 `JwtTokenService` 使用 RS256 签发：
 - `kid` 默认 `key-1`。
 - 读取用户名时先读 `username` claim，再回退 `sub` 兼容旧 token。
 
-认证响应通常双重传递 token：HttpOnly cookie + JSON body。前端把 access token 放入 localStorage 以支持异构资源服务器测试。
-不要把这种演示策略直接描述为生产最佳实践。
+认证响应通常双重传递 token：HttpOnly cookie + JSON body。所有签发入口通过
+`AuthCookieService` 统一写入 access/refresh Cookie；base/dev/test 使用本地 HTTP
+兼容值，`prod` 必须同时保持认证 Cookie 和 Session Cookie 的 `Secure=true`，更高
+优先级配置若将任一值覆盖为 false，ApplicationContext 启动失败。前端只把 access
+token 放入 localStorage 以支持异构资源服务器测试，并在启动时移除历史
+`refreshToken` key；不要把这种演示策略直接描述为生产最佳实践。
 
 `JwtTokenService` 构造时读取 `jwt.rsa.key-file`；默认路径是 ignored 的
 `.local/uniauth/rsa-keys.ser`。已有密钥无法解析或 POSIX 权限过宽时启动失败，
@@ -165,8 +170,10 @@ JWKS、旧 token 和 Python 资源服务器；真实环境仍需外部密钥管�
 - 外部服务提供 `email/email-verify` 和 `email/password-reset` 模板，使用
   `username`、`verificationCode` 和 `expiryMinutes`，并兼容同时发送的 `code`。
 - `EMAIL_SERVICE_TIMEOUT_MS` 同时约束 connect/read timeout；`EMAIL_SERVICE_API_KEY`
-  非空时，所有 health/template/simple 请求发送 `X-Email-Service-Key`；密钥最长
-  1024 字符且不能包含 CR/LF。
+  非空时，所有 health/template/simple 请求各发送一个 `X-Email-Service-Key`；
+  外部服务只能接受恰好一个该 header 且整值精确匹配，不能按首值或末值消解重复
+  凭据；缺失、错误或重复同名 header 都必须返回 `401`。密钥最长 1024 字符且不能
+  包含 CR/LF。
 - `EMAIL_SERVICE_URL` 必须是带 host 的绝对 HTTP/HTTPS URL，禁止 userinfo、query
   和 fragment；允许 context path 和尾部斜杠。timeout 范围是 `100..600000ms`。
 
@@ -290,7 +297,7 @@ PYTHON_BIN=python3 scripts/verify.sh
 
 当前验证基线（2026-08-08 工作树；每次后续变更仍须重跑）：
 
-- Maven：120 tests，0 failures/errors/skips。
+- Maven：127 tests，0 failures/errors/skips。
 - 邮件参考服务初始纳入基线：94 tests，0 failures/errors/skips；另有 runtime guard 15/15、
   Shell HTTP 8/8 和 Flyway guard 8/8。
 - 2026-08-08 SMTP transport 加固增量：邮件参考服务 101 tests，
@@ -314,10 +321,14 @@ PYTHON_BIN=python3 scripts/verify.sh
   PostgreSQL/GreenMail ApplicationContext E2E；runtime 27/27、HTTP 10/10、Flyway
   guard 10/10。成功、401、400、404、500 和 matrix 参数路径均固定返回
   no-store/no-cache/nosniff 安全 header，不改变 JSON body 或状态码语义。
+- 2026-08-08 邮件 API 鉴权 header 单值加固增量：邮件参考服务 129 tests，22 个
+  PostgreSQL/GreenMail ApplicationContext E2E；runtime 27/27、HTTP 10/10、Flyway
+  guard 11/11。配置 API key 时只接受恰好一个精确匹配的 header，重复正确值、
+  正确/错误和错误/正确组合均返回 `401`；Python 邮件 stub contract 8/8。
 - Shell HTTP E2E：15/15。
 - Flyway baseline guard：13/13。
-- Mock Playwright：20 tests。
-- Python 资源服务器：14 tests；邮件 REST stub contract：7 tests。
+- Mock Playwright：21 tests。
+- Python 资源服务器：16 tests；邮件 REST stub contract：8 tests。
 - 前端 ESLint、TypeScript 和生产构建通过。
 - 每个未提交批次仍必须在完整门禁后重新执行连续三轮无修改检查；无问题轮次只记录在
   当次工作报告，不为留痕修改仓库文件。
@@ -373,6 +384,15 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 敏感邮件 API 响应加固的邮件组件门禁已通过：127 tests、21 个
   PostgreSQL/GreenMail ApplicationContext E2E、Java runtime guard 24 tests、
   Shell runtime 27/27、HTTP/Flyway 各 10/10；Python 邮件 stub contract 7/7。
+- 邮件 API 鉴权 header 单值加固的完整门禁已通过：邮件服务 129 tests、22 个
+  PostgreSQL/GreenMail ApplicationContext E2E、Java runtime guard 24 tests、
+  Shell runtime 27/27、HTTP 10/10、Flyway guard 11/11；根统一门禁同时通过
+  Java 127、HTTP 15/15、Flyway 13/13、Mock Playwright 21/21、Python 资源
+  服务器 16/16、邮件 stub contract 8/8，以及前端 lint/type/build。
+- 认证 Cookie 与浏览器 refresh 存储预备切片已通过完整门禁：local、邮箱、
+  Web3、OAuth2 和 refresh 复用统一 Cookie writer；prod Secure 配置不能被覆盖为
+  false；Session Cookie 使用 Boot 3.3.4 的有效配置前缀；前端不再持久化 refresh
+  token；Python 资源服务器拒绝 refresh 或缺少 type 的 token。
 - root Flyway baseline guard 临时配置并发隔离修复已通过两套并行 `12/12` 定向
   验证，并随当前组合工作树通过完整根统一门禁。
 
@@ -400,8 +420,8 @@ PYTHON_BIN=python3 scripts/verify.sh
 在依赖相关功能前先验证这些已知风险：
 
 - token blacklist 有 entity/repository/schema，但没有接入 token 验证或登出撤销流程。
-- OAuth2、local login、refresh、Web3 的 cookie `Secure` 设置不一致。
-- refresh token 仍出现在 JSON，前端多处写入 localStorage；header/cookie token 来源可能冲突。
+- refresh token 仍出现在 JSON；access token 仍为演示目的写入 localStorage，
+  header/cookie token 来源也可能冲突。彻底收敛 transport 属于 Batch C 原子切换。
 - CORS 有 YAML 和多个 Java 配置来源；OAuth2 redirect/Referer 缺少统一 allowlist。
 - `ApiAuthController` 对 JWT 用户把 provider 默认标成 `local`，不能反映真实主登录方式。
 - 邮件同步接受失败和 challenge 消费并发已经失败关闭/原子化；外部接受后本地事务

@@ -9,6 +9,7 @@ import org.dddml.uniauth.entity.UserLoginMethod.AuthProvider;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.repository.UserRepository;
 import org.dddml.uniauth.service.EmailVerificationCodeService;
+import org.dddml.uniauth.service.AuthCookieService;
 import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.service.VerificationCodeDeliveryException;
@@ -18,6 +19,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
+import jakarta.servlet.http.HttpServletResponse;
 
 import java.util.*;
 
@@ -34,6 +36,7 @@ public class EmailAuthController {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenService jwtTokenService;
     private final EmailRegistrationProperties emailRegistrationProperties;
+    private final AuthCookieService authCookieService;
 
     @GetMapping("/email/status/{email}")
     public ResponseEntity<Map<String, Object>> getEmailStatus(@PathVariable String email) {
@@ -162,7 +165,9 @@ public class EmailAuthController {
 
     @PostMapping("/verify-email")
     @Transactional
-    public ResponseEntity<?> verifyEmail(@RequestBody Map<String, String> request) {
+    public ResponseEntity<?> verifyEmail(
+            @RequestBody Map<String, String> request,
+            HttpServletResponse response) {
         String email = request.get("email");
         String code = request.get("verificationCode");
 
@@ -194,10 +199,10 @@ public class EmailAuthController {
         if (existingUser.isPresent()) {
             UserEntity user = existingUser.get();
             bindEmailLoginMethod(user, email);
-            return createLoginResponse(user);
+            return createLoginResponse(user, response);
         } else {
             UserEntity user = createUserWithEmailLogin(email, result.getMetadata());
-            return createLoginResponse(user);
+            return createLoginResponse(user, response);
         }
     }
 
@@ -264,7 +269,9 @@ public class EmailAuthController {
         return email.split("@")[0];
     }
 
-    private ResponseEntity<Map<String, Object>> createLoginResponse(UserEntity user) {
+    private ResponseEntity<Map<String, Object>> createLoginResponse(
+            UserEntity user,
+            HttpServletResponse response) {
         String accessToken = jwtTokenService.generateAccessToken(
             user.getUsername(),
             user.getEmail(),
@@ -276,6 +283,7 @@ public class EmailAuthController {
             user.getUsername(),
             user.getId()
         );
+        authCookieService.writeTokenCookies(response, accessToken, refreshToken);
 
         Map<String, Object> userInfo = new LinkedHashMap<>();
         userInfo.put("id", user.getId());

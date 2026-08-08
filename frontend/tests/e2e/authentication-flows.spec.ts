@@ -56,6 +56,8 @@ test('local login stores authentication state and opens the authenticated home p
   expect(loginBody).toContain('password=browser-password');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('accessToken')))
     .toBe('mock.access.token');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('refreshToken')))
+    .toBeNull();
 });
 
 test('local login surfaces a rejected credential response', async ({ page }) => {
@@ -160,6 +162,8 @@ test('email registration sends one code and completes verification', async ({ pa
   });
   await expect.poll(() => page.evaluate(() => localStorage.getItem('accessToken')))
     .toBe('registration.access.token');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('refreshToken')))
+    .toBeNull();
   await expect.poll(() => page.evaluate(() => {
     const value = localStorage.getItem('auth_user');
     return value ? JSON.parse(value).userId : null;

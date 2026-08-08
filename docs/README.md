@@ -15,7 +15,7 @@
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
 | [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | In progress | H0.1-H0.3、H1.1-H1.3、H1.4 Batch B1/B2a/B2b 已验证；其余 H1.4-H8 待实施 |
-| [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Draft | 邮件 challenge 投递接受/原子消费切片已完成；继续按测试优先切片执行后续加固 |
+| [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Draft | 邮件边界和认证 Cookie/浏览器 refresh 存储预备切片已完成；继续按测试优先切片执行 Batch C |
 
 ## 当前关键结论
 
@@ -29,9 +29,10 @@
 - Hibernate 只执行 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 邮箱注册验证和密码重置依赖独立邮件服务；UniAuth 主应用只提供 HTTP 客户端适配器，
   仓库另有不纳入根构建的参考实现。依赖契约包括端点、模板、响应语义、可选 API key
-  和客户端 URL/超时约束；参考实现还对生产 SMTP 加密模式、server identity
-  verification 和邮件 API 响应 no-store/nosniff 做失败关闭保护。外部服务同步拒绝、
-  限流或不可用时不保存 challenge；
+  和客户端 URL/超时约束；配置 API key 时只允许恰好一个精确匹配的
+  `X-Email-Service-Key`，重复同名凭据必须失败关闭。参考实现还对生产 SMTP
+  加密模式、server identity verification 和邮件 API 响应 no-store/nosniff 做
+  失败关闭保护。外部服务同步拒绝、限流或不可用时不保存 challenge；
   外部已接受后本地事务失败和异步 delivery 失败仍需可靠状态机处理。普通邮箱加密码
   登录不需要每次发信。
 - 已建立 PostgreSQL Java 集成测试、真实 HTTP Shell E2E、Mock Playwright 和

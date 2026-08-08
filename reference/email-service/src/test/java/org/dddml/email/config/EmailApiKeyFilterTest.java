@@ -50,6 +50,22 @@ class EmailApiKeyFilterTest {
     }
 
     @Test
+    void repeatedCredentialHeadersAreRejectedEvenWhenEveryValueMatches() throws Exception {
+        MockHttpServletRequest request = emailRequest();
+        request.addHeader(EmailSecurityProperties.API_KEY_HEADER, "filter-secret");
+        request.addHeader(EmailSecurityProperties.API_KEY_HEADER, "filter-secret");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicBoolean chainInvoked = new AtomicBoolean();
+
+        filter.doFilter(request, response, (ignoredRequest, ignoredResponse) ->
+            chainInvoked.set(true)
+        );
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(chainInvoked).isFalse();
+    }
+
+    @Test
     void matrixParametersCannotBypassEmailApiAuthentication() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest(
             "GET",

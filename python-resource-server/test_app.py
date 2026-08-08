@@ -180,6 +180,41 @@ class ResourceServerTest(unittest.TestCase):
         self.assertEqual("Invalid token", result)
 
     @patch.object(resource_server, "get_jwks")
+    def test_refresh_token_is_rejected(self, get_jwks):
+        get_jwks.return_value = self.jwks
+
+        valid, result = resource_server.validate_token(
+            self.token(type="refresh")
+        )
+
+        self.assertFalse(valid)
+        self.assertEqual("Invalid token", result)
+
+    @patch.object(resource_server, "get_jwks")
+    def test_token_without_type_is_rejected(self, get_jwks):
+        get_jwks.return_value = self.jwks
+        now = datetime.now(timezone.utc)
+        token = jwt.encode(
+            {
+                "sub": "user-id",
+                "userId": "user-id",
+                "username": "integration-user",
+                "iss": resource_server.JWT_ISSUER,
+                "aud": resource_server.JWT_AUDIENCE,
+                "iat": now,
+                "exp": now + timedelta(minutes=5),
+            },
+            self.private_key,
+            algorithm="RS256",
+            headers={"kid": self.kid},
+        )
+
+        valid, result = resource_server.validate_token(token)
+
+        self.assertFalse(valid)
+        self.assertEqual("Invalid token", result)
+
+    @patch.object(resource_server, "get_jwks")
     def test_expired_token_is_rejected(self, get_jwks):
         get_jwks.return_value = self.jwks
 

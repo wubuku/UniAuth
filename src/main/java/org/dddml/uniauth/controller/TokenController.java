@@ -1,6 +1,7 @@
 package org.dddml.uniauth.controller;
 
 import org.dddml.uniauth.service.TokenRefreshService;
+import org.dddml.uniauth.service.AuthCookieService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -8,7 +9,6 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +29,7 @@ import java.util.Map;
 public class TokenController {
 
     private final TokenRefreshService tokenRefreshService;
+    private final AuthCookieService authCookieService;
 
     /**
      * 刷新JWT Token
@@ -87,7 +88,11 @@ public class TokenController {
             log.info("Tokens refreshed successfully");
 
             // 设置新的Cookies
-            setTokenCookies(response, tokenPair.getAccessToken(), tokenPair.getRefreshToken());
+            authCookieService.writeTokenCookies(
+                    response,
+                    tokenPair.getAccessToken(),
+                    tokenPair.getRefreshToken()
+            );
 
             return ResponseEntity.ok(Map.of(
                 "message", "Token refreshed successfully",
@@ -107,28 +112,4 @@ public class TokenController {
         }
     }
 
-    /**
-     * 设置Token Cookies
-     */
-    private void setTokenCookies(HttpServletResponse response, String accessToken, String refreshToken) {
-        // Access Token Cookie (1小时)
-        Cookie accessTokenCookie = new Cookie("accessToken", accessToken);
-        accessTokenCookie.setHttpOnly(true);
-        accessTokenCookie.setPath("/");
-        accessTokenCookie.setMaxAge(3600); // 1小时
-        accessTokenCookie.setSecure(true); // 生产环境，HTTPS必须
-        accessTokenCookie.setAttribute("SameSite", "Lax");
-        response.addCookie(accessTokenCookie);
-
-        // Refresh Token Cookie (7天)
-        Cookie refreshTokenCookie = new Cookie("refreshToken", refreshToken);
-        refreshTokenCookie.setHttpOnly(true);
-        refreshTokenCookie.setPath("/");
-        refreshTokenCookie.setMaxAge(604800); // 7天
-        refreshTokenCookie.setSecure(true); // 生产环境，HTTPS必须
-        refreshTokenCookie.setAttribute("SameSite", "Lax");
-        response.addCookie(refreshTokenCookie);
-
-        log.debug("Token cookies set successfully");
-    }
 }

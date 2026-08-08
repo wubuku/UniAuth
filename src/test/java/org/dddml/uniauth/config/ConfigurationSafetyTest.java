@@ -23,6 +23,25 @@ class ConfigurationSafetyTest {
     }
 
     @Test
+    void authenticationAndSessionCookiesUseProfileSafeProperties() throws IOException {
+        assertThat(property("application.yml", "app.auth.cookie.secure")).isEqualTo(false);
+        assertThat(property("application-prod.yml", "app.auth.cookie.secure")).isEqualTo(true);
+
+        assertThat(property("application.yml", "spring.session.cookie.name")).isNull();
+        assertThat(property("application-prod.yml", "spring.session.cookie.secure")).isNull();
+        assertThat(property("application.yml", "server.servlet.session.cookie.name"))
+                .isEqualTo("JSESSIONID");
+        assertThat(property("application.yml", "server.servlet.session.cookie.http-only"))
+                .isEqualTo(true);
+        assertThat(property("application.yml", "server.servlet.session.cookie.path"))
+                .isEqualTo("/");
+        assertThat(property("application.yml", "server.servlet.session.cookie.same-site"))
+                .isEqualTo("Lax");
+        assertThat(property("application-prod.yml", "server.servlet.session.cookie.secure"))
+                .isEqualTo(true);
+    }
+
+    @Test
     void testDatabaseRequiresExplicitConnectionSettings() throws IOException {
         assertThat(property("application-test.yml", "spring.datasource.url"))
                 .isEqualTo("jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DATABASE}");

@@ -72,9 +72,11 @@ SMTP 或邮件供应商。外部服务必须提供 health、模板邮件端点�
 由独立 Flyway V1/V2 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP
 E2E 验证。参考服务的所有邮件 API 响应还统一禁止缓存和 MIME 嗅探。客户端使用专用
 `RestTemplate`，统一应用 connect/read timeout，并可向
-所有邮件服务请求发送 `X-Email-Service-Key`；类型化配置在 ApplicationContext
-启动时拒绝无 host、非 HTTP/HTTPS、含 userinfo/query/fragment 的 URL 和越界
-timeout，也拒绝超过 1024 字符或包含 CR/LF 的 API key。详细契约见
+所有邮件服务请求各发送一个 `X-Email-Service-Key`；配置密钥时，兼容服务必须只
+接受恰好一个该 header 且整值精确匹配，缺失、错误或重复同名凭据都返回 `401`，
+不能选择首值或末值继续处理。类型化配置在 ApplicationContext 启动时拒绝无 host、
+非 HTTP/HTTPS、含 userinfo/query/fragment 的 URL 和越界 timeout，也拒绝超过
+1024 字符或包含 CR/LF 的 API key。详细契约见
 [配置基线](CONFIGURATION.md#邮件服务依赖)。虽然
 `VerificationPurpose.LOGIN` 和前端联合类型仍存在，当前没有受支持的邮箱验证码
 无密码登录 endpoint。
@@ -125,7 +127,9 @@ generation 并幂等释放，因此旧窗口迟到释放不会误释放新窗口
 - `/api/auth/**` 不经过 Resource Server 链。该空间内需要身份的接口必须自行验证，
   例如当前 Web3 bind 手工解析 bearer token。
 - CORS 同时存在于 `CorsConfig`、`WebConfig`、`WebMvcConfig` 和 YAML。
-- cookie 的 `Secure`、SameSite 和写入逻辑分散在多个 controller/config。
+- access/refresh Cookie 已集中到 `AuthCookieService`，prod Secure 配置有启动期
+  fail-closed guard；header/cookie 双凭据、CSRF 和最终 token transport 仍待
+  Batch C 原子切换。
 
 ## 身份模型
 

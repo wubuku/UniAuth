@@ -6,7 +6,6 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +16,7 @@ import org.dddml.uniauth.dto.web3.Web3LoginRequest;
 import org.dddml.uniauth.dto.web3.Web3NonceResponse;
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.service.JwtTokenService;
+import org.dddml.uniauth.service.AuthCookieService;
 import org.dddml.uniauth.service.Web3AuthService;
 import org.dddml.uniauth.util.Web3SignatureUtils;
 import org.springframework.http.HttpStatus;
@@ -33,26 +33,9 @@ import java.time.LocalDateTime;
 @Tag(name = "Web3 Authentication", description = "Web3 wallet authentication endpoints")
 public class Web3AuthController {
 
-    private static void setTokenCookies(HttpServletResponse response, String accessToken, String refreshToken) {
-        Cookie accessTokenCookie = new Cookie("accessToken", accessToken);
-        accessTokenCookie.setHttpOnly(true);
-        accessTokenCookie.setPath("/");
-        accessTokenCookie.setMaxAge(3600);
-        accessTokenCookie.setSecure(false);
-        accessTokenCookie.setAttribute("SameSite", "Lax");
-        response.addCookie(accessTokenCookie);
-
-        Cookie refreshTokenCookie = new Cookie("refreshToken", refreshToken);
-        refreshTokenCookie.setHttpOnly(true);
-        refreshTokenCookie.setPath("/");
-        refreshTokenCookie.setMaxAge(604800);
-        refreshTokenCookie.setSecure(false);
-        refreshTokenCookie.setAttribute("SameSite", "Lax");
-        response.addCookie(refreshTokenCookie);
-    }
-
     private final Web3AuthService web3AuthService;
     private final JwtTokenService jwtTokenService;
+    private final AuthCookieService authCookieService;
 
     @GetMapping("/nonce/{walletAddress}")
     @Operation(summary = "Get nonce for wallet authentication",
@@ -149,7 +132,7 @@ public class Web3AuthController {
 
             log.info("Web3 login completed");
 
-            setTokenCookies(response, accessToken, refreshToken);
+            authCookieService.writeTokenCookies(response, accessToken, refreshToken);
 
             return ResponseEntity.ok(responseBody);
         } catch (Exception e) {

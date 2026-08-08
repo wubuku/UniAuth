@@ -21,12 +21,12 @@
 | 邮件发送 | 外部 HTTP 服务，默认端口 `8095`；`reference/email-service/` 提供独立参考实现 |
 | 数据库 | PostgreSQL-only |
 | Migration | Flyway V1 baseline + V2 + V3 + V4，history `uniauth_flyway_schema_history` |
-| Java 验证 | 120 tests |
-| 邮件参考服务 | 127 tests；其中 21 个 PostgreSQL/ApplicationContext E2E；另有 runtime 27/27、HTTP 10/10、Flyway guard 10/10 |
+| Java 验证 | 127 tests |
+| 邮件参考服务 | 129 tests；其中 22 个 PostgreSQL/ApplicationContext E2E；另有 runtime 27/27、HTTP 10/10、Flyway guard 11/11 |
 | HTTP E2E | 15/15 |
 | Flyway baseline guard | 13/13 |
-| Playwright | 20 tests |
-| Python | 14 个资源服务器测试 + 7 个邮件 REST stub 契约测试 |
+| Playwright | 21 tests |
+| Python | 16 个资源服务器测试 + 8 个邮件 REST stub 契约测试 |
 | 前端 lint/type/build | 通过 |
 
 安全启动、测试和 baseline 操作见 [开发指南](docs/DEVELOPMENT.md) 与
@@ -69,6 +69,8 @@ connect/read timeout，不只是一个服务 URL；URL 本身也必须是带 hos
 userinfo/query/fragment 的绝对 HTTP/HTTPS 地址。参考实现自身还要求生产 SMTP 使用
 强制 STARTTLS 或 implicit SSL，并保持 server identity verification 开启；其他兼容
 实现如果不使用 SMTP，也必须为其下游供应商连接提供等价的防降级和身份校验保护。
+配置共享密钥时，服务只能接受恰好一个 `X-Email-Service-Key` 且整值精确匹配；
+缺失、错误或重复同名鉴权 header 都必须返回 `401`，不能选择首值或末值继续处理。
 参考实现的 `SMTP_HOST` 只能是无 URI 语法或空白字符的 host/IP token，
 `SMTP_PORT` 必须在 `1..65535`；所有邮件 API 响应统一设置 no-store/no-cache 和
 nosniff 安全 header，避免队列、日志或错误响应被缓存或 MIME 嗅探。

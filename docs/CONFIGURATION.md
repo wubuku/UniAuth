@@ -45,9 +45,10 @@ REST stub，并通过真实 HTTP client 覆盖接受、拒绝和限流路径。
 `EMAIL_SERVICE_TIMEOUT_MS` 设置，默认 `5000` 毫秒，有效范围为 `100..600000`
 毫秒。URL 或 timeout 不符合约束时，Spring ApplicationContext 启动失败。
 `EMAIL_SERVICE_API_KEY` 非空时，health、模板和简单邮件请求都会发送
-`X-Email-Service-Key`；外部服务必须配置相同值。该值最长 1024 字符且不能包含
-CR/LF；不符合约束时 UniAuth 会在 ApplicationContext 启动阶段失败，而不是等到
-第一次构造 HTTP header 时才失败。
+一个 `X-Email-Service-Key`；外部服务必须配置相同值，并且只接受恰好一个该
+header 且整值精确匹配。缺失、错误或重复同名凭据都必须返回 `401`，不能选择首值
+或末值继续处理。该值最长 1024 字符且不能包含 CR/LF；不符合约束时 UniAuth 会在
+ApplicationContext 启动阶段失败，而不是等到第一次构造 HTTP header 时才失败。
 
 这里的依赖是协议契约，不只是一个 host/port。外部 RESTful 服务必须满足：
 
@@ -58,7 +59,7 @@ CR/LF；不符合约束时 UniAuth 会在 ApplicationContext 启动阶段失败�
 | 模板 | 提供 `email/email-verify` 和 `email/password-reset` |
 | 模板变量 | 支持 `username`、`verificationCode`、`expiryMinutes`；请求还会同时发送 `code` |
 | 成功响应 | 返回 2xx JSON `success=true`；UniAuth 将其解释为 `QUEUED` |
-| 服务鉴权 | 可选共享密钥 header `X-Email-Service-Key`；值来自 `EMAIL_SERVICE_API_KEY`，最长 1024 字符且禁止 CR/LF |
+| 服务鉴权 | 可选共享密钥 header `X-Email-Service-Key`；配置后只接受恰好一个 header 且整值精确匹配，缺失、错误或重复同名凭据返回 `401`；值最长 1024 字符且禁止 CR/LF |
 | 超时 | 调用必须在配置的 connect/read timeout 内完成；UniAuth 客户端不自动重试 |
 
 health 响应的最小兼容形状：
@@ -122,7 +123,9 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - 所有 profile 使用 Hibernate `validate`，SQL init 关闭。
 - loopback 监听时 API key 可选；任何非 loopback 监听都必须设置
   `EMAIL_SERVICE_API_KEY`。设置后所有 `/api/email/**` 端点都要求该 header；参考
-  服务同样在启动阶段拒绝超过 1024 字符或包含 CR/LF 的值。
+  服务同样在启动阶段拒绝超过 1024 字符或包含 CR/LF 的值，并在请求阶段拒绝
+  缺失、错误或重复同名 header。反向代理或兼容实现不得通过选择重复凭据中的首值
+  或末值绕过该单值要求。
 - SMTP 首选 `SMTP_*` 和 `EMAIL_FROM_*` 变量；从来源 `.env` 复制的
   `SPRING_MAIL_USERNAME`、`SPRING_MAIL_PASSWORD`、`APP_MAIL_FROM_EMAIL` 仍兼容。
 - 本机 `.env` 被忽略且不得提交；它不替代显式数据库、SMTP host/port 和 TLS 配置。
@@ -187,6 +190,27 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 | `prod` | 必须显式提供 PostgreSQL 五项连接变量 | Flyway；SQL init never；`ddl-auto: validate` | 目标和备份由部署流程确认 |
 
 自动化 Java 测试通过 Testcontainers 动态注入连接，不读取仓库 `.env`。
+
+## 认证与 Session Cookie
+
+access/refresh Cookie 由 `AuthCookieService` 统一写入和清除：
+
+- `HttpOnly=true`
+- `Path=/`
+- `SameSite=Lax`
+- `Max-Age` 分别来自 `jwt.expires.access-token` 和
+  `jwt.expires.refresh-token`
+- `app.auth.cookie.secure` 在 base/dev/test 默认为 `false`，`prod` 为 `true`
+
+Spring Session Cookie 使用 Boot 3.3.4 实际绑定的
+`server.servlet.session.cookie.*`，而不是无效的 `spring.session.cookie.*`。
+base 配置固定 `JSESSIONID`、`HttpOnly=true`、`Path=/`、`SameSite=Lax`；
+`application-prod.yml` 额外设置 `Secure=true`。
+
+`prod` profile 有启动期 fail-closed guard。即使环境变量或命令行等高优先级配置把
+`app.auth.cookie.secure` 或 `server.servlet.session.cookie.secure` 覆盖为
+`false`，ApplicationContext 也会拒绝启动。该保护不替代 TLS 终止、可信代理和
+`Forwarded` header 配置核验。
 
 ## 数据初始化
 

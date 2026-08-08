@@ -33,7 +33,9 @@ UniAuth 侧还有两个运行参数：
 - `EMAIL_SERVICE_TIMEOUT_MS`：connect/read timeout，默认 `5000` 毫秒，有效范围
   `100..600000` 毫秒。
 - `EMAIL_SERVICE_API_KEY`：可选共享密钥；非空时所有请求携带
-  `X-Email-Service-Key`，本服务必须配置相同值；最长 1024 字符且不能包含 CR/LF。
+  一个 `X-Email-Service-Key`，本服务必须配置相同值；最长 1024 字符且不能包含
+  CR/LF。配置后服务只接受恰好一个该 header 且整值精确匹配，缺失、错误或重复
+  同名凭据均返回 `401`。
 
 `EMAIL_SERVICE_URL` 必须是带 host 的绝对 HTTP/HTTPS URL，禁止 userinfo、query
 和 fragment。允许 context path 和尾部斜杠；UniAuth 会归一化尾斜杠后追加
@@ -127,12 +129,13 @@ HTTP request
 | `GET` | `/api/email/logs` | 发送日志列表 |
 
 `EMAIL_SERVICE_API_KEY` 非空时，所有 `/api/email/**` 端点都要求
-`X-Email-Service-Key`；缺失或不匹配返回 `401`。默认配置把服务绑定到
-`127.0.0.1`，loopback 下密钥可选；任何非 loopback 绑定都必须配置密钥，否则
-ApplicationContext 启动失败。超过 1024 字符或包含 CR/LF 的密钥也会在双方
-ApplicationContext/运行保护阶段被拒绝，避免将无效值传入 HTTP header。该共享密钥
-只是最小服务鉴权，部署仍应使用私有网络、TLS、入口访问控制和独立密钥管理，不能
-直接暴露到公网。
+`X-Email-Service-Key` 恰好出现一次且整值精确匹配；缺失、不匹配或重复同名
+header 都返回 `401`，包括重复的两个正确值以及正确/错误混合值。实现不得选择首值
+或末值继续处理。默认配置把服务绑定到 `127.0.0.1`，loopback 下密钥可选；任何
+非 loopback 绑定都必须配置密钥，否则 ApplicationContext 启动失败。超过 1024
+字符或包含 CR/LF 的密钥也会在双方 ApplicationContext/运行保护阶段被拒绝，避免
+将无效值传入 HTTP header。该共享密钥只是最小服务鉴权，部署仍应使用私有网络、
+TLS、入口访问控制和独立密钥管理，不能直接暴露到公网。
 
 所有 `/api/email` 及其子路径的响应（包括 2xx、4xx 和 5xx）都设置：
 
@@ -267,6 +270,8 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 
 - fresh V1→V2、V1→V2 数据保留、独立 history table 和 Hibernate `validate`。
 - `GET /api/email/health` 与必需模板列表的真实 HTTP 契约。
+- API key 配置后的单值精确匹配：缺失、错误、重复正确值和正确/错误混合 header
+  均返回 `401`，单个正确 header 继续通过。
 - 所有邮件 API 响应在成功、API key 拒绝和 MVC 路由错误下的
   `no-store`/`no-cache`/`nosniff` 安全 header。
 - `email/email-verify` 和 `email/password-reset` 从 HTTP 入队到 SMTP 收件的完整链路。
@@ -293,12 +298,12 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 
 2026-08-08 当前组合基线：
 
-- 本组件 Maven：127 tests，0 failures/errors/skips；其中 21 个
+- 本组件 Maven：129 tests，0 failures/errors/skips；其中 22 个
   PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime guard tests。
-- 本组件 Shell runtime 27/27、HTTP/PostgreSQL E2E 10/10、Flyway guard 10/10。
-- UniAuth 根项目：Java 120 tests、HTTP 15/15、Flyway 13/13、
-  Mock Playwright 20/20、Python 资源服务器 14/14、邮件 REST stub contract 7/7，
-  前端 lint/type/build 和文档检查通过。
+- 本组件 Shell runtime 27/27、HTTP/PostgreSQL E2E 10/10、Flyway guard 11/11。
+- UniAuth 根项目：Java 127 tests、HTTP 15/15、Flyway 13/13、
+  Mock Playwright 21/21、Python 资源服务器 16/16、邮件 REST stub contract 8/8；
+  本轮完整根统一门禁已通过。
 - 根 Shell HTTP E2E 使用受控 loopback REST stub 走真实 UniAuth
   `RestTemplateEmailServiceImpl`，覆盖接受、拒绝、限流和失败不保存 challenge。
 - 默认门禁仍不连接真实 SMTP/供应商，也不证明最终收件、退信、外部 TLS 或
@@ -382,6 +387,19 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - Shell runtime guard：27/27。
 - Shell HTTP/PostgreSQL E2E：10/10。
 - Shell Flyway guard：10/10。
+
+2026-08-08 邮件 API 鉴权 header 单值加固增量：
+
+- Maven：129 tests，0 failures/errors/skips。
+- 其中 22 个 PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime
+  guard tests。
+- 配置 API key 后只接受恰好一个精确匹配的 `X-Email-Service-Key`；重复正确值、
+  正确/错误和错误/正确组合在真实 Tomcat HTTP、Shell curl 和 Python stub 中均
+  返回 `401`，单个正确 header 的成功语义保持不变。
+- Shell runtime guard：27/27。
+- Shell HTTP/PostgreSQL E2E：10/10。
+- Shell Flyway guard：11/11。
+- Python 邮件 REST stub contract：8/8。
 
 2026-08-08 SMTP transport 加固增量：
 

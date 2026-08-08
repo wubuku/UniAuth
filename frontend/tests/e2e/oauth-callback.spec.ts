@@ -53,6 +53,8 @@ test('OAuth callback processes once under React StrictMode and loads the user', 
   expect(currentUserCalls).toBeGreaterThanOrEqual(1);
   await expect.poll(() => page.evaluate(() => localStorage.getItem('accessToken')))
     .toBe('callback.access.token');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('refreshToken')))
+    .toBeNull();
 });
 
 test('OAuth callback provider error is shown on the login page', async ({ page }) => {

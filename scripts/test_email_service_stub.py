@@ -40,6 +40,27 @@ class EmailServiceStubContractTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual({"status": "UP"}, body)
 
+    def test_repeated_api_key_headers_are_rejected(self) -> None:
+        for api_keys in (
+            (self.api_key, self.api_key),
+            (self.api_key, "wrong"),
+            ("wrong", self.api_key),
+        ):
+            with self.subTest(api_keys=api_keys):
+                connection = HTTPConnection(self.host, self.port, timeout=5)
+                try:
+                    connection.putrequest("GET", "/api/email/health")
+                    for api_key in api_keys:
+                        connection.putheader("X-Email-Service-Key", api_key)
+                    connection.endheaders()
+                    response = connection.getresponse()
+                    body = json.loads(response.read())
+                finally:
+                    connection.close()
+
+                self.assertEqual(401, response.status)
+                self.assertEqual("UNAUTHORIZED", body["error"])
+
     def test_responses_disable_cache_and_content_sniffing(self) -> None:
         status, body, headers = self.request_with_headers(
             "GET",

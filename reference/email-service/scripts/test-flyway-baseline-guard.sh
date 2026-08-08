@@ -15,6 +15,7 @@ DATABASE_PASSWORD="email-flyway-${RUN_ID}"
 DATABASE_PORT=""
 APP_PID=""
 SERVER_PORT=""
+APPLICATION_API_KEY=""
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}localhost,127.0.0.1,::1"
 export no_proxy="${no_proxy:+${no_proxy},}localhost,127.0.0.1,::1"
@@ -95,6 +96,20 @@ assert_security_headers() {
         || fail "migrated application did not return X-Content-Type-Options: nosniff"
 }
 
+assert_repeated_api_key_rejected() {
+    local status
+    status="$(
+        curl -sS \
+            -o /dev/null \
+            -w '%{http_code}' \
+            -H "X-Email-Service-Key: $APPLICATION_API_KEY" \
+            -H "X-Email-Service-Key: $APPLICATION_API_KEY" \
+            "http://127.0.0.1:${SERVER_PORT}/api/email/health"
+    )"
+    [ "$status" = "401" ] \
+        || fail "migrated application accepted repeated API-key headers"
+}
+
 db_command() {
     local database="$1"
     shift
@@ -126,6 +141,7 @@ start_application() {
         export SPRING_PROFILES_ACTIVE=dev
         export EMAIL_SERVICE_BIND_ADDRESS=127.0.0.1
         export EMAIL_SERVICE_PORT="$SERVER_PORT"
+        export EMAIL_SERVICE_API_KEY="$APPLICATION_API_KEY"
         export EMAIL_POSTGRES_HOST=127.0.0.1
         export EMAIL_POSTGRES_PORT="$DATABASE_PORT"
         export EMAIL_POSTGRES_DATABASE="$database"
@@ -153,7 +169,14 @@ start_application() {
 wait_for_application() {
     local log_file="$1"
     for _ in $(seq 1 90); do
-        if curl -fsS \
+        if [ -n "$APPLICATION_API_KEY" ]; then
+            if curl -fsS \
+                -H "X-Email-Service-Key: $APPLICATION_API_KEY" \
+                "http://127.0.0.1:${SERVER_PORT}/api/email/health" \
+                >/dev/null 2>&1; then
+                return
+            fi
+        elif curl -fsS \
             "http://127.0.0.1:${SERVER_PORT}/api/email/health" \
             >/dev/null 2>&1; then
             return
@@ -244,7 +267,7 @@ create_database "$V2_DATABASE"
 create_database "$ORPHAN_DATABASE"
 create_database "$CHECKSUM_DATABASE"
 
-echo "1/10 Reject a shared database before Flyway can create schema objects"
+echo "1/11 Reject a shared database before Flyway can create schema objects"
 shared_log="$TEMP_DIR/shared-database.log"
 expect_startup_failure "$SHARED_DATABASE" "$shared_log"
 grep -Fq "Email service database name must contain email or mail" "$shared_log" \
@@ -256,7 +279,7 @@ grep -Fq "Email service database name must contain email or mail" "$shared_log" 
     "SELECT to_regclass('public.email_queue') IS NULL;")" = "t" ] \
     || fail "shared-database startup created email schema objects"
 
-echo "2/10 Reject a non-empty schema without Flyway history"
+echo "2/11 Reject a non-empty schema without Flyway history"
 db_command "$DIRTY_DATABASE" \
     -c "CREATE TABLE unexpected_table (id bigint PRIMARY KEY);" >/dev/null
 dirty_log="$TEMP_DIR/dirty-schema.log"
@@ -267,13 +290,21 @@ grep -Fq "non-empty schema" "$dirty_log" \
     "SELECT to_regclass('public.email_service_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "dirty-schema startup created Flyway history"
 
-echo "3/10 Apply only V1 to a disposable database"
+echo "3/11 Apply only V1 to a disposable database"
 v1_log="$TEMP_DIR/v1.log"
 start_application "$V2_DATABASE" "$v1_log" 1
 wait_for_application "$v1_log"
-echo "4/10 Verify migrated application response security headers"
+echo "4/11 Verify migrated application response security headers"
 assert_security_headers
 stop_application
+APPLICATION_API_KEY="email-flyway-key-${RUN_ID}"
+credential_log="$TEMP_DIR/v1-credential.log"
+start_application "$V2_DATABASE" "$credential_log" 1
+wait_for_application "$credential_log"
+echo "5/11 Reject repeated API-key headers after migration"
+assert_repeated_api_key_rejected
+stop_application
+APPLICATION_API_KEY=""
 [ "$(db_value "$V2_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '1' AND success;")" = "1" ] \
     || fail "V1-only startup did not record migration V1"
@@ -281,7 +312,7 @@ stop_application
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '2';")" = "0" ] \
     || fail "V1-only startup unexpectedly applied V2"
 
-echo "5/10 Reject V1 data that violates the V2 retry bound"
+echo "6/11 Reject V1 data that violates the V2 retry bound"
 db_command "$V2_DATABASE" -c "
     INSERT INTO email_queue (
         recipient,
@@ -312,7 +343,7 @@ expect_startup_failure "$V2_DATABASE" "$v2_failure_log"
 grep -Fq "chk_email_queue_retry_bounds" "$v2_failure_log" \
     || fail "V2 failure did not identify the retry-bound constraint"
 
-echo "6/10 Preserve V1 history and source data after failed V2"
+echo "7/11 Preserve V1 history and source data after failed V2"
 [ "$(db_value "$V2_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '1' AND success;")" = "1" ] \
     || fail "failed V2 damaged V1 history"
@@ -323,7 +354,7 @@ echo "6/10 Preserve V1 history and source data after failed V2"
     "SELECT count(*) FROM email_queue WHERE retry_count = 2 AND max_retries = 1;")" = "1" ] \
     || fail "failed V2 changed source data"
 
-echo "7/10 Forward-fix retry data and apply V2 successfully"
+echo "8/11 Forward-fix retry data and apply V2 successfully"
 db_command "$V2_DATABASE" \
     -c "UPDATE email_queue SET retry_count = max_retries WHERE retry_count > max_retries;" \
     >/dev/null
@@ -340,7 +371,7 @@ stop_application
     WHERE conname = 'chk_email_queue_retry_bounds';
 ")" = "1" ] || fail "V2 retry-bound constraint is missing"
 
-echo "8/10 Reject V1 logs that reference a missing queue row"
+echo "9/11 Reject V1 logs that reference a missing queue row"
 orphan_v1_log="$TEMP_DIR/orphan-v1.log"
 start_application "$ORPHAN_DATABASE" "$orphan_v1_log" 1
 wait_for_application "$orphan_v1_log"
@@ -373,7 +404,7 @@ grep -Fq "fk_email_logs_queue" "$orphan_failure_log" \
     "SELECT count(*) FROM email_logs WHERE queue_id = 999;")" = "1" ] \
     || fail "orphan-log failure changed source data"
 
-echo "9/10 Forward-fix the orphan reference and apply V2 successfully"
+echo "10/11 Forward-fix the orphan reference and apply V2 successfully"
 db_command "$ORPHAN_DATABASE" \
     -c "UPDATE email_logs SET queue_id = NULL WHERE queue_id = 999;" \
     >/dev/null
@@ -388,7 +419,7 @@ stop_application
     "SELECT count(*) FROM email_logs WHERE queue_id IS NULL;")" = "1" ] \
     || fail "forward-fixed orphan log was not preserved"
 
-echo "10/10 Reject checksum drift without changing data, then recover"
+echo "11/11 Reject checksum drift without changing data, then recover"
 checksum_initial_log="$TEMP_DIR/checksum-initial.log"
 start_application "$CHECKSUM_DATABASE" "$checksum_initial_log"
 wait_for_application "$checksum_initial_log"

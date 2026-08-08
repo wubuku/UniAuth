@@ -1,7 +1,17 @@
 server:
   port: 8081  # 隧道暴露端口
+  servlet:
+    session:
+      cookie:
+        name: JSESSIONID
+        http-only: true
+        path: /
+        same-site: Lax
 
 app:
+  auth:
+    cookie:
+      secure: false
   demo-data:
     enabled: false
     disposable: false
@@ -112,11 +122,6 @@ spring:
     jdbc:
       initialize-schema: never      # Spring Session 表由 Flyway 管理
     timeout: 1800                   # Session 超时时间：30分钟（单位：秒）
-    cookie:
-      name: JSESSIONID              # Session Cookie 名称
-      http-only: true               # HttpOnly，防止 XSS 攻击
-      path: /                        # Cookie 路径
-      same-site: Lax                # SameSite 属性，防止 CSRF 攻击
 
   security:
     oauth2:

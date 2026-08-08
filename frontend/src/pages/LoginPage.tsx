@@ -267,9 +267,6 @@ export default function LoginPage() {
         setSuccessMessage('邮箱验证成功！');
 
         localStorage.setItem('accessToken', response.accessToken);
-        if (response.refreshToken) {
-          localStorage.setItem('refreshToken', response.refreshToken);
-        }
 
         const userData = {
           id: response.user.id,

@@ -10,7 +10,9 @@
 - 使用 `start.sh` 加载 env 和执行运行保护；它要求独立邮件数据库，并拒绝权限过宽
   或符号链接形式的 env 文件。
 - 非 loopback 监听必须设置 `EMAIL_SERVICE_API_KEY`；UniAuth 侧配置相同值。密钥
-  最长 1024 字符且不能包含 CR/LF。
+  最长 1024 字符且不能包含 CR/LF。配置后只接受恰好一个
+  `X-Email-Service-Key` 且整值精确匹配；缺失、错误或重复同名 header 均返回
+  `401`，不得选择首值或末值继续处理。
 - SMTP transport 必须通过 Java 与 Shell 双重 guard：`STARTTLS_REQUIRED=true`
   不能脱离 `STARTTLS_ENABLE=true`，implicit SSL 不能与 STARTTLS 同时启用；`prod`
   只能使用强制 STARTTLS 或 implicit SSL，并保持 server identity verification 开启。
@@ -45,6 +47,7 @@ UniAuth 当前依赖：
 - `email/email-verify`
 - `email/password-reset`
 - 2xx JSON `success=true` 表示请求已接受或入队
+- 配置 API key 时，`X-Email-Service-Key` 必须恰好出现一次且整值精确匹配
 - UniAuth base URL 必须是带 host、无 userinfo/query/fragment 的绝对 HTTP/HTTPS
   地址；允许 context path 和尾斜杠，timeout 范围为 `100..600000ms`
 

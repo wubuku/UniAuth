@@ -5,6 +5,8 @@ import { User } from '../types';
 // API基础URL - 使用相对路径，Vite代理会处理开发环境
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '';
 
+localStorage.removeItem('refreshToken');
+
 /**
  * 认证相关API服务
  */
@@ -94,7 +96,6 @@ export class AuthService {
       });
       // 确保返回的是响应数据，而不是完整的响应对象
       const result = response.data || response;
-      console.log('Refresh token response:', result);
       return result;
     } catch (error) {
       console.error('Refresh token error:', error);
@@ -410,11 +411,11 @@ axios.interceptors.response.use(
     // 检查是否是SSO登录成功的响应或token刷新成功的响应
     if (response.data && response.data.accessToken) {
       console.log('Token获取成功，存储Token...');
-      // 存储Token到localStorage，用于前端测试和异构资源服务器集成
+      // Access token remains available for the heterogeneous resource-server demo.
       if (response.data.accessToken) {
         localStorage.setItem('accessToken', response.data.accessToken);
       }
-      // 不要存储refreshToken到localStorage，保持在HttpOnly cookie中
+      localStorage.removeItem('refreshToken');
       // 存储用户信息
       if (response.data.user) {
         localStorage.setItem('auth_user', JSON.stringify(response.data.user));
@@ -455,7 +456,7 @@ axios.interceptors.response.use(
         
         if (refreshResponse.data && refreshResponse.data.accessToken) {
           console.log('Token刷新成功，重新发起请求...');
-          // 存储新token
+          // Access token remains available for the heterogeneous resource-server demo.
           localStorage.setItem('accessToken', refreshResponse.data.accessToken);
           if (refreshResponse.data.user) {
             localStorage.setItem('auth_user', JSON.stringify(refreshResponse.data.user));

@@ -16,6 +16,10 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    localStorage.removeItem('refreshToken');
+  }, []);
+
   // 当用户状态改变时，保存到localStorage
   useEffect(() => {
     if (user) {
@@ -66,66 +70,7 @@ export function useAuth() {
     try {
       setError(null);
       console.log('Checking authentication status...');
-      
-      // 首先从cookie中获取token并存储到localStorage
-      // 这样可以确保SSO登录后token也能被正确存储
-      const getCookie = (name: string) => {
-        const value = `; ${document.cookie}`;
-        const parts = value.split(`; ${name}=`);
-        if (parts.length === 2) return parts.pop()?.split(';').shift();
-        return null;
-      };
-      
-      console.log('Current cookies:', document.cookie);
-      
-      const accessToken = getCookie('accessToken');
-      const refreshToken = getCookie('refreshToken');
-      const storedAccessToken = localStorage.getItem('accessToken');
-      
-      console.log('Access token from cookie:', accessToken ? 'Present' : 'Missing');
-      console.log('Refresh token from cookie:', refreshToken ? 'Present' : 'Missing');
-      
-      if (accessToken) {
-        localStorage.setItem('accessToken', accessToken);
-        console.log('Stored access token from cookie to localStorage');
-      } else if (storedAccessToken) {
-        console.log('Using access token already stored in localStorage');
-      } else {
-        console.log('No access token found in cookie');
-        // 只在有refreshToken时才尝试刷新
-        const storedRefreshToken = localStorage.getItem('refreshToken') || refreshToken;
-        if (storedRefreshToken) {
-          try {
-            console.log('Attempting to refresh token...');
-            const refreshResponse = await AuthService.refreshToken();
-            console.log('Token refresh response:', refreshResponse);
-            if (refreshResponse.accessToken) {
-              localStorage.setItem('accessToken', refreshResponse.accessToken);
-              console.log('Stored access token from API to localStorage');
-            }
-          } catch (error) {
-            console.log('Token refresh failed:', error);
-            // 清除过期的token
-            localStorage.removeItem('accessToken');
-            localStorage.removeItem('refreshToken');
-          }
-        } else {
-          console.log('No refresh token available, skipping refresh');
-        }
-      }
-      
-      if (refreshToken) {
-        localStorage.setItem('refreshToken', refreshToken);
-        console.log('Stored refresh token from cookie to localStorage');
-      }
-      
-      console.log('LocalStorage after cookie check:', {
-        accessToken: localStorage.getItem('accessToken') ? 'Present' : 'Missing',
-        refreshToken: localStorage.getItem('refreshToken') ? 'Present' : 'Missing',
-        auth_user: localStorage.getItem('auth_user') ? 'Present' : 'Missing'
-      });
-      
-      // 然后尝试获取用户信息
+
       const userData = await AuthService.getCurrentUser();
       console.log('User authenticated:', userData);
       setUser(userData);
@@ -169,14 +114,11 @@ export function useAuth() {
     try {
       console.log('Starting token refresh...');
       const result = await AuthService.refreshToken();
-      console.log('Token refresh successful:', result);
+      console.log('Token refresh successful');
       
-      // 存储新令牌到localStorage，用于前端测试和异构资源服务器集成
+      // Access token remains available for the heterogeneous resource-server demo.
       if (result.accessToken) {
         localStorage.setItem('accessToken', result.accessToken);
-      }
-      if (result.refreshToken) {
-        localStorage.setItem('refreshToken', result.refreshToken);
       }
       
       return result;
@@ -195,25 +137,15 @@ export function useAuth() {
       return;
     }
     
-    // 如果没有refreshToken，不进行自动刷新
-    const refreshTokenValue = localStorage.getItem('refreshToken');
-    if (!refreshTokenValue) {
-      console.log('No refresh token found, skipping auto refresh');
-      return;
-    }
-    
     if (isTokenExpiring()) {
       try {
         console.log('Token is expiring, refreshing...');
         const result = await AuthService.refreshToken();
-        console.log('Token refresh successful:', result);
+        console.log('Token refresh successful');
 
-        // 存储新令牌到localStorage，用于前端测试和异构资源服务器集成
+        // Access token remains available for the heterogeneous resource-server demo.
         if (result.accessToken) {
           localStorage.setItem('accessToken', result.accessToken);
-        }
-        if (result.refreshToken) {
-          localStorage.setItem('refreshToken', result.refreshToken);
         }
 
         // 刷新token后，获取用户信息（但不调用checkAuth避免循环）
@@ -247,7 +179,7 @@ export function useAuth() {
 
       console.log('Starting local login...');
       const response = await AuthService.login(username, password);
-      console.log('Local login successful:', response);
+      console.log('Local login successful');
 
       // 本地用户登录成功后，设置用户信息状态并存储令牌
       setUser({
@@ -259,12 +191,9 @@ export function useAuth() {
         provider: 'local'
       });
       
-      // 存储令牌到localStorage，用于前端测试和异构资源服务器集成
+      // Access token remains available for the heterogeneous resource-server demo.
       if (response.accessToken) {
         localStorage.setItem('accessToken', response.accessToken);
-      }
-      if (response.refreshToken) {
-        localStorage.setItem('refreshToken', response.refreshToken);
       }
       
       setError(null);
@@ -292,7 +221,7 @@ export function useAuth() {
 
       console.log('Starting Web3 login...');
       const response = await AuthService.loginWeb3(data);
-      console.log('Web3 login successful:', response);
+      console.log('Web3 login successful');
 
       // Web3登录成功后，设置用户信息状态
       setUser({
@@ -304,12 +233,9 @@ export function useAuth() {
         }
       });
       
-      // 存储令牌
+      // Access token remains available for the heterogeneous resource-server demo.
       if (response.accessToken) {
         localStorage.setItem('accessToken', response.accessToken);
-      }
-      if (response.refreshToken) {
-        localStorage.setItem('refreshToken', response.refreshToken);
       }
       
       setError(null);

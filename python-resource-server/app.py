@@ -122,6 +122,9 @@ def validate_token(token):
             issuer=JWT_ISSUER,
             options={"verify_exp": True},
         )
+        if decoded.get("type") != "access":
+            logger.warning("Token type validation failed")
+            return False, "Invalid token"
         logger.info("Token validation succeeded")
         return True, decoded
     except jwt.ExpiredSignatureError:

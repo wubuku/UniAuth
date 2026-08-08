@@ -182,7 +182,15 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
             assertThat(Arrays.stream(response.getCookies())
                     .filter(cookie -> "accessToken".equals(cookie.getName())
                             || "refreshToken".equals(cookie.getName())))
-                    .allMatch(Cookie::isHttpOnly);
+                    .allSatisfy(cookie -> {
+                        assertThat(cookie.isHttpOnly()).isTrue();
+                        assertThat(cookie.getSecure()).isFalse();
+                        assertThat(cookie.getPath()).isEqualTo("/");
+                        assertThat(cookie.getAttribute("SameSite")).isEqualTo("Lax");
+                        assertThat(cookie.getMaxAge()).isEqualTo(
+                                "accessToken".equals(cookie.getName()) ? 3600 : 604800
+                        );
+                    });
         }
         return responseBody;
     }

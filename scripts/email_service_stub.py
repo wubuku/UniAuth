@@ -67,8 +67,11 @@ class EmailStubHandler(BaseHTTPRequestHandler):
         return
 
     def _authorize(self) -> bool:
-        provided = self.headers.get("X-Email-Service-Key", "")
-        if secrets.compare_digest(provided, self.server.api_key):
+        provided_values = self.headers.get_all("X-Email-Service-Key", [])
+        if (
+            len(provided_values) == 1
+            and secrets.compare_digest(provided_values[0], self.server.api_key)
+        ):
             return True
         self._json_response(401, {"error": "UNAUTHORIZED"})
         return False

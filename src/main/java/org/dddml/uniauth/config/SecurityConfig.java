@@ -41,6 +41,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.client.RestTemplate;
 import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.LoginMethodService;
+import org.dddml.uniauth.service.AuthCookieService;
 import org.springframework.http.*;
 import org.springframework.core.ParameterizedTypeReference;
 import java.util.List;
@@ -84,6 +85,9 @@ public class SecurityConfig {
 
     @Autowired
     private LoginMethodService loginMethodService;
+
+    @Autowired
+    private AuthCookieService authCookieService;
 
     /**
      * 配置AuthenticationManager用于本地用户认证
@@ -190,23 +194,7 @@ public class SecurityConfig {
                             userDto.getId()
                         );
 
-                        // 存储Access Token到HttpOnly Cookie
-                        Cookie accessTokenCookie = new Cookie("accessToken", accessToken);
-                        accessTokenCookie.setHttpOnly(true);
-                        accessTokenCookie.setPath("/");
-                        accessTokenCookie.setMaxAge(3600); // 1小时
-                        accessTokenCookie.setSecure(true); // 生产环境设为true，HTTPS必须
-                        accessTokenCookie.setAttribute("SameSite", "Lax");
-                        response.addCookie(accessTokenCookie);
-
-                        // 存储Refresh Token到HttpOnly Cookie
-                        Cookie refreshTokenCookie = new Cookie("refreshToken", refreshToken);
-                        refreshTokenCookie.setHttpOnly(true);
-                        refreshTokenCookie.setPath("/");
-                        refreshTokenCookie.setMaxAge(604800); // 7天
-                        refreshTokenCookie.setSecure(true); // 生产环境设为true，HTTPS必须
-                        refreshTokenCookie.setAttribute("SameSite", "Lax");
-                        response.addCookie(refreshTokenCookie);
+                        authCookieService.writeTokenCookies(response, accessToken, refreshToken);
 
                         if (isUserLoggedIn) {
                             log.info("OAuth2 account binding completed");
@@ -430,8 +418,8 @@ public class SecurityConfig {
                 .logoutSuccessUrl("/login")
                 .invalidateHttpSession(true)
                 .clearAuthentication(true)
-                .deleteCookies("id_token", "github_access_token", "twitter_access_token",
-                             "JSESSIONID", "accessToken", "refreshToken")
+                .addLogoutHandler((request, response, authentication) ->
+                        authCookieService.clearAuthenticationCookies(response))
                 .permitAll()
             );
 

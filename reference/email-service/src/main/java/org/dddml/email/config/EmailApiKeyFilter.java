@@ -16,6 +16,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Enumeration;
 import java.util.Map;
 
 @Component
@@ -37,7 +38,7 @@ public class EmailApiKeyFilter extends OncePerRequestFilter {
             HttpServletRequest request,
             HttpServletResponse response,
             FilterChain filterChain) throws ServletException, IOException {
-        String suppliedKey = request.getHeader(EmailSecurityProperties.API_KEY_HEADER);
+        String suppliedKey = uniqueSuppliedKey(request);
         if (!matchesConfiguredKey(suppliedKey)) {
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setCharacterEncoding(StandardCharsets.UTF_8.name());
@@ -49,6 +50,18 @@ public class EmailApiKeyFilter extends OncePerRequestFilter {
             return;
         }
         filterChain.doFilter(request, response);
+    }
+
+    private String uniqueSuppliedKey(HttpServletRequest request) {
+        Enumeration<String> suppliedKeys = request.getHeaders(
+            EmailSecurityProperties.API_KEY_HEADER
+        );
+        if (suppliedKeys == null || !suppliedKeys.hasMoreElements()) {
+            return null;
+        }
+
+        String suppliedKey = suppliedKeys.nextElement();
+        return suppliedKeys.hasMoreElements() ? null : suppliedKey;
     }
 
     private boolean matchesConfiguredKey(String suppliedKey) {

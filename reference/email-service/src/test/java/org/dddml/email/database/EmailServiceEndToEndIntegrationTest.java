@@ -4,6 +4,7 @@ import com.icegreen.greenmail.util.GreenMail;
 import com.icegreen.greenmail.util.GreenMailUtil;
 import com.icegreen.greenmail.util.ServerSetup;
 import jakarta.mail.internet.MimeMessage;
+import org.dddml.email.config.EmailSecurityProperties;
 import org.dddml.email.entity.EmailLog;
 import org.dddml.email.entity.EmailQueue;
 import org.dddml.email.event.EmailEventListener;
@@ -230,6 +231,26 @@ class EmailServiceEndToEndIntegrationTest {
         assertThat(response.getBody())
             .containsEntry("success", false)
             .containsEntry("message", "Unauthorized");
+    }
+
+    @Test
+    void rejectsAmbiguousRepeatedServiceCredentials() {
+        ResponseEntity<Map<String, Object>> repeatedCorrect = exchangeWithApiKeys(
+            "integration-secret",
+            "integration-secret"
+        );
+        ResponseEntity<Map<String, Object>> correctThenWrong = exchangeWithApiKeys(
+            "integration-secret",
+            "wrong"
+        );
+        ResponseEntity<Map<String, Object>> wrongThenCorrect = exchangeWithApiKeys(
+            "wrong",
+            "integration-secret"
+        );
+
+        assertUnauthorizedWithSecurityHeaders(repeatedCorrect);
+        assertUnauthorizedWithSecurityHeaders(correctThenWrong);
+        assertUnauthorizedWithSecurityHeaders(wrongThenCorrect);
     }
 
     @Test
@@ -1132,6 +1153,29 @@ class EmailServiceEndToEndIntegrationTest {
             .isEqualTo("no-cache");
         assertThat(response.getHeaders().getFirst("X-Content-Type-Options"))
             .isEqualTo("nosniff");
+    }
+
+    private ResponseEntity<Map<String, Object>> exchangeWithApiKeys(String... apiKeys) {
+        HttpHeaders headers = new HttpHeaders();
+        for (String apiKey : apiKeys) {
+            headers.add(EmailSecurityProperties.API_KEY_HEADER, apiKey);
+        }
+        return restTemplate.exchange(
+            "/api/email/health",
+            HttpMethod.GET,
+            new HttpEntity<>(headers),
+            new ParameterizedTypeReference<>() {
+            }
+        );
+    }
+
+    private void assertUnauthorizedWithSecurityHeaders(
+            ResponseEntity<Map<String, Object>> response) {
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(response.getBody())
+            .containsEntry("success", false)
+            .containsEntry("message", "Unauthorized");
+        assertSecurityResponseHeaders(response);
     }
 
     private void assertCompletedWithSuccessfulEventLog(long queueId) {

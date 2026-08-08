@@ -2,9 +2,9 @@ package org.dddml.uniauth.controller;
 
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.repository.UserRepository;
+import org.dddml.uniauth.service.AuthCookieService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.ResponseEntity;
@@ -26,6 +26,7 @@ import java.util.Map;
 public class ApiAuthController {
 
     private final UserRepository userRepository;
+    private final AuthCookieService authCookieService;
 
     /**
      * 获取当前用户信息
@@ -118,14 +119,14 @@ public class ApiAuthController {
             }
 
             // 清除cookies
-            clearAuthCookies(response);
+            authCookieService.clearAuthenticationCookies(response);
 
             log.info("API logout completed");
             return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
         } catch (Exception e) {
             log.warn("API logout encountered an error");
             // 即使出错也要尝试清除cookies
-            clearAuthCookies(response);
+            authCookieService.clearAuthenticationCookies(response);
             return ResponseEntity.ok(Map.of("message", "Logged out with warnings"));
         }
     }
@@ -206,23 +207,4 @@ public class ApiAuthController {
         return oauth2User.getAttribute("description");
     }
 
-    private void clearAuthCookies(HttpServletResponse response) {
-        // 清除所有认证相关的cookies
-        String[] cookieNames = {
-            "JSESSIONID",
-            "accessToken",      // JWT access token
-            "refreshToken",     // JWT refresh token
-            "google_access_token",
-            "github_access_token",
-            "twitter_access_token"
-        };
-
-        for (String cookieName : cookieNames) {
-            Cookie cookie = new Cookie(cookieName, null);
-            cookie.setMaxAge(0);
-            cookie.setPath("/");
-            cookie.setHttpOnly(true);
-            response.addCookie(cookie);
-        }
-    }
 }

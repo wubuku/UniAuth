@@ -8,6 +8,7 @@ import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.EmailVerificationCodeService;
+import org.dddml.uniauth.service.AuthCookieService;
 import org.dddml.uniauth.entity.EmailVerificationCode;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -28,7 +29,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
-import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.Map;
@@ -53,6 +53,7 @@ public class AuthController {
     private final JwtTokenService jwtTokenService;
     private final EmailRegistrationProperties emailRegistrationProperties;
     private final EmailVerificationCodeService verificationCodeService;
+    private final AuthCookieService authCookieService;
 
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
 
@@ -96,11 +97,12 @@ public class AuthController {
                 description = "注册信息",
                 required = true
             )
-            @RequestBody RegisterRequest request) {
+            @RequestBody RegisterRequest request,
+            HttpServletResponse response) {
         boolean isEmailUsername = isValidEmail(request.getUsername());
 
         if (isEmailUsername) {
-            return handleEmailRegistration(request);
+            return handleEmailRegistration(request, response);
         } else {
             if (emailRegistrationProperties.isRequireEmailUsername()) {
                 return ResponseEntity.badRequest().body(Map.of(
@@ -114,7 +116,9 @@ public class AuthController {
         }
     }
 
-    private ResponseEntity<?> handleEmailRegistration(RegisterRequest request) {
+    private ResponseEntity<?> handleEmailRegistration(
+            RegisterRequest request,
+            HttpServletResponse response) {
         if (loginMethodRepository.existsByLocalUsername(request.getUsername())) {
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "EMAIL_ALREADY_REGISTERED",
@@ -135,7 +139,7 @@ public class AuthController {
 
         String verificationCode = request.getVerificationCode();
         if (verificationCode != null && !verificationCode.isEmpty()) {
-            return verifyAndRegisterWithCode(request, username);
+            return verifyAndRegisterWithCode(request, username, response);
         }
 
         return ResponseEntity.ok(Map.of(
@@ -145,7 +149,10 @@ public class AuthController {
         ));
     }
 
-    private ResponseEntity<?> verifyAndRegisterWithCode(RegisterRequest request, String email) {
+    private ResponseEntity<?> verifyAndRegisterWithCode(
+            RegisterRequest request,
+            String email,
+            HttpServletResponse response) {
         var result = verificationCodeService.verifyCode(
             email,
             request.getVerificationCode(),
@@ -190,6 +197,7 @@ public class AuthController {
             user.getUsername(),
             user.getId()
         );
+        authCookieService.writeTokenCookies(response, accessToken, refreshToken);
 
         Map<String, Object> responseData = new LinkedHashMap<>();
         responseData.put("user", user);
@@ -278,22 +286,7 @@ public class AuthController {
                 user.getId()
             );
 
-            // 存储Token到HttpOnly Cookie
-            Cookie accessTokenCookie = new Cookie("accessToken", accessToken);
-            accessTokenCookie.setHttpOnly(true);
-            accessTokenCookie.setPath("/");
-            accessTokenCookie.setMaxAge(3600); // 1小时
-            accessTokenCookie.setSecure(false); // 开发环境
-            accessTokenCookie.setAttribute("SameSite", "Lax");
-            response.addCookie(accessTokenCookie);
-
-            Cookie refreshTokenCookie = new Cookie("refreshToken", refreshToken);
-            refreshTokenCookie.setHttpOnly(true);
-            refreshTokenCookie.setPath("/");
-            refreshTokenCookie.setMaxAge(604800); // 7天
-            refreshTokenCookie.setSecure(false); // 开发环境
-            refreshTokenCookie.setAttribute("SameSite", "Lax");
-            response.addCookie(refreshTokenCookie);
+            authCookieService.writeTokenCookies(response, accessToken, refreshToken);
 
             // 返回成功响应（包含Token用于跨域场景）
             Map<String, Object> responseData = new java.util.LinkedHashMap<>();
@@ -359,7 +352,7 @@ public class AuthController {
             }
 
             // 4. ✅ 关键：清除所有认证Cookies！
-            clearAuthCookies(response);
+            authCookieService.clearAuthenticationCookies(response);
 
             log.info("Authentication logout completed");
             return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
@@ -369,25 +362,4 @@ public class AuthController {
         }
     }
 
-    /**
-     * 清除所有认证相关的Cookies
-     */
-    private void clearAuthCookies(HttpServletResponse response) {
-        String[] cookieNames = {
-            "JSESSIONID",
-            "accessToken",      // JWT access token
-            "refreshToken",     // JWT refresh token
-            "google_access_token",
-            "github_access_token",
-            "twitter_access_token"
-        };
-
-        for (String cookieName : cookieNames) {
-            Cookie cookie = new Cookie(cookieName, null);
-            cookie.setMaxAge(0);
-            cookie.setPath("/");
-            cookie.setHttpOnly(true);
-            response.addCookie(cookie);
-        }
-    }
 }

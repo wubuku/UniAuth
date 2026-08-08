@@ -1,7 +1,8 @@
 # UniAuth 下一轮加固实施计划
 
-> 状态：Batch A、Batch B1、Batch B2a、Batch B2b、邮件服务边界和邮箱 challenge
-> 投递接受/原子消费切片已完成；下一批待重新探索后冻结
+> 状态：Batch A、Batch B1、Batch B2a、Batch B2b、邮件服务边界、邮箱 challenge
+> 投递接受/原子消费、邮件 API 敏感响应、API key 单值鉴权和 Batch C 认证 Cookie/
+> 浏览器 refresh 存储预备切片已完成；Batch C 原子切换待下一轮冻结
 > 事实基线：2026-08-07；邮件 SMTP、持久化投递和限流异常路径增量：2026-08-08
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
 > 前置成果：PostgreSQL-only、Flyway V1 baseline + V2 + V3 + V4、Testcontainers、
@@ -31,12 +32,12 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | 当前 migration | V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束/索引对齐 |
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
-| Java | `mvn clean compile test-compile` 和 120 tests 已通过 |
-| 邮件参考服务 | 127 tests；21 个完整 ApplicationContext E2E；Java runtime guard 24 tests；Shell runtime 27/27、HTTP 10/10、Flyway guard 10/10 |
+| Java | `mvn clean compile test-compile` 和 127 tests 已通过 |
+| 邮件参考服务 | 129 tests；22 个完整 ApplicationContext E2E；Java runtime guard 24 tests；Shell runtime 27/27、HTTP 10/10、Flyway guard 11/11 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 15/15 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 13/13 已通过 |
-| 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、20 个 Mock Playwright tests 已通过 |
-| Python | 14 个离线 JWT/JWKS/Flask tests 和 7 个邮件 REST stub contract tests 已通过 |
+| 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、21 个 Mock Playwright tests 已通过 |
+| Python | 16 个离线 JWT/JWKS/Flask tests 和 8 个邮件 REST stub contract tests 已通过 |
 | 统一入口 | `scripts/verify.sh` 本地通过；CI 使用同一入口 |
 | 既有库演练 | `blacksheep_dev` 只读 rehearsal 已通过 |
 | Schema fingerprint | `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
@@ -793,6 +794,94 @@ Git 快照中执行全部阶段，并在结束前校验原工作区指纹。收�
 
 Batch B 通过后执行，H2.5 与 H3.1/H3.2 作为原子切换批次。
 
+#### 认证 Cookie 与浏览器 refresh 存储预备切片
+
+##### 2026-08-08 固定实施范围
+
+本切片只消除当前签发入口之间已经存在的 Cookie 属性漂移，并让前端遵守现有
+HttpOnly refresh Cookie 设计。它是 Batch C 原子切换前的兼容性加固，不宣称完成
+H2.5、H3.1 或 H3.2，也不改变现有公开业务流程。
+
+纳入范围：
+
+1. 建立一个统一认证 Cookie writer：
+   - local login、邮箱注册完成、邮箱验证完成、Web3 login、OAuth2 success 和
+     refresh 都复用同一 access/refresh Cookie 写入逻辑。
+   - access/refresh Cookie 固定 `HttpOnly`、`Path=/`、`SameSite=Lax`；Max-Age 从
+     `jwt.expires.*` 读取，不在 controller 中重复硬编码。
+   - `app.auth.cookie.secure` 在 base/dev/test 默认为 `false`，`prod` 固定为
+     `true`；生产配置测试必须证明不能继承本地 HTTP 值。
+   - local、API 和 Spring Security logout 的应用认证 Cookie 清理复用相同
+     Path/Secure/SameSite 属性，避免设置和删除策略漂移。
+2. 把 Spring Session Cookie 属性从无效的 `spring.session.cookie.*` 移到 Spring
+   Boot 3.3.4 实际绑定的 `server.servlet.session.cookie.*`；prod 保持
+   `Secure=true`，base 保持 `HttpOnly`、`Path=/`、`SameSite=Lax`。
+3. 前端不再读取或保存 refresh token：
+   - `useAuth`、邮箱验证、本地/Web3 登录、OAuth2 callback 和 Axios interceptor
+     均不写 `localStorage.refreshToken`。
+   - 应用启动时主动删除历史遗留的 `refreshToken` key。
+   - 自动 refresh 直接调用 cookie-based `/api/auth/refresh`，不再以 JavaScript
+     可读 refresh token 是否存在作为前置条件。
+   - access token 暂时继续写入 localStorage，维持当前异构 Python 资源服务器演示。
+4. Python 资源服务器在现有 RS256、kid、issuer、audience 和 expiry 校验之外，
+   明确拒绝 `type != access` 或缺少 `type` 的 token。
+5. 保持现有 response JSON 中的 `accessToken`、`refreshToken` 和过期时间字段，
+   让 Shell/API 调用方继续工作；前端忽略 refresh token。彻底移除 JSON refresh
+   token 仍属于 H2.5 原子切换。
+
+明确不纳入：
+
+- refresh token family、rotation、single-use、replay detection、blacklist 或 logout
+  持久撤销。
+- access header/cookie 双凭据拒绝、CSRF、CORS、OAuth2 redirect/绑定意图收敛。
+- `__Host-` Cookie 名称、旧 cookie 名迁移、生产 access token localStorage 移除。
+- token claim/schema、issuer、audience、签名 key 或数据库/Flyway migration 变更。
+- 清理前端全部诊断日志、`auth_user` 持久化或 dev-only resource 页面。
+
+##### 测试与门禁
+
+1. PostgreSQL/ApplicationContext：
+   - local、邮箱、Web3、OAuth2 和 refresh 的 access/refresh Cookie 属性完全一致。
+   - refresh 只依赖 HttpOnly Cookie；access token 不能作为 refresh token。
+   - logout 的 Cookie 清除属性与写入属性一致。
+   - prod 属性绑定为 Secure，base/test 为本地 HTTP 可用值；Session Cookie 使用正确
+     的 `server.servlet.session.cookie.*` 前缀。
+2. Shell HTTP E2E：
+   - local login、refresh、Web3 login 和 logout 的 `Set-Cookie` header 快照一致。
+   - 邮箱验证完成响应写入同策略 Cookie。
+   - 现有 Flyway history、migration 幂等和 baseline guard 继续全部通过；本切片
+     不新增无意义 migration。
+3. Playwright：
+   - local、邮箱、Web3、OAuth2 callback 和 401 refresh 后
+     `localStorage.refreshToken` 始终不存在。
+   - 启动时移除遗留 refresh token，但保留无关 localStorage key。
+   - 自动 refresh 不依赖 refresh token localStorage，失败时不进入重试循环。
+4. Python：
+   - 合法 access token 继续通过。
+   - 使用相同合法签名、kid、issuer、audience 和 expiry 的 refresh/missing-type
+     token 都失败关闭。
+5. 完整 `scripts/verify.sh` 通过后才进入连续三轮无修改检查。任何实质修复都令计数
+   归零并重跑受影响门禁；最终提交工作区全部适当修改，不丢弃、回滚或 stash
+   其他开发者的并行工作。
+
+##### 实际结果
+
+2026-08-08 本切片已完成：
+
+- local login、邮箱注册完成、邮箱验证完成、Web3 login、OAuth2 success 和 refresh
+  复用 `AuthCookieService`；写入和 local/API/Spring Security logout 清除使用同一
+  Path/Secure/SameSite 策略。
+- Cookie Max-Age 读取 `jwt.expires.*`，非默认 TTL 单测证明没有继续硬编码默认值。
+- `prod` 中认证 Cookie 或 Session Cookie 的 Secure 最终值被高优先级配置覆盖为
+  false 时，启动期 guard 失败关闭；base/test 仍允许隔离的本地 HTTP 测试。
+- Spring Session Cookie 已迁移到 `server.servlet.session.cookie.*`。
+- 前端不再读取或保存 refresh token，启动时只删除历史 `refreshToken` key；
+  access token localStorage 演示兼容性保持不变。
+- Python 资源服务器拒绝 refresh token 和缺少 `type` 的 token。
+- 完整根统一门禁通过：Java 127、HTTP 15/15、Flyway 13/13、邮件参考服务
+  129 tests、Mock Playwright 21/21、Python 资源服务器 16/16、邮件 stub 8/8，
+  前端 lint/type/build 和文档检查通过。
+
 1. 建立单一严格 token validator，统一 Resource Server、Web3 bind、
    OAuth2 绑定 cookie、introspection 和 refresh。
 2. refresh token rotation 使用 token family、单次消费和 replay detection。
@@ -895,6 +984,43 @@ JSON body、状态码、队列、投递、retry、Flyway schema 或 UniAuth chal
   ApplicationContext E2E；Shell runtime 27/27、HTTP 10/10、Flyway guard 10/10。
 - Python 邮件 stub contract 7/7；完整根门禁继续验证 Java 120、HTTP 15/15、
   Flyway 13/13、Mock Playwright 20/20、Python 资源服务器 14/14 和前端质量门槛。
+
+### 邮件 API 鉴权 header 单值加固切片
+
+#### 2026-08-08 固定实施范围
+
+本切片只消除配置 API key 时对重复同名鉴权 header 的歧义，不改变单个正确
+header、JSON body、状态码、模板、队列、SMTP、retry 或 Flyway V1/V2 行为。
+
+纳入范围：
+
+1. `EmailApiKeyFilter` 只接受恰好一个 `X-Email-Service-Key` 且整值精确匹配；
+   缺失、错误、重复正确值和正确/错误混合值统一返回 `401`。
+2. Python 邮件 REST stub 使用相同单值契约，避免根 Shell E2E 与参考实现的鉴权
+   语义漂移。
+3. PostgreSQL/ApplicationContext + 真实 Tomcat HTTP E2E 覆盖重复正确值、
+   正确/错误和错误/正确三种顺序。
+4. Shell curl HTTP E2E 使用真实重复 header；Flyway guard 在只迁移 V1 的
+   disposable PostgreSQL 应用启用 API key 后验证重复凭据仍失败关闭。
+5. Playwright 不新增与浏览器无关的直接邮件服务测试；完整根统一门禁仍运行现有
+   Mock Playwright、ESLint、TypeScript、构建和 Python 资源服务器回归。
+
+明确不纳入：
+
+- 修改 API key 的生成、轮换、身份分级或端点级权限。
+- 新增 Spring Security、反向代理配置或新的认证协议。
+- 修改 UniAuth 客户端请求形状；它继续为每个请求发送一个 header。
+- 修改 migration、数据库数据、SMTP、模板、队列或投递状态机。
+
+#### 2026-08-08 定向验证结果
+
+- 旧实现红灯证明：重复的两个正确 header 会被首值语义接受并返回 `200`。
+- 邮件组件 Maven 129 tests，其中 22 个 PostgreSQL/GreenMail ApplicationContext
+  E2E；Shell runtime 27/27、HTTP 10/10、Flyway guard 11/11。
+- Python 邮件 stub contract 8/8；单个正确 header 与既有正常发送契约保持不变。
+- 完整邮件组件和根统一门禁已通过：根 Java 121、HTTP 15/15、Flyway 13/13、
+  Mock Playwright 21/21、Python 资源服务器 16/16、邮件 stub 8/8，以及前端
+  lint/type/build；连续三轮无修改检查仍须在提交前执行。
 
 #### Email/password
 

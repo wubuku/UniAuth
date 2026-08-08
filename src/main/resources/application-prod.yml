@@ -1,6 +1,17 @@
 # Production Environment Configuration
 # 使用PostgreSQL数据库用于生产环境
 
+server:
+  servlet:
+    session:
+      cookie:
+        secure: true
+
+app:
+  auth:
+    cookie:
+      secure: true
+
 spring:
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DATABASE}
@@ -39,10 +50,6 @@ spring:
     jdbc:
       initialize-schema: never
     timeout: 1800
-    cookie:
-      secure: true              # 生产环境强制 HTTPS
-      http-only: true
-      same-site: Strict         # 生产环境使用 Strict CSRF 防护
 
 logging:
   level:

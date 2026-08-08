@@ -7,6 +7,7 @@ import org.dddml.uniauth.service.EmailVerificationCodeService;
 import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.service.Web3AuthService;
+import org.dddml.uniauth.service.AuthCookieService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -32,14 +33,19 @@ class RemovedDangerousEndpointsTest {
                 mock(PasswordEncoder.class),
                 mock(JwtTokenService.class),
                 mock(EmailRegistrationProperties.class),
-                mock(EmailVerificationCodeService.class)
+                mock(EmailVerificationCodeService.class),
+                mock(AuthCookieService.class)
         );
-        ApiAuthController apiAuthController = new ApiAuthController(mock(UserRepository.class));
+        ApiAuthController apiAuthController = new ApiAuthController(
+                mock(UserRepository.class),
+                mock(AuthCookieService.class)
+        );
         OAuth2TokenController oAuth2TokenController =
                 new OAuth2TokenController(mock(JwtTokenService.class));
         Web3AuthController web3AuthController = new Web3AuthController(
                 mock(Web3AuthService.class),
-                mock(JwtTokenService.class)
+                mock(JwtTokenService.class),
+                mock(AuthCookieService.class)
         );
 
         mockMvc = standaloneSetup(

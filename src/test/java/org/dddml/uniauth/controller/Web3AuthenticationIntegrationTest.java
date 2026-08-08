@@ -2,6 +2,7 @@ package org.dddml.uniauth.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.Cookie;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.repository.Web3NonceRepository;
@@ -62,6 +63,7 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andReturn();
 
         String userId = responseJson(firstLogin).path("userId").asText();
+        assertTokenCookies(firstLogin);
         assertThat(loginMethodRepository.findByAuthProviderAndProviderUserId(
                 UserLoginMethod.AuthProvider.WEB3,
                 walletAddress
@@ -282,6 +284,23 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
 
     private JsonNode responseJson(MvcResult result) throws Exception {
         return objectMapper.readTree(result.getResponse().getContentAsByteArray());
+    }
+
+    private void assertTokenCookies(MvcResult result) {
+        assertCookie(result, "accessToken", 3600);
+        assertCookie(result, "refreshToken", 604800);
+    }
+
+    private void assertCookie(MvcResult result, String name, int maxAge) {
+        Cookie cookie = result.getResponse().getCookie(name);
+        assertThat(cookie).as(name).isNotNull();
+        assertThat(cookie.isHttpOnly()).as(name + " HttpOnly").isTrue();
+        assertThat(cookie.getSecure()).as(name + " Secure").isFalse();
+        assertThat(cookie.getPath()).as(name + " Path").isEqualTo("/");
+        assertThat(cookie.getMaxAge()).as(name + " Max-Age").isEqualTo(maxAge);
+        assertThat(cookie.getAttribute("SameSite"))
+                .as(name + " SameSite")
+                .isEqualTo("Lax");
     }
 
     private record SignedChallenge(

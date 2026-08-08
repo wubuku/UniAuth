@@ -241,6 +241,14 @@ echo "2/10 Verify API-key enforcement"
     || fail "health endpoint accepted a missing API key"
 [ "$(request_status GET /api/email/health -H "X-Email-Service-Key: wrong")" = "401" ] \
     || fail "health endpoint accepted an incorrect API key"
+[ "$(request_status GET /api/email/health \
+    -H "X-Email-Service-Key: $API_KEY" \
+    -H "X-Email-Service-Key: $API_KEY")" = "401" ] \
+    || fail "health endpoint accepted repeated API-key headers"
+[ "$(request_status GET /api/email/health \
+    -H "X-Email-Service-Key: wrong" \
+    -H "X-Email-Service-Key: $API_KEY")" = "401" ] \
+    || fail "health endpoint accepted ambiguous API-key headers"
 [ "$(request_status GET '/api;version=1/email;tenant=test/health')" = "401" ] \
     || fail "matrix parameters bypassed API-key enforcement"
 [ "$(request_status GET '/api;version=1/email;tenant=test/health' \
@@ -251,6 +259,9 @@ echo "3/10 Verify security headers across success and rejection paths"
 assert_security_headers 200 GET /api/email/health \
     -H "X-Email-Service-Key: $API_KEY"
 assert_security_headers 401 GET /api/email/health
+assert_security_headers 401 GET /api/email/health \
+    -H "X-Email-Service-Key: $API_KEY" \
+    -H "X-Email-Service-Key: $API_KEY"
 assert_security_headers 404 GET /api/email/not-found \
     -H "X-Email-Service-Key: $API_KEY"
 assert_security_headers 400 GET '/api/email/logs?size=101' \

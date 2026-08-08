@@ -1,6 +1,7 @@
 package org.dddml.uniauth.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.Cookie;
 import org.dddml.uniauth.entity.EmailVerificationCode;
 import org.dddml.uniauth.repository.EmailVerificationCodeRepository;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
@@ -25,6 +26,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.Map;
 import java.time.Instant;
@@ -157,7 +159,7 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(jsonPath("$.valid").value(true))
                 .andExpect(jsonPath("$.status").value("VALID"));
 
-        mockMvc.perform(post("/api/auth/verify-email")
+        MvcResult verifyResult = mockMvc.perform(post("/api/auth/verify-email")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "email", email,
@@ -169,7 +171,9 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(jsonPath("$.user.username").value(email))
                 .andExpect(jsonPath("$.user.email").value(email))
                 .andExpect(jsonPath("$.accessToken").isNotEmpty())
-                .andExpect(jsonPath("$.refreshToken").isNotEmpty());
+                .andExpect(jsonPath("$.refreshToken").isNotEmpty())
+                .andReturn();
+        assertTokenCookies(verifyResult);
 
         assertThat(verificationCodeRepository.findById(registrationCode.getId()))
                 .get()
@@ -573,7 +577,7 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
             original
         );
 
-        mockMvc.perform(post("/api/auth/register")
+        MvcResult registerResult = mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "username", email,
@@ -583,7 +587,9 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                                 "verificationCode", original.getVerificationCode()
                         ))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.user.email").value(email));
+                .andExpect(jsonPath("$.user.email").value(email))
+                .andReturn();
+        assertTokenCookies(registerResult);
 
         assertConsumedOriginalAndPendingReplacement(original.getId(), replacementId);
     }
@@ -639,6 +645,23 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
 
     private String uniqueEmail(String prefix) {
         return prefix + "-" + UUID.randomUUID() + "@example.invalid";
+    }
+
+    private void assertTokenCookies(MvcResult result) {
+        assertCookie(result, "accessToken", 3600);
+        assertCookie(result, "refreshToken", 604800);
+    }
+
+    private void assertCookie(MvcResult result, String name, int maxAge) {
+        Cookie cookie = result.getResponse().getCookie(name);
+        assertThat(cookie).as(name).isNotNull();
+        assertThat(cookie.isHttpOnly()).as(name + " HttpOnly").isTrue();
+        assertThat(cookie.getSecure()).as(name + " Secure").isFalse();
+        assertThat(cookie.getPath()).as(name + " Path").isEqualTo("/");
+        assertThat(cookie.getMaxAge()).as(name + " Max-Age").isEqualTo(maxAge);
+        assertThat(cookie.getAttribute("SameSite"))
+                .as(name + " SameSite")
+                .isEqualTo("Lax");
     }
 
     private AtomicReference<String> insertReplacementAfterSuccessfulVerification(

@@ -147,6 +147,40 @@ request_status() {
         "${BASE_URL}${path}"
 }
 
+assert_auth_cookie_headers() {
+    local headers_file="$1"
+    local expected_access_max_age="$2"
+    local expected_refresh_max_age="$3"
+    local cookie_name
+    local expected_max_age
+    local header_line
+
+    for cookie_name in accessToken refreshToken; do
+        if [ "$cookie_name" = "accessToken" ]; then
+            expected_max_age="$expected_access_max_age"
+        else
+            expected_max_age="$expected_refresh_max_age"
+        fi
+        header_line="$(
+            tr -d '\r' <"$headers_file" \
+                | grep -i "^set-cookie: ${cookie_name}=" \
+                | tail -1 \
+                || true
+        )"
+        [ -n "$header_line" ] || fail "missing ${cookie_name} Set-Cookie header"
+        [[ "$header_line" == *"; Path=/"* ]] \
+            || fail "${cookie_name} cookie did not use Path=/"
+        [[ "$header_line" == *"; HttpOnly"* ]] \
+            || fail "${cookie_name} cookie was not HttpOnly"
+        [[ "$header_line" == *"; SameSite=Lax"* ]] \
+            || fail "${cookie_name} cookie did not use SameSite=Lax"
+        [[ "$header_line" == *"; Max-Age=${expected_max_age}"* ]] \
+            || fail "${cookie_name} cookie used an unexpected Max-Age"
+        [[ "$header_line" != *"; Secure"* ]] \
+            || fail "${cookie_name} cookie was Secure in the local HTTP test profile"
+    done
+}
+
 start_email_stub() {
     EMAIL_STUB_API_KEY="$EMAIL_STUB_API_KEY" \
         python3 "$PROJECT_DIR/scripts/email_service_stub.py" \
@@ -519,8 +553,9 @@ wrong_login_status="$(
 )"
 [ "$wrong_login_status" = "401" ] || fail "wrong password did not return 401"
 
+login_headers="$TEMP_DIR/login-headers.txt"
 login_response="$(
-    curl -sS -c "$COOKIE_JAR" \
+    curl -sS -D "$login_headers" -c "$COOKIE_JAR" \
         -X POST "${BASE_URL}/api/auth/login" \
         --data-urlencode "username=$local_username" \
         --data-urlencode "password=$local_password"
@@ -529,6 +564,7 @@ login_response="$(
     || fail "local login was not authenticated"
 access_token="$(jq -er '.accessToken' <<<"$login_response")"
 refresh_token="$(jq -er '.refreshToken' <<<"$login_response")"
+assert_auth_cookie_headers "$login_headers" 3600 604800
 
 echo "4/15 Verify protected APIs, persistence, and JWT contracts"
 current_user="$(
@@ -598,8 +634,9 @@ restarted_user="$(
     || fail "the pre-restart access token did not work after restart"
 
 echo "6/15 Refresh tokens and reject token type confusion"
+refresh_headers="$TEMP_DIR/refresh-headers.txt"
 refresh_response="$(
-    curl -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+    curl -sS -D "$refresh_headers" -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
         -X POST "${BASE_URL}/api/auth/refresh"
 )"
 new_access_token="$(jq -er '.accessToken' <<<"$refresh_response")"
@@ -608,6 +645,7 @@ new_refresh_token="$(jq -er '.refreshToken' <<<"$refresh_response")"
     || fail "refresh did not rotate the access token"
 [ "$new_refresh_token" != "$refresh_token" ] \
     || fail "refresh did not rotate the refresh token"
+assert_auth_cookie_headers "$refresh_headers" 3600 604800
 
 refresh_as_bearer_status="$(
     curl -sS -o /dev/null -w '%{http_code}' \
@@ -640,13 +678,20 @@ tampered_web3_status="$(
 )"
 [ "$tampered_web3_status" = "401" ] \
     || fail "a Web3 challenge with a tampered message was accepted"
-web3_login="$(post_json /api/auth/web3/verify "$web3_challenge")"
+web3_headers="$TEMP_DIR/web3-headers.txt"
+web3_login="$(
+    curl -sS -D "$web3_headers" \
+        -X POST "${BASE_URL}/api/auth/web3/verify" \
+        -H "Content-Type: application/json" \
+        --data "$web3_challenge"
+)"
 [ "$(jq -er '.walletAddress' <<<"$web3_login")" = "$web3_address" ] \
     || fail "Web3 login returned the wrong wallet address"
 [ "$(jq -er '.isNewUser' <<<"$web3_login")" = "true" ] \
     || fail "first Web3 login was not marked as a new user"
 web3_user_id="$(jq -er '.userId' <<<"$web3_login")"
 web3_access_token="$(jq -er '.accessToken' <<<"$web3_login")"
+assert_auth_cookie_headers "$web3_headers" 3600 604800
 
 replay_status="$(
     curl -sS -o "$TEMP_DIR/web3-replay.json" -w '%{http_code}' \
@@ -1054,6 +1099,7 @@ grep -qi 'set-cookie: accessToken=.*Max-Age=0' "$logout_headers" \
     || fail "logout did not clear the access-token cookie"
 grep -qi 'set-cookie: refreshToken=.*Max-Age=0' "$logout_headers" \
     || fail "logout did not clear the refresh-token cookie"
+assert_auth_cookie_headers "$logout_headers" 0 0
 
 echo "15/15 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \

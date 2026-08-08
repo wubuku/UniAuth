@@ -8,6 +8,8 @@ set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8081}"
 DISPLAY_NAME="${DISPLAY_NAME:-Integration Test User}"
+COOKIE_HEADERS_FILE="$(mktemp "${TMPDIR:-/tmp}/uniauth-email-cookie-headers.XXXXXX")"
+trap 'rm -f "${COOKIE_HEADERS_FILE}"' EXIT
 
 if [ "${DISPOSABLE_TEST_ENVIRONMENT:-}" != "true" ]; then
   echo "ERROR: set DISPOSABLE_TEST_ENVIRONMENT=true for an isolated test environment"
@@ -90,6 +92,37 @@ post_json() {
     --data "${payload}"
 }
 
+assert_auth_cookie_headers() {
+  local cookie_name
+  local expected_max_age
+  local header_line
+
+  for cookie_name in accessToken refreshToken; do
+    if [ "${cookie_name}" = "accessToken" ]; then
+      expected_max_age=3600
+    else
+      expected_max_age=604800
+    fi
+    header_line="$(
+      tr -d '\r' <"${COOKIE_HEADERS_FILE}" \
+        | grep -i "^set-cookie: ${cookie_name}=" \
+        | tail -1 \
+        || true
+    )"
+    [ -n "${header_line}" ] || fail "registration did not set ${cookie_name}"
+    [[ "${header_line}" == *"; Path=/"* ]] \
+      || fail "${cookie_name} cookie did not use Path=/"
+    [[ "${header_line}" == *"; HttpOnly"* ]] \
+      || fail "${cookie_name} cookie was not HttpOnly"
+    [[ "${header_line}" == *"; SameSite=Lax"* ]] \
+      || fail "${cookie_name} cookie did not use SameSite=Lax"
+    [[ "${header_line}" == *"; Max-Age=${expected_max_age}"* ]] \
+      || fail "${cookie_name} cookie used an unexpected Max-Age"
+    [[ "${header_line}" != *"; Secure"* ]] \
+      || fail "${cookie_name} cookie was Secure in the local HTTP test profile"
+  done
+}
+
 echo "Email authentication integration check"
 echo "Waiting for backend..."
 for attempt in {1..30}; do
@@ -147,9 +180,13 @@ register_payload=$(jq -n \
     displayName: $displayName,
     verificationCode: $code
   }')
-register_response=$(post_json "/api/auth/register" "${register_payload}")
+register_response=$(curl -sS -D "${COOKIE_HEADERS_FILE}" \
+  -X POST "${BASE_URL}/api/auth/register" \
+  -H "Content-Type: application/json" \
+  --data "${register_payload}")
 access_token=$(json_value "${register_response}" '.accessToken')
 [ -n "${access_token}" ] || fail "registration response did not contain an access token"
+assert_auth_cookie_headers
 
 echo "4/8 Call the protected current-user endpoint"
 user_status=$(curl -sS -o /dev/null -w '%{http_code}' \

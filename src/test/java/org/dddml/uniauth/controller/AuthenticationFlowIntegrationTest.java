@@ -94,6 +94,7 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 .andReturn();
 
         JsonNode loginBody = responseJson(loginResult);
+        assertTokenCookies(loginResult, false);
         String accessToken = loginBody.path("accessToken").asText();
         String refreshToken = loginBody.path("refreshToken").asText();
         assertThat(accessToken).isNotBlank();
@@ -141,6 +142,7 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 .andReturn();
 
         JsonNode refreshBody = responseJson(refreshResult);
+        assertTokenCookies(refreshResult, false);
         assertThat(refreshBody.path("accessToken").asText()).isNotEqualTo(accessToken);
         assertThat(refreshBody.path("refreshToken").asText()).isNotEqualTo(refreshToken);
 
@@ -153,7 +155,7 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
         mockMvc.perform(post("/api/auth/refresh"))
                 .andExpect(status().isUnauthorized());
 
-        mockMvc.perform(post("/api/auth/logout")
+        MvcResult logoutResult = mockMvc.perform(post("/api/auth/logout")
                         .cookie(
                                 new Cookie("accessToken", accessToken),
                                 new Cookie("refreshToken", refreshToken)
@@ -161,7 +163,9 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("Logged out successfully"))
                 .andExpect(cookie().maxAge("accessToken", 0))
-                .andExpect(cookie().maxAge("refreshToken", 0));
+                .andExpect(cookie().maxAge("refreshToken", 0))
+                .andReturn();
+        assertClearedTokenCookies(logoutResult, false);
     }
 
     @Test
@@ -307,6 +311,32 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
 
     private JsonNode responseJson(MvcResult result) throws Exception {
         return objectMapper.readTree(result.getResponse().getContentAsByteArray());
+    }
+
+    private void assertTokenCookies(MvcResult result, boolean secure) {
+        assertCookie(result, "accessToken", 3600, secure);
+        assertCookie(result, "refreshToken", 604800, secure);
+    }
+
+    private void assertClearedTokenCookies(MvcResult result, boolean secure) {
+        assertCookie(result, "accessToken", 0, secure);
+        assertCookie(result, "refreshToken", 0, secure);
+    }
+
+    private void assertCookie(
+            MvcResult result,
+            String name,
+            int maxAge,
+            boolean secure) {
+        Cookie cookie = result.getResponse().getCookie(name);
+        assertThat(cookie).as(name).isNotNull();
+        assertThat(cookie.isHttpOnly()).as(name + " HttpOnly").isTrue();
+        assertThat(cookie.getSecure()).as(name + " Secure").isEqualTo(secure);
+        assertThat(cookie.getPath()).as(name + " Path").isEqualTo("/");
+        assertThat(cookie.getMaxAge()).as(name + " Max-Age").isEqualTo(maxAge);
+        assertThat(cookie.getAttribute("SameSite"))
+                .as(name + " SameSite")
+                .isEqualTo("Lax");
     }
 
     private record RegisterPayload(
