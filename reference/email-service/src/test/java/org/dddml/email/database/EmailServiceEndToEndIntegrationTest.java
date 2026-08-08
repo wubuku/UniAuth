@@ -64,6 +64,7 @@ import static org.awaitility.Awaitility.await;
         "spring.mail.properties.mail.smtp.starttls.enable=false",
         "spring.mail.properties.mail.smtp.starttls.required=false",
         "spring.mail.properties.mail.smtp.ssl.enable=false",
+        "spring.mail.properties.mail.smtp.ssl.checkserveridentity=true",
         "spring.mail.properties.mail.smtp.connectiontimeout=500",
         "spring.mail.properties.mail.smtp.timeout=500",
         "spring.mail.properties.mail.smtp.writetimeout=10000",
@@ -165,7 +166,8 @@ class EmailServiceEndToEndIntegrationTest {
         assertThat(tableCount).isEqualTo(2);
         assertThat(migrationCount).isEqualTo(2);
         assertThat(mailSender.getJavaMailProperties())
-            .containsEntry("mail.smtp.writetimeout", "10000");
+            .containsEntry("mail.smtp.writetimeout", "10000")
+            .containsEntry("mail.smtp.ssl.checkserveridentity", "true");
     }
 
     @Test

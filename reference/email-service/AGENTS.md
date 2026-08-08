@@ -11,6 +11,10 @@
   或符号链接形式的 env 文件。
 - 非 loopback 监听必须设置 `EMAIL_SERVICE_API_KEY`；UniAuth 侧配置相同值。密钥
   最长 1024 字符且不能包含 CR/LF。
+- SMTP transport 必须通过 Java 与 Shell 双重 guard：`STARTTLS_REQUIRED=true`
+  不能脱离 `STARTTLS_ENABLE=true`，implicit SSL 不能与 STARTTLS 同时启用；`prod`
+  只能使用强制 STARTTLS 或 implicit SSL，并保持 server identity verification 开启。
+  `dev/test` 才允许为本地 GreenMail 等隔离夹具显式关闭传输加密。
 - `EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES` 和 stuck timeout 必须在 `1..10080`；
   邮件总开关或队列关闭时，恢复任务不得发送存量。
 - 配置、实体、事件和请求 DTO 不得通过自动 `toString()` 暴露 API key、收件人、

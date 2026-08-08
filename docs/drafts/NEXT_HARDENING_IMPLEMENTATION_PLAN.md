@@ -2,7 +2,7 @@
 
 > 状态：Batch A、Batch B1、Batch B2a、Batch B2b 与邮件服务边界加固已完成；
 > 下一批待重新探索后冻结
-> 事实基线：2026-08-07
+> 事实基线：2026-08-07；邮件 SMTP transport 增量：2026-08-08
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
 > 前置成果：PostgreSQL-only、Flyway V1 baseline + V2 + V3 + V4、Testcontainers、
 > Java/Shell/Playwright/Python 与邮件参考服务基础门禁
@@ -32,7 +32,7 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
 | Java | `mvn clean compile test-compile` 和 98 tests 已通过 |
-| 邮件参考服务 | 94 tests；14 个完整 ApplicationContext E2E；Shell runtime 15/15、HTTP 8/8、Flyway guard 8/8 |
+| 邮件参考服务 | 101 tests；14 个完整 ApplicationContext E2E；Java runtime guard 17 tests；Shell runtime 21/21、HTTP 8/8、Flyway guard 8/8 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 14/14 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 12/12 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、19 个 Mock Playwright tests 已通过 |
@@ -585,6 +585,39 @@ challenge、注册、密码重置或登录的用户可见业务语义。
   JWT/JWKS fixture；未访问共享数据库或真实外部服务。
 
 连续三轮无问题检查按验证规则只在当次工作报告逐轮输出；无问题轮次不修改本文。
+
+### 邮件服务 SMTP 传输安全加固切片
+
+#### 2026-08-08 固定实施范围
+
+本切片只加固参考邮件服务的 SMTP 配置、运行保护、测试和运维文档，不改变模板、
+队列、重试、HTTP 契约或 UniAuth 邮箱业务流程。
+
+纳入范围：
+
+1. 新增 `SMTP_SSL_CHECK_SERVER_IDENTITY`，默认启用，并确认属性进入真实
+   `JavaMailSender` Bean。
+2. Java/Shell 双重 runtime guard 拒绝 required STARTTLS 脱离 enable、STARTTLS
+   与 implicit SSL 同时启用，以及非法布尔值。
+3. `prod` 只允许强制 STARTTLS 或 implicit SSL，并强制 server identity
+   verification；`dev/test` 保留隔离本地 SMTP 的显式明文能力。
+4. 扩充 Java guard、Spring ApplicationContext、Shell runtime、HTTP/Flyway
+   启动夹具和统一验证入口回归。
+5. 同步 `.env.example`、组件 README/AGENTS、根配置、开发、验证、文档导航和代理规则。
+
+明确非目标：
+
+- 不连接真实 SMTP，不验证真实证书链、TLS 握手或供应商鉴权。
+- 不改变邮件内容、模板、队列状态机、重试次数、限流或至少一次投递语义。
+- 不改变 UniAuth 到外部 REST 服务的 endpoint、请求/响应或成功语义。
+- 不新增用户功能、数据库 migration、悲观锁或 JPA `@Version`。
+
+#### 当前状态
+
+邮件组件独立完整门禁已通过：101 tests、Java runtime guard 17 tests、
+Shell runtime 21/21、HTTP/PostgreSQL 8/8、Flyway guard 8/8。本轮收敛发现的
+Java/Shell 布尔值解析漂移已通过严格解析和回归测试修复；修复后根统一门禁重新通过
+Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19 和 Python 14。
 
 ### Batch C：JWT、refresh、blacklist 与 HTTP 边界
 

@@ -22,7 +22,7 @@
 | 数据库 | PostgreSQL-only |
 | Migration | Flyway V1 baseline + V2 + V3 + V4，history `uniauth_flyway_schema_history` |
 | Java 验证 | 98 tests |
-| 邮件参考服务 | 94 tests；另有 runtime 15/15、HTTP 8/8、Flyway guard 8/8 |
+| 邮件参考服务 | 101 tests；另有 runtime 21/21、HTTP 8/8、Flyway guard 8/8 |
 | HTTP E2E | 14/14 |
 | Flyway baseline guard | 12/12 |
 | Playwright | 19 tests |
@@ -66,7 +66,9 @@ HTTP 客户端适配器，不直接连接 SMTP 或邮件供应商；仓库中的
 [配置基线](docs/CONFIGURATION.md#邮件服务依赖)。该契约包括固定 health/template
 端点、模板名和变量、`success=true` 入队语义、可选 `X-Email-Service-Key` 以及
 connect/read timeout，不只是一个服务 URL；URL 本身也必须是带 host、无
-userinfo/query/fragment 的绝对 HTTP/HTTPS 地址。
+userinfo/query/fragment 的绝对 HTTP/HTTPS 地址。参考实现自身还要求生产 SMTP 使用
+强制 STARTTLS 或 implicit SSL，并保持 server identity verification 开启；其他兼容
+实现如果不使用 SMTP，也必须为其下游供应商连接提供等价的防降级和身份校验保护。
 
 | 属性 | 说明 |
 |------|------|

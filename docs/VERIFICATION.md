@@ -46,7 +46,8 @@ scripts/verify.sh
 和 SMTP 结果。PostgreSQL 使用 Testcontainers，SMTP 使用进程内 GreenMail；默认门禁
 不得读取 `.env`、连接真实供应商或发送真实邮件。统一入口还必须执行：
 
-- `scripts/test-runtime-guard.sh`：profile、独立数据库、env 权限和暴露鉴权矩阵。
+- `scripts/test-runtime-guard.sh`：profile、独立数据库、env 权限、暴露鉴权以及
+  STARTTLS/implicit SSL/server identity 配置矩阵。
 - `scripts/test-http-e2e.sh`：真实 JAR、真实 HTTP、Flyway/PostgreSQL、API key、
   模板渲染、边界拒绝和重启持久化。
 - `scripts/test-flyway-baseline-guard.sh`：dirty schema 拒绝、V2 坏数据失败关闭和
@@ -188,6 +189,9 @@ UniAuth 主应用的邮件相关门禁只验证内部状态机和 HTTP 边界：
 - Flyway V1/V2、独立 history table、PostgreSQL 16 和 Hibernate `validate`。
 - 两个必需模板经过真实 service/repository/event Bean、Thymeleaf、队列和 GreenMail 收件。
 - API key、输入和分页边界、未知模板拒绝、SMTP 连接失败后的失败日志和可重试状态。
+- Java/Shell 双重 runtime guard 拒绝 STARTTLS 降级、STARTTLS 与 implicit SSL
+  同时启用、生产明文 SMTP 和关闭 server identity verification；H2 与 PostgreSQL
+  ApplicationContext 都验证该属性进入真实 `JavaMailSender` Bean。
 - UniAuth 客户端 URL/timeout 配置拒绝矩阵，以及 context path、尾斜杠和 API key
   请求契约。
 - simple 请求 HTML 与模板渲染后的最终 HTML 都限制为最多 1,000,000 字符。
@@ -205,10 +209,30 @@ UniAuth 主应用的邮件相关门禁只验证内部状态机和 HTTP 边界：
 - 统一入口在进程专属临时源码快照中执行 Maven 和 Shell E2E，已通过两套完整门禁
   并行运行验证；原工作区源码在门禁期间变化时会失败关闭，不能继承旧结果。
 
-该 E2E 证明参考实现的本地协议链，不证明真实供应商鉴权、TLS、退信或外部收件。
+该 E2E 证明参考实现的本地协议链和 TLS 配置 fail-closed 规则，不执行真实 TLS 握手，
+也不证明真实供应商鉴权、证书链、主机名、退信或外部收件。
 参考服务是至少一次而非恰好一次投递；SMTP 已接受后的数据库提交/进程失败窗口和
 stuck reclaim 仍可能重复发送。真实邮箱能力仍需要隔离账户的显式 opt-in 测试，
 不进入默认无副作用门禁。
+
+## 2026-08-08 SMTP transport 加固增量
+
+> 状态：Verified。严格布尔值解析修复后，邮件组件门禁和根统一门禁均于
+> 2026-08-08 重新执行并通过。
+
+本轮固定范围只涉及参考邮件服务的 SMTP 配置、Java/Shell runtime guard、测试夹具、
+`.env.example` 和文档，不改变 UniAuth 邮箱 HTTP 契约、challenge、队列或投递业务语义。
+生产参考配置现在只允许强制 STARTTLS 或 implicit SSL，并要求
+`SMTP_SSL_CHECK_SERVER_IDENTITY=true`；隔离的 dev/test 夹具仍允许 loopback 明文 SMTP。
+
+最终验证结果：
+
+- 邮件参考服务 Maven：101 tests，0 failures/errors/skips；其中 Java runtime guard
+  17 tests。
+- 邮件 Shell runtime guard 21/21、HTTP/PostgreSQL E2E 8/8、Flyway guard 8/8。
+- 根统一门禁：Java 98 tests、HTTP E2E 14/14、Flyway guard 12/12、
+  Mock Playwright 19/19、Python 14/14，前端 lint/type/build 通过。
+- 文档相对链接和 patch hygiene 检查通过。
 
 Flyway baseline guard 使用 disposable PostgreSQL 16。错误 major 测试通过离线
 `psql` fixture 注入 PostgreSQL 15 版本号，不要求下载或支持 `postgres:15` 镜像。

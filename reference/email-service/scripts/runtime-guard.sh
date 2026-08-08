@@ -37,6 +37,20 @@ email_service_require_integer_range() {
     fi
 }
 
+email_service_require_boolean() {
+    local variable_name="$1"
+    local value="$2"
+
+    case "$value" in
+        true|false)
+            ;;
+        *)
+            echo "Error: ${variable_name} must be exactly true or false" >&2
+            return 1
+            ;;
+    esac
+}
+
 email_service_is_loopback() {
     case "$1" in
         localhost|127.*|::1|\[::1\])
@@ -112,6 +126,10 @@ email_service_prepare_runtime() {
     local profile="${SPRING_PROFILES_ACTIVE:-}"
     local bind_address="${EMAIL_SERVICE_BIND_ADDRESS:-127.0.0.1}"
     local smtp_auth="${SMTP_AUTH:-true}"
+    local smtp_starttls_enable="${SMTP_STARTTLS_ENABLE:-true}"
+    local smtp_starttls_required="${SMTP_STARTTLS_REQUIRED:-true}"
+    local smtp_ssl_enable="${SMTP_SSL_ENABLE:-false}"
+    local smtp_ssl_check_server_identity="${SMTP_SSL_CHECK_SERVER_IDENTITY:-true}"
     local smtp_connection_timeout="${SMTP_CONNECTION_TIMEOUT_MS:-10000}"
     local smtp_read_timeout="${SMTP_READ_TIMEOUT_MS:-10000}"
     local smtp_write_timeout="${SMTP_WRITE_TIMEOUT_MS:-10000}"
@@ -142,18 +160,45 @@ email_service_prepare_runtime() {
     email_service_require_env SMTP_PORT || return 1
     email_service_require_one_of EMAIL_FROM_ADDRESS APP_MAIL_FROM_EMAIL || return 1
 
-    case "$smtp_auth" in
-        true)
-            email_service_require_one_of SMTP_USERNAME SPRING_MAIL_USERNAME || return 1
-            email_service_require_one_of SMTP_PASSWORD SPRING_MAIL_PASSWORD || return 1
-            ;;
-        false)
-            ;;
-        *)
-            echo "Error: SMTP_AUTH must be exactly true or false" >&2
+    email_service_require_boolean SMTP_AUTH "$smtp_auth" || return 1
+    email_service_require_boolean \
+        SMTP_STARTTLS_ENABLE "$smtp_starttls_enable" || return 1
+    email_service_require_boolean \
+        SMTP_STARTTLS_REQUIRED "$smtp_starttls_required" || return 1
+    email_service_require_boolean SMTP_SSL_ENABLE "$smtp_ssl_enable" || return 1
+    email_service_require_boolean \
+        SMTP_SSL_CHECK_SERVER_IDENTITY \
+        "$smtp_ssl_check_server_identity" || return 1
+
+    if [ "$smtp_auth" = "true" ]; then
+        email_service_require_one_of SMTP_USERNAME SPRING_MAIL_USERNAME || return 1
+        email_service_require_one_of SMTP_PASSWORD SPRING_MAIL_PASSWORD || return 1
+    fi
+
+    if [ "$smtp_starttls_required" = "true" ] \
+        && [ "$smtp_starttls_enable" != "true" ]; then
+        echo "Error: SMTP_STARTTLS_REQUIRED=true requires SMTP_STARTTLS_ENABLE=true" >&2
+        return 1
+    fi
+    if [ "$smtp_ssl_enable" = "true" ] \
+        && [ "$smtp_starttls_enable" = "true" ]; then
+        echo "Error: SMTP_SSL_ENABLE=true cannot be combined with SMTP_STARTTLS_ENABLE=true" >&2
+        return 1
+    fi
+    if [ "$profile" = "prod" ]; then
+        if [ "$smtp_ssl_enable" != "true" ] \
+            && ! {
+                [ "$smtp_starttls_enable" = "true" ] \
+                    && [ "$smtp_starttls_required" = "true" ]
+            }; then
+            echo "Error: production SMTP requires forced STARTTLS or implicit SSL" >&2
             return 1
-            ;;
-    esac
+        fi
+        if [ "$smtp_ssl_check_server_identity" != "true" ]; then
+            echo "Error: production SMTP requires server identity verification" >&2
+            return 1
+        fi
+    fi
 
     email_service_require_integer_range \
         SMTP_CONNECTION_TIMEOUT_MS "$smtp_connection_timeout" 100 600000 || return 1
@@ -169,14 +214,7 @@ email_service_prepare_runtime() {
     email_service_require_integer_range \
         EMAIL_STUCK_TIMEOUT_MINUTES "$stuck_timeout_minutes" 1 10080 || return 1
 
-    case "$recovery_enabled" in
-        true|false)
-            ;;
-        *)
-            echo "Error: EMAIL_RECOVERY_ENABLED must be exactly true or false" >&2
-            return 1
-            ;;
-    esac
+    email_service_require_boolean EMAIL_RECOVERY_ENABLED "$recovery_enabled" || return 1
 
     if [ "${#api_key}" -gt 1024 ] \
         || [[ "$api_key" == *$'\r'* ]] \

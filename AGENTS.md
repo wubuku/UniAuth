@@ -53,6 +53,9 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
   邮件服务满足当前 HTTP、模板和响应契约。`reference/email-service/` 提供可运行参考，
   但不会由根应用自动启动；普通邮箱加密码登录不发信。客户端 timeout 默认 5 秒，
   可选通过 `X-Email-Service-Key` 使用共享密钥。
+- 参考邮件服务的 `prod` profile 只接受强制 STARTTLS 或 implicit SSL，禁止两者同时
+  启用，并要求 SMTP server identity verification。`dev/test` 明文 SMTP 只用于
+  loopback GreenMail 等隔离夹具；Shell 与 Spring ApplicationContext 都执行保护。
 - React 生产构建直接写入 `src/main/resources/static/`，该目录是生成物并被 gitignore。
 - OAuth2 callback 和 `app.frontend.url` 当前包含部署域名硬编码；本地 OAuth2 流程需要显式覆盖配置。
 
@@ -264,11 +267,14 @@ python3 -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") fo
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-已知状态（2026-08-07 当前工作树）：
+历史基线（2026-08-07 工作树）：
 
 - Maven：98 tests，0 failures/errors/skips。
 - 邮件参考服务：94 tests，0 failures/errors/skips；另有 runtime guard 15/15、
   Shell HTTP 8/8 和 Flyway guard 8/8。
+- 2026-08-08 SMTP transport 加固增量：邮件参考服务 101 tests，
+  Java runtime guard 17 tests，Shell runtime guard 21/21；HTTP 8/8 和 Flyway
+  guard 8/8 保持通过。
 - Shell HTTP E2E：14/14。
 - Flyway baseline guard：12/12。
 - Mock Playwright：19 tests。
@@ -292,6 +298,12 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 后续变更必须重新运行受影响门禁，不能继承该结果。
 - Python 资源服务器已有离线 RSA/JWKS/Flask 测试。
 - 真实 OAuth2、真实邮件和共享数据库写操作仍属于显式 opt-in 验证。
+
+当前增量状态（2026-08-08）：
+
+- SMTP transport 加固及严格布尔值解析修复已通过完整邮件组件门禁和根统一门禁；
+  根 Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19 和 Python 14
+  保持通过。
 
 `start.sh` 可读取显式环境变量或指定的 Google client JSON；
 `start-with-frontend.sh` 要求所有 OAuth2 环境变量。两者都经过
@@ -356,6 +368,8 @@ PYTHON_BIN=python3 scripts/verify.sh
 - provider 命名变更必须处理 `x` 与 `TWITTER` 的映射。
 - 新增或修改外部 REST 依赖时，不能只记录 URL/端口；必须在 live 文档中说明责任边界、
   必需 endpoint、鉴权、请求/响应 schema、成功语义、超时/重试和自动化验证边界。
+- 修改参考邮件服务 SMTP 配置时，必须同步核对 JavaMail 属性、Java/Shell runtime
+  guard、ApplicationContext/GreenMail 测试、`.env.example` 和 live 配置/运维文档。
 - 不要把 `docs/drafts/` 中的规划代码当成已实现事实。
 - 增加或修改后端行为时必须同步补充相应的集成/行为测试。
 - 完成工作后检查 `git status`，不要提交 `.env`、数据库、key、报告、`target/`、`node_modules/` 或静态构建产物。

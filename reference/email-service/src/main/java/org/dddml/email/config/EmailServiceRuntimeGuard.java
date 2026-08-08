@@ -42,6 +42,7 @@ public class EmailServiceRuntimeGuard {
         String profile = validateProfile();
         validateDatabaseTarget();
         validateSmtpAuthentication();
+        validateSmtpTransport(profile);
         validateSmtpTimeouts();
         validateRecoveryConfiguration();
         validateDeliveryConfiguration(profile);
@@ -133,10 +134,10 @@ public class EmailServiceRuntimeGuard {
     }
 
     private void validateSmtpAuthentication() {
-        boolean smtpAuth = environment.getProperty(
+        boolean smtpAuth = strictBooleanProperty(
             "spring.mail.properties.mail.smtp.auth",
-            Boolean.class,
-            true
+            true,
+            "SMTP_AUTH"
         );
         if (!smtpAuth) {
             return;
@@ -164,6 +165,53 @@ public class EmailServiceRuntimeGuard {
         }
     }
 
+    private void validateSmtpTransport(String profile) {
+        boolean startTlsEnabled = strictBooleanProperty(
+            "spring.mail.properties.mail.smtp.starttls.enable",
+            true,
+            "SMTP_STARTTLS_ENABLE"
+        );
+        boolean startTlsRequired = strictBooleanProperty(
+            "spring.mail.properties.mail.smtp.starttls.required",
+            true,
+            "SMTP_STARTTLS_REQUIRED"
+        );
+        boolean implicitSslEnabled = strictBooleanProperty(
+            "spring.mail.properties.mail.smtp.ssl.enable",
+            false,
+            "SMTP_SSL_ENABLE"
+        );
+        boolean serverIdentityVerification = strictBooleanProperty(
+            "spring.mail.properties.mail.smtp.ssl.checkserveridentity",
+            true,
+            "SMTP_SSL_CHECK_SERVER_IDENTITY"
+        );
+
+        if (startTlsRequired && !startTlsEnabled) {
+            throw new IllegalStateException(
+                "SMTP_STARTTLS_REQUIRED=true requires SMTP_STARTTLS_ENABLE=true"
+            );
+        }
+        if (implicitSslEnabled && startTlsEnabled) {
+            throw new IllegalStateException(
+                "SMTP_SSL_ENABLE=true cannot be combined with SMTP_STARTTLS_ENABLE=true"
+            );
+        }
+        if (!"prod".equals(profile)) {
+            return;
+        }
+        if (!implicitSslEnabled && !(startTlsEnabled && startTlsRequired)) {
+            throw new IllegalStateException(
+                "Production SMTP requires forced STARTTLS or implicit SSL"
+            );
+        }
+        if (!serverIdentityVerification) {
+            throw new IllegalStateException(
+                "Production SMTP requires server identity verification"
+            );
+        }
+    }
+
     private void validateServiceCredential() {
         String apiKey = securityProperties.getApiKey();
         if (apiKey == null) {
@@ -174,6 +222,25 @@ public class EmailServiceRuntimeGuard {
                 "EMAIL_SERVICE_API_KEY must be at most 1024 characters without CR or LF"
             );
         }
+    }
+
+    private boolean strictBooleanProperty(
+            String propertyName,
+            boolean defaultValue,
+            String environmentVariableName) {
+        String value = environment.getProperty(propertyName);
+        if (value == null) {
+            return defaultValue;
+        }
+        if ("true".equals(value)) {
+            return true;
+        }
+        if ("false".equals(value)) {
+            return false;
+        }
+        throw new IllegalStateException(
+            environmentVariableName + " must be exactly true or false"
+        );
     }
 
     private void validateRecoveryConfiguration() {

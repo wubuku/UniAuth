@@ -58,6 +58,7 @@ spring:
             required: ${SMTP_STARTTLS_REQUIRED:true}
           ssl:
             enable: ${SMTP_SSL_ENABLE:false}
+            checkserveridentity: ${SMTP_SSL_CHECK_SERVER_IDENTITY:true}
 
 app:
   security:

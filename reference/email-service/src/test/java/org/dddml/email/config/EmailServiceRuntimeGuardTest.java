@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 import org.springframework.mock.env.MockEnvironment;
 
+import java.util.function.Consumer;
+
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -200,11 +202,203 @@ class EmailServiceRuntimeGuardTest {
             .hasMessageContaining("1024");
     }
 
+    @Test
+    void rejectsStartTlsRequirementWhenStartTlsIsDisabled() {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_test",
+            "127.0.0.1",
+            "",
+            environment -> {
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.starttls.enable",
+                    "false"
+                );
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.starttls.required",
+                    "true"
+                );
+            }
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining(
+                "SMTP_STARTTLS_REQUIRED=true requires SMTP_STARTTLS_ENABLE=true"
+            );
+    }
+
+    @Test
+    void rejectsNonCanonicalSmtpBooleanValues() {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_test",
+            "127.0.0.1",
+            "",
+            environment -> environment.setProperty(
+                "spring.mail.properties.mail.smtp.ssl.checkserveridentity",
+                "TRUE"
+            )
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining(
+                "SMTP_SSL_CHECK_SERVER_IDENTITY must be exactly true or false"
+            );
+    }
+
+    @Test
+    void rejectsImplicitSslTogetherWithStartTls() {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_test",
+            "127.0.0.1",
+            "",
+            environment -> {
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.starttls.enable",
+                    "true"
+                );
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.ssl.enable",
+                    "true"
+                );
+            }
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining(
+                "SMTP_SSL_ENABLE=true cannot be combined with SMTP_STARTTLS_ENABLE=true"
+            );
+    }
+
+    @Test
+    void rejectsProductionWithoutSmtpTransportEncryption() {
+        EmailServiceRuntimeGuard guard = guard(
+            "prod",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_prod",
+            "127.0.0.1",
+            "",
+            environment -> {
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.starttls.enable",
+                    "false"
+                );
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.starttls.required",
+                    "false"
+                );
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.ssl.enable",
+                    "false"
+                );
+            }
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining(
+                "Production SMTP requires forced STARTTLS or implicit SSL"
+            );
+    }
+
+    @Test
+    void rejectsProductionWithOptionalStartTls() {
+        EmailServiceRuntimeGuard guard = guard(
+            "prod",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_prod",
+            "127.0.0.1",
+            "",
+            environment -> {
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.starttls.enable",
+                    "true"
+                );
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.starttls.required",
+                    "false"
+                );
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.ssl.enable",
+                    "false"
+                );
+            }
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining(
+                "Production SMTP requires forced STARTTLS or implicit SSL"
+            );
+    }
+
+    @Test
+    void rejectsProductionWithoutSmtpServerIdentityVerification() {
+        EmailServiceRuntimeGuard guard = guard(
+            "prod",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_prod",
+            "127.0.0.1",
+            "",
+            environment -> environment.setProperty(
+                "spring.mail.properties.mail.smtp.ssl.checkserveridentity",
+                "false"
+            )
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining(
+                "Production SMTP requires server identity verification"
+            );
+    }
+
+    @Test
+    void acceptsProductionImplicitSslWithServerIdentityVerification() {
+        EmailServiceRuntimeGuard guard = guard(
+            "prod",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_prod",
+            "127.0.0.1",
+            "",
+            environment -> {
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.starttls.enable",
+                    "false"
+                );
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.starttls.required",
+                    "false"
+                );
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.ssl.enable",
+                    "true"
+                );
+                environment.setProperty(
+                    "spring.mail.properties.mail.smtp.ssl.checkserveridentity",
+                    "true"
+                );
+            }
+        );
+
+        assertThatCode(guard::validateRuntime).doesNotThrowAnyException();
+    }
+
     private EmailServiceRuntimeGuard guard(
             String profile,
             String jdbcUrl,
             String bindAddress,
             String apiKey) {
+        return guard(profile, jdbcUrl, bindAddress, apiKey, environment -> {
+        });
+    }
+
+    private EmailServiceRuntimeGuard guard(
+            String profile,
+            String jdbcUrl,
+            String bindAddress,
+            String apiKey,
+            Consumer<MockEnvironment> environmentCustomizer) {
         EmailSecurityProperties security = new EmailSecurityProperties();
         security.setApiKey(apiKey);
         MailProperties mail = new MailProperties();
@@ -213,6 +407,7 @@ class EmailServiceRuntimeGuardTest {
         MockEnvironment environment = new MockEnvironment();
         environment.setActiveProfiles(profile);
         environment.setProperty("spring.mail.properties.mail.smtp.auth", "false");
+        environmentCustomizer.accept(environment);
         return new EmailServiceRuntimeGuard(
             security,
             mail,

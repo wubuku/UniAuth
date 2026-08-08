@@ -152,7 +152,7 @@ ApplicationContext/运行保护阶段被拒绝，避免将无效值传入 HTTP h
 | 监听/鉴权 | `EMAIL_SERVICE_BIND_ADDRESS`、`EMAIL_SERVICE_PORT`、`EMAIL_SERVICE_API_KEY` |
 | PostgreSQL | `EMAIL_POSTGRES_HOST`、`EMAIL_POSTGRES_PORT`、`EMAIL_POSTGRES_DATABASE`、`EMAIL_POSTGRES_USER`、`EMAIL_POSTGRES_PASSWORD` |
 | SMTP | `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD` |
-| TLS/SSL | `SMTP_STARTTLS_ENABLE`、`SMTP_STARTTLS_REQUIRED`、`SMTP_SSL_ENABLE` |
+| TLS/SSL | `SMTP_STARTTLS_ENABLE`、`SMTP_STARTTLS_REQUIRED`、`SMTP_SSL_ENABLE`、`SMTP_SSL_CHECK_SERVER_IDENTITY` |
 | 发件人 | `EMAIL_FROM_ADDRESS`、`EMAIL_FROM_NAME` |
 | 队列 | `EMAIL_QUEUE_EVENT_DRIVEN`、`EMAIL_MAX_RETRY_ATTEMPTS`、`EMAIL_RETRY_DELAY_MINUTES` |
 | 限流/恢复 | `EMAIL_RATE_LIMIT_ENABLED`、`EMAIL_RATE_LIMIT_PER_MINUTE`、`EMAIL_RECOVERY_ENABLED`、`EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES`、`EMAIL_STUCK_TIMEOUT_MINUTES` |
@@ -164,6 +164,28 @@ ApplicationContext/运行保护阶段被拒绝，避免将无效值传入 HTTP h
 `app.mail.queue.enabled` 和 `app.mail.recovery.enabled` 同时为 true 时才处理
 pending/stuck 队列；关闭邮件或队列不会继续发送已有积压。
 
+SMTP 传输模式必须使用下列组合之一：
+
+| 场景 | `STARTTLS_ENABLE` | `STARTTLS_REQUIRED` | `SSL_ENABLE` | `SSL_CHECK_SERVER_IDENTITY` |
+|------|-------------------|---------------------|--------------|-----------------------------|
+| 生产强制 STARTTLS | `true` | `true` | `false` | `true` |
+| 生产 implicit SSL | `false` | `false` | `true` | `true` |
+| 隔离的 dev/test 明文 SMTP | `false` | `false` | `false` | `true` |
+
+配置默认使用强制 STARTTLS，并默认启用 SMTP server identity verification。运行保护
+拒绝以下组合：
+
+- `SMTP_STARTTLS_REQUIRED=true` 但 `SMTP_STARTTLS_ENABLE=false`。
+- 同时启用 `SMTP_STARTTLS_ENABLE` 和 `SMTP_SSL_ENABLE`。
+- `prod` 使用明文或非强制 STARTTLS。
+- `prod` 设置 `SMTP_SSL_CHECK_SERVER_IDENTITY=false`。
+- 上述布尔环境变量使用 `true`/`false` 以外的值。
+
+明文组合仅用于 loopback GreenMail 或等价的隔离测试夹具，不能作为部署配置。
+如果供应商要求 implicit SSL，必须同时显式关闭两个 STARTTLS 变量。不要通过关闭
+server identity verification 绕过证书或主机名错误；应修复 SMTP host、证书链或
+信任库。
+
 从来源目录复制的本机 `.env` 使用 Spring 标准变量
 `SPRING_MAIL_USERNAME`、`SPRING_MAIL_PASSWORD` 和 `APP_MAIL_FROM_EMAIL`；当前配置
 继续兼容这些名称。该文件被 gitignore 且不得提交，但它不包含完整运行配置：
@@ -172,10 +194,10 @@ TLS/SSL 设置。不要在文档或日志中打印变量值。
 
 Profile 行为：
 
-| Profile | Hibernate schema 行为 | 用途 |
-|---------|-----------------------|------|
-| `dev` | `validate` | 独立、可丢弃的本地参考数据库 |
-| `prod` | `validate` | 部署环境的独立邮件数据库 |
+| Profile | Hibernate schema 行为 | SMTP 传输要求 | 用途 |
+|---------|-----------------------|----------------|------|
+| `dev` | `validate` | 允许显式明文，仅用于隔离本地 SMTP | 独立、可丢弃的本地参考数据库 |
+| `prod` | `validate` | 强制 STARTTLS 或 implicit SSL；必须校验 server identity | 部署环境的独立邮件数据库 |
 
 ## 数据库与 Flyway
 
@@ -224,6 +246,8 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - API key、输入/header injection、batch 和数据库分页边界。
 - 未知模板拒绝且不创建队列/日志。
 - SMTP 连接失败、配置化重试、原子 claim 和 stuck `PROCESSING` 恢复。
+- Java/Shell runtime guard 的 STARTTLS、implicit SSL、生产加密和 server identity
+  拒绝矩阵；真实 `JavaMailSender` Bean 保留身份校验属性。
 - 恢复候选按 priority 降序处理；关闭邮件总开关或队列后不投递存量队列。
 - event 与 recovery 并发 claim 同一 PostgreSQL 队列记录时只允许一个投递者成功，
   最终只有一条成功日志和一封 SMTP 邮件。
@@ -242,6 +266,18 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - Shell HTTP/PostgreSQL E2E：8/8。
 - Shell Flyway guard：8/8。
 
+2026-08-08 SMTP transport 加固增量：
+
+- Maven：101 tests，0 failures/errors/skips。
+- 其中 14 个完整 ApplicationContext E2E、17 个 Java runtime guard tests、
+  6 个独立 Flyway migration tests、6 个 context-path/matrix-parameter API key
+  filter tests。
+- H2 与 PostgreSQL ApplicationContext 均确认
+  `mail.smtp.ssl.checkserveridentity=true` 进入真实 `JavaMailSender` Bean。
+- Shell runtime guard：21/21。
+- Shell HTTP/PostgreSQL E2E：8/8。
+- Shell Flyway guard：8/8。
+
 测试需要 Docker。若本机下载依赖受限，只把机器代理临时注入当前命令，不要写入
 仓库配置、`.mvn/` 或可提交的环境文件。
 
@@ -250,7 +286,9 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 不要复用 UniAuth 数据库，也不要连接共享开发库。先创建独立、明确可丢弃的数据库，
 再补齐未提交的 `.env`。如果来源 `.env` 已存在，不要用示例文件覆盖其中的凭据；
 只合并缺失的变量。`start.sh` 要求 env 文件是普通文件且 group/other 无权限，
-`dev` 数据库名必须包含 `email`/`mail` 和 `dev`/`test`/`demo`/`local` 标记：
+`dev` 数据库名必须包含 `email`/`mail` 和 `dev`/`test`/`demo`/`local` 标记。
+生产启动还会拒绝 SMTP 明文、可降级 STARTTLS、TLS 模式冲突和关闭 server identity
+verification：
 
 ```bash
 createdb -h 127.0.0.1 -U postgres uniauth_email_demo

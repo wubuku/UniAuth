@@ -102,6 +102,11 @@ health 响应的最小兼容形状：
 `success=true` 只表示外部服务接受或入队，不代表 SMTP/供应商已经送达邮件。外部服务
 仍需自行负责模板渲染、队列、重试、SMTP/供应商凭据和投递状态。
 
+这些是 UniAuth 到外部 REST 服务的协议要求，并不要求兼容实现必须使用 JavaMail 或
+SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必须提供等价的传输安全：
+加密不可静默降级、证书/主机身份必须校验、凭据不得明文跨越不可信网络。仓库参考
+实现把这些要求具体化为可执行的 Java/Shell runtime guard。
+
 仓库参考实现默认监听 `127.0.0.1:8095`，并有自己的配置和数据库边界：
 
 - 必须使用独立的 `EMAIL_POSTGRES_*` 数据库，不能复用 UniAuth 或共享数据库。
@@ -114,8 +119,17 @@ health 响应的最小兼容形状：
 - SMTP 首选 `SMTP_*` 和 `EMAIL_FROM_*` 变量；从来源 `.env` 复制的
   `SPRING_MAIL_USERNAME`、`SPRING_MAIL_PASSWORD`、`APP_MAIL_FROM_EMAIL` 仍兼容。
 - 本机 `.env` 被忽略且不得提交；它不替代显式数据库、SMTP host/port 和 TLS 配置。
+- SMTP 默认使用强制 STARTTLS：
+  `SMTP_STARTTLS_ENABLE=true`、`SMTP_STARTTLS_REQUIRED=true`、
+  `SMTP_SSL_ENABLE=false`、`SMTP_SSL_CHECK_SERVER_IDENTITY=true`。如果供应商要求
+  implicit SSL，必须把两个 STARTTLS 变量都设为 `false` 并把 `SMTP_SSL_ENABLE`
+  设为 `true`；两种模式不能同时启用。
+- `prod` 拒绝明文 SMTP、可降级的 optional STARTTLS 和
+  `SMTP_SSL_CHECK_SERVER_IDENTITY=false`。`dev/test` 仅为 loopback GreenMail 等
+  隔离夹具允许显式明文配置；证书或主机名错误不能通过关闭身份校验绕过。
 - `reference/email-service/start.sh` 会拒绝非邮件专用数据库名、非 disposable 的
-  dev 数据库、权限过宽或符号链接形式的 env 文件，以及未受保护的非 loopback 暴露。
+  dev 数据库、权限过宽或符号链接形式的 env 文件、未受保护的非 loopback 暴露和
+  不安全的 SMTP transport 组合。直接运行 JAR 时 Java guard 会执行同一组核心校验。
 - `EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES` 有效范围为 `1..10080`；恢复任务只有在
   `app.mail.enabled`、`app.mail.queue.enabled` 和 `app.mail.recovery.enabled`
   同时为 true 时才会处理 pending/stuck 队列。

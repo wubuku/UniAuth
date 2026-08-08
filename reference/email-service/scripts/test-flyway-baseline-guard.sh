@@ -101,6 +101,7 @@ start_application() {
         export SMTP_STARTTLS_ENABLE=false
         export SMTP_STARTTLS_REQUIRED=false
         export SMTP_SSL_ENABLE=false
+        export SMTP_SSL_CHECK_SERVER_IDENTITY=true
         export EMAIL_FROM_ADDRESS=no-reply@example.test
         export EMAIL_QUEUE_EVENT_DRIVEN=false
         export EMAIL_RECOVERY_ENABLED=false
