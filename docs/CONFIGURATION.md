@@ -122,9 +122,10 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 
 - `EMAIL_DATABASE_LAYOUT` 默认 `dedicated`，要求 `EMAIL_POSTGRES_*` 指向邮件专用
   PostgreSQL 16 数据库。只有显式设置 `shared-uniauth` 时才允许复用获准的 UniAuth
-  `public` schema；该路径要求完整 UniAuth V1-V5、独立 Flyway history table 和
-  advisory-lock 串行化。`blacksheep*`、系统库、未知 layout、H2 和其他非 PostgreSQL
-  datasource 均在 Flyway 前拒绝。
+  数据库：目标 `public` schema 可以为空，由任一侧先迁移；若已存在 peer，则必须是
+  完整且 history 精确的 UniAuth V1-V5 或邮件 V1-V3。两侧使用独立 Flyway history
+  table 和 advisory-lock 串行化。`blacksheep*`、系统库、未知 layout、H2 和其他
+  非 PostgreSQL datasource 均在 Flyway 前拒绝。
 - 邮件侧业务 relation 是 `email_queue`、`email_logs` 及其序列/索引/约束，与
   UniAuth V1-V5 的表、序列和索引名称没有冲突。不能据此直接移除迁移保护：后启动
   Flyway 仍会遇到“schema 非空但缺少自身 history”的启动冲突。

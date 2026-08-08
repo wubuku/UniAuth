@@ -64,11 +64,12 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
   PostgreSQL ApplicationContext 断言配置进入真实 `JavaMailSender`。
 - 参考邮件服务的 `dev`、`test`、`prod` profile 只接受 PostgreSQL datasource；
   H2 不再是测试后端。默认 `EMAIL_DATABASE_LAYOUT=dedicated` 要求邮件专用数据库；
-  `shared-uniauth` 是显式 opt-in，只能在完整 UniAuth V1-V5 `public` schema 上创建
-  独立 `email_service_flyway_schema_history` 并迁移 V1-V3。反向启动顺序同样使用
-  独立 history；两侧通过同一 PostgreSQL advisory lock 串行化首次 baseline/migrate。
-  Java guard 会在 Flyway 前拒绝非 PostgreSQL、未知 layout、受保护数据库和不完整
-  peer。存在 peer relation 却缺少 peer history 属于半成品布局，必须失败关闭。
+  `shared-uniauth` 是显式 opt-in，可在获准的空 `public` schema 先迁移邮件 V1-V3，
+  也可加入完整 UniAuth V1-V5 peer。两种启动顺序都使用独立 history；后启动一侧
+  验证完整 peer 后创建自己的 V0 baseline，两侧通过同一 PostgreSQL advisory lock
+  串行化首次 baseline/migrate。Java guard 会在 Flyway 前拒绝非 PostgreSQL、未知
+  layout、受保护数据库和不完整 peer。存在 peer relation 却缺少 peer history 属于
+  半成品布局，必须失败关闭。
 - 两侧业务 relation 命名没有冲突：邮件组件只拥有 `email_queue`、`email_logs`、
   对应序列/索引/约束；UniAuth 拥有认证、Session 与
   `uniauth_flyway_schema_history`。共享部署需要兼容的是非空 schema 下的 Flyway
@@ -211,10 +212,11 @@ delivery 失败也不会自动撤销 challenge。Java 测试使用完整 Applica
 
 参考邮件服务的 schema 由其自己的 Flyway V1/V2/V3 管理，history table 是
 `email_service_flyway_schema_history`；所有 profile 使用 Hibernate `validate`，
-SQL init 关闭。默认使用独立 PostgreSQL；显式 `shared-uniauth` 只允许与完整
-UniAuth V1-V5 在同一 `public` schema 共存，且不得连接 `blacksheep*` 或其他未获准
-共享库。后启动一侧只有在对端 history/核心 relation 完整、本侧 relation 不存在且
-对端没有失败 migration 时，才在共享 advisory lock 内创建 baseline V0；全局
+SQL init 关闭。默认使用独立 PostgreSQL；显式 `shared-uniauth` 允许在获准的空
+`public` schema 先启动任一侧，或与完整 UniAuth V1-V5 peer 共存，且不得连接
+`blacksheep*` 或其他未获准共享库。后启动一侧只有在对端 history/核心 relation
+完整、本侧 relation 不存在且对端没有失败 migration 时，才在共享 advisory lock
+内创建 baseline V0；全局
 `baseline-on-migrate` 仍固定为 `false`。H2 或其他 datasource 即使在 `test` profile
 也会在 Flyway 前失败。修改该组件时：
 

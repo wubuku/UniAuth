@@ -70,9 +70,10 @@ UniAuth 主应用内的 `RestTemplateEmailServiceImpl` 只是 HTTP 客户端，�
 SMTP 或邮件供应商。外部服务必须提供 health、模板邮件端点、模板和约定的 JSON 响应；
 仓库提供一个独立的[邮件服务参考实现](../reference/email-service/README.md)，其 schema
 由独立 Flyway V1/V2/V3 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP
-E2E 验证。数据库默认使用独立 PostgreSQL；显式 `shared-uniauth` 可在完整 UniAuth
-V1-V5 的同一 `public` schema 中使用独立 history table 共存，两种启动顺序由共享
-advisory lock 串行化并有真实 ApplicationContext 与双进程 E2E。邮件组件只创建
+E2E 验证。数据库默认使用独立 PostgreSQL；显式 `shared-uniauth` 可在获准的空
+`public` schema 先启动任一侧，或与完整 UniAuth V1-V5 peer 使用独立 history table
+共存。两种启动顺序由共享 advisory lock 串行化，并有真实 ApplicationContext 与
+双进程 E2E。邮件组件只创建
 `email_queue`、`email_logs`、对应序列/索引/约束和
 `email_service_flyway_schema_history`；这些 relation 名称与 UniAuth V1-V5 无冲突。
 原始兼容问题是后启动 Flyway 面对非空 `public` schema 且缺少自身 history，而不是

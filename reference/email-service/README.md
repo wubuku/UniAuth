@@ -244,7 +244,8 @@ Flyway 是本组件唯一的 schema owner：
 
 - datasource：所有 profile 只接受 `jdbc:postgresql:` URL；H2 不受支持
 - database layout：默认 `EMAIL_DATABASE_LAYOUT=dedicated`；显式
-  `shared-uniauth` 才允许与完整 UniAuth V1-V5 共用 `public` schema
+  `shared-uniauth` 才允许在获准的空 `public` schema 先迁移，或与完整
+  UniAuth V1-V5 peer 共用该 schema
 - location：`classpath:db/migration/postgresql`
 - history table：`email_service_flyway_schema_history`
 - 当前 migration：V1 建表 + V2 队列/日志完整性 + V3 队列生命周期行形状
@@ -279,9 +280,10 @@ V1 创建 `email_queue`、`email_logs`、基础检查约束和查询索引。V2 
 `processed_time`，非终态不得有 `processed_time`。缺少终态处理时间的历史行使用
 `updated_time`、`created_time` 或迁移时间依次补齐。已发布 migration 不得改写；
 后续 schema 变更必须新增 V4+。默认独立布局要求邮件专用数据库。显式
-`shared-uniauth` 会先验证 UniAuth V1-V5 的完整关系和成功 history，再以 baseline
-V0 建立独立 `email_service_flyway_schema_history` 并迁移 V1-V3；UniAuth 反向启动
-也会验证邮件 V1-V3 后建立自己的 history。两侧使用同一 PostgreSQL advisory lock
+`shared-uniauth` 在空 `public` schema 上可先迁移邮件 V1-V3，不创建 baseline；
+若 UniAuth V1-V5 已存在，则先验证其完整 relation 和成功 history，再以 baseline V0
+建立独立 `email_service_flyway_schema_history` 并迁移 V1-V3。UniAuth 后启动时也会
+验证邮件 V1-V3 后建立自己的 V0 history。两侧使用同一 PostgreSQL advisory lock
 串行化首次迁移，拒绝 managed relation 冲突、不完整 peer 和不精确 history。
 peer history 必须恰好包含当前预期的成功 SQL 版本，另只允许 0 或 1 个成功 V0
 baseline；失败、重复、未知 versioned 或 repeatable 记录均被拒绝。存在 peer
@@ -453,8 +455,8 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 
 2026-08-08 shared-schema 共存加固增量：
 
-- 默认 `dedicated` 保持不变；`shared-uniauth` 仅在显式选择、完整 peer schema、
-  独立 history 和同一 advisory lock 条件下允许。
+- 默认 `dedicated` 保持不变；`shared-uniauth` 仅在显式选择、获准空目标或完整
+  peer schema、独立 history 和同一 advisory lock 条件下允许。
 - Java bootstrap/ApplicationContext 与真实双进程 E2E 覆盖 UniAuth-first 和
   email-first 两种启动顺序、baseline V0、重启幂等、精确 peer history、缺失 peer
   history 的半成品布局拒绝和业务 relation 共存。
