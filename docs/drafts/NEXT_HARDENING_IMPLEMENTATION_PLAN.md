@@ -1018,9 +1018,28 @@ header、JSON body、状态码、模板、队列、SMTP、retry 或 Flyway V1/V2
 - 邮件组件 Maven 129 tests，其中 22 个 PostgreSQL/GreenMail ApplicationContext
   E2E；Shell runtime 27/27、HTTP 10/10、Flyway guard 11/11。
 - Python 邮件 stub contract 8/8；单个正确 header 与既有正常发送契约保持不变。
-- 完整邮件组件和根统一门禁已通过：根 Java 121、HTTP 15/15、Flyway 13/13、
+- 完整邮件组件和根统一门禁已通过：根 Java 127、HTTP 15/15、Flyway 13/13、
   Mock Playwright 21/21、Python 资源服务器 16/16、邮件 stub 8/8，以及前端
   lint/type/build；连续三轮无修改检查仍须在提交前执行。
+
+#### 2026-08-08 UniAuth 与参考邮件服务跨进程闭环补充
+
+在 API key 单值加固之后，补充验证范围仍限定为邮件服务参考实现及其 UniAuth
+客户端边界：
+
+- 根 `scripts/test-http-e2e.sh` 先打包并启动真实参考邮件服务 JAR、独立
+  PostgreSQL 和真实 HTTP 端口。
+- 邮箱注册验证和密码重置的正常请求通过生产
+  `RestTemplateEmailServiceImpl` 进入参考服务，并直接断言参考服务
+  `email_queue` 中已持久化渲染后的 `VERIFICATION`、`PASSWORD_RESET` 模板。
+- 参考服务不会伪造 `503/429` 供应商失败，因此脚本随后重启 UniAuth 并切换到受控
+  stub，仅覆盖客户端失败映射和失败不保存 challenge。
+- 该补充不改变邮件 HTTP、模板、challenge、队列或 Flyway 业务语义；它只消除
+  “根 E2E 只经过 stub、未证明真实兼容服务跨进程可用”的验证缺口。
+
+验证结果：根 HTTP E2E `15/15`；参考邮件服务 Maven `129` tests、Shell
+runtime `27/27`、HTTP `10/10`、Flyway guard `11/11` 均通过。完整根统一门禁和
+连续三轮无修改检查仍是提交前门槛。
 
 #### Email/password
 

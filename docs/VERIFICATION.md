@@ -150,7 +150,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
 | `mvn test` | 通过 | 127 tests，0 failures/errors/skips |
-| `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、PostgreSQL、受控邮件 REST stub、重启、JWT、Web3、email、登录方式 |
+| `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、独立 PostgreSQL、参考邮件服务跨进程模板入队、失败映射 stub、重启、JWT、Web3、email、登录方式 |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 13/13；exact schema、V2/V4 初始及 apply 前数据预检、非法 email verification state、post-baseline 失败恢复与其他拒绝/清理路径 |
 | Flyway integration | 通过 | fresh V1→V4、existing baseline V1→V4、V3→V4、Hibernate validate、Session、checksum/failure recovery |
 | 邮件参考服务 | 通过 | 129 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime guard tests；Shell runtime 27/27、HTTP 10/10、Flyway guard 11/11 |
@@ -166,8 +166,11 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 | Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
 
-Shell HTTP E2E 使用 `test` profile、disposable PostgreSQL、临时 RSA key、dummy OAuth
-和受控 loopback 邮件 REST stub。它验证：
+Shell HTTP E2E 使用 `test` profile、UniAuth disposable PostgreSQL、参考邮件服务
+disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列开始前启动真实
+参考邮件服务 JAR；第 10/15、11/15 步骤通过真实 HTTP 调用模板端点并直接检查
+参考服务的 `email_queue`；第 12/15、13/15 步骤为获得稳定的 `503/429` 失败夹具
+而重启应用并切换到受控 loopback 邮件 REST stub。它验证：
 
 - Flyway V1/V2/V3/V4 和自定义 history table。
 - 应用重启后的 migration 幂等和用户数据保留。
@@ -177,8 +180,8 @@ Shell HTTP E2E 使用 `test` profile、disposable PostgreSQL、临时 RSA key、
 - 本地签名 Web3 登录、message tamper、replay 拒绝和钱包绑定。
 - 登录方式 primary/delete/最后方式拒绝，以及真实并发 mutation 的 `200/409` 和最终
   “至少一个登录方式、恰好一个 primary”不变量。
-- 邮箱注册、动态有效期/cooldown、外部接受后持久化 challenge、同步拒绝/限流失败关闭、
-  不支持 purpose 拒绝、重试耗尽和密码重置。
+- 邮箱注册、动态有效期/cooldown、真实参考服务接受后持久化 challenge、同步拒绝/限流
+  失败关闭、不支持 purpose 拒绝、重试耗尽和密码重置。
 - logout cookie 清理、Flyway history 和最终数据库不变量。
 
 认证 Cookie/浏览器 refresh 存储预备切片还验证：
@@ -204,8 +207,9 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
   `/register` 不会再按 email/purpose 二次消费该记录。
 - `RestTemplateEmailServiceIntegrationTest` 使用 Spring context 中的真实邮件 client Bean
   和 loopback HTTP server，覆盖 API key、context path、超时和 429 映射。
-- Shell HTTP E2E 启动真实应用和受控邮件 REST stub，通过生产 `RestTemplate` 调用链
-  覆盖接受、拒绝、限流以及数据库中不留下失败 challenge 的契约。
+- Shell HTTP E2E 的正常邮件路径启动真实参考服务和真实应用，通过生产
+  `RestTemplate` 调用链与两个独立 PostgreSQL 验证模板已入参考服务队列；失败/限流
+  映射路径再切换到受控 stub，验证数据库中不留下失败 challenge。
 - `scripts/test_email_service_stub.py` 独立固定 stub 的 API key 单值/重复 header、
   health、接受、拒绝、限流、坏请求和 chunked request 兼容性。
 - 外部服务返回 `success=true` 仍只表示接受或入队，不证明收件箱已收到邮件。

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 
 # Self-contained HTTP/PostgreSQL end-to-end regression harness.
-# It starts a disposable PostgreSQL container and the real start.sh process,
-# then exercises authentication, Flyway, persistence, cookies, JWT, and Web3.
+# It starts disposable PostgreSQL containers, the real reference email service,
+# and the real UniAuth start.sh process, then exercises authentication, Flyway,
+# persistence, cookies, JWT, Web3, and the cross-service email contract.
 
 set -euo pipefail
 
@@ -10,15 +11,23 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uniauth-http-e2e.XXXXXX")"
 RUN_ID="$(date +%s)-$$"
 CONTAINER_NAME="uniauth-http-e2e-${RUN_ID}"
+EMAIL_SERVICE_CONTAINER_NAME="email-reference-http-e2e-${RUN_ID}"
 DATABASE_NAME="uniauth_http_e2e_test"
 DATABASE_USER="uniauth"
 DATABASE_PASSWORD="uniauth-e2e-${RUN_ID}"
 DATABASE_PORT=""
+EMAIL_SERVICE_DATABASE_NAME="email_service_uniauth_e2e_test"
+EMAIL_SERVICE_DATABASE_USER="email_service"
+EMAIL_SERVICE_DATABASE_PASSWORD="email-service-http-${RUN_ID}"
+EMAIL_SERVICE_DATABASE_PORT=""
 APP_PID=""
+EMAIL_SERVICE_PID=""
 EMAIL_STUB_PID=""
 APP_LOG="$TEMP_DIR/application.log"
+EMAIL_SERVICE_LOG="$TEMP_DIR/reference-email-service.log"
 EMAIL_STUB_LOG="$TEMP_DIR/email-service-stub.log"
-EMAIL_STUB_API_KEY="email-e2e-${RUN_ID}"
+EMAIL_SERVICE_API_KEY="email-reference-e2e-${RUN_ID}"
+EMAIL_SERVICE_PORT=""
 EMAIL_STUB_PORT=""
 COOKIE_JAR="$TEMP_DIR/cookies.txt"
 SERVER_PORT="${UNIAUTH_E2E_SERVER_PORT:-}"
@@ -30,6 +39,10 @@ fail() {
     if [ -s "$APP_LOG" ]; then
         echo "Last application log lines:" >&2
         tail -80 "$APP_LOG" >&2
+    fi
+    if [ -s "$EMAIL_SERVICE_LOG" ]; then
+        echo "Last reference email service log lines:" >&2
+        tail -60 "$EMAIL_SERVICE_LOG" >&2
     fi
     if [ -s "$EMAIL_STUB_LOG" ]; then
         echo "Last email stub log lines:" >&2
@@ -64,6 +77,10 @@ cleanup() {
         wait "$APP_PID" >/dev/null 2>&1 || true
     fi
 
+    if [ -n "$EMAIL_SERVICE_PID" ]; then
+        terminate_process_tree "$EMAIL_SERVICE_PID"
+        wait "$EMAIL_SERVICE_PID" >/dev/null 2>&1 || true
+    fi
     if [ -n "$EMAIL_STUB_PID" ]; then
         terminate_process_tree "$EMAIL_STUB_PID"
         wait "$EMAIL_STUB_PID" >/dev/null 2>&1 || true
@@ -72,6 +89,10 @@ cleanup() {
     if docker ps -a --format '{{.Names}}' 2>/dev/null \
         | grep -Fxq "$CONTAINER_NAME"; then
         docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    fi
+    if docker ps -a --format '{{.Names}}' 2>/dev/null \
+        | grep -Fxq "$EMAIL_SERVICE_CONTAINER_NAME"; then
+        docker rm -f "$EMAIL_SERVICE_CONTAINER_NAME" >/dev/null 2>&1 || true
     fi
 
     rm -rf "$TEMP_DIR"
@@ -102,13 +123,20 @@ PY
 if [ -z "$SERVER_PORT" ]; then
     SERVER_PORT="$(allocate_port)"
 fi
+EMAIL_SERVICE_PORT="$(allocate_port)"
+while [ "$EMAIL_SERVICE_PORT" = "$SERVER_PORT" ]; do
+    EMAIL_SERVICE_PORT="$(allocate_port)"
+done
 EMAIL_STUB_PORT="$(allocate_port)"
-while [ "$EMAIL_STUB_PORT" = "$SERVER_PORT" ]; do
+while [ "$EMAIL_STUB_PORT" = "$SERVER_PORT" ] \
+        || [ "$EMAIL_STUB_PORT" = "$EMAIL_SERVICE_PORT" ]; do
     EMAIL_STUB_PORT="$(allocate_port)"
 done
 
 BASE_URL="http://127.0.0.1:${SERVER_PORT}"
+EMAIL_SERVICE_URL="http://127.0.0.1:${EMAIL_SERVICE_PORT}"
 EMAIL_STUB_URL="http://127.0.0.1:${EMAIL_STUB_PORT}"
+ACTIVE_EMAIL_SERVICE_URL="$EMAIL_SERVICE_URL"
 
 db_value() {
     local sql="$1"
@@ -118,6 +146,17 @@ db_value() {
         -p "$DATABASE_PORT" \
         -U "$DATABASE_USER" \
         -d "$DATABASE_NAME" \
+        -c "$sql"
+}
+
+email_service_db_value() {
+    local sql="$1"
+    PGPASSWORD="$EMAIL_SERVICE_DATABASE_PASSWORD" psql \
+        -X -qAt -v ON_ERROR_STOP=1 \
+        -h 127.0.0.1 \
+        -p "$EMAIL_SERVICE_DATABASE_PORT" \
+        -U "$EMAIL_SERVICE_DATABASE_USER" \
+        -d "$EMAIL_SERVICE_DATABASE_NAME" \
         -c "$sql"
 }
 
@@ -181,15 +220,93 @@ assert_auth_cookie_headers() {
     done
 }
 
+start_email_service() {
+    echo "HTTP E2E: packaging the reference email service"
+    (
+        cd "$PROJECT_DIR/reference/email-service"
+        mvn -q -DskipTests package
+    )
+
+    docker run -d --rm \
+        --name "$EMAIL_SERVICE_CONTAINER_NAME" \
+        -e "POSTGRES_DB=$EMAIL_SERVICE_DATABASE_NAME" \
+        -e "POSTGRES_USER=$EMAIL_SERVICE_DATABASE_USER" \
+        -e "POSTGRES_PASSWORD=$EMAIL_SERVICE_DATABASE_PASSWORD" \
+        -p 127.0.0.1::5432 \
+        postgres:16 >/dev/null
+    EMAIL_SERVICE_DATABASE_PORT="$(
+        docker port "$EMAIL_SERVICE_CONTAINER_NAME" 5432/tcp \
+            | awk -F: 'NR == 1 {print $NF}'
+    )"
+
+    for _ in $(seq 1 60); do
+        if PGPASSWORD="$EMAIL_SERVICE_DATABASE_PASSWORD" pg_isready \
+            -h 127.0.0.1 \
+            -p "$EMAIL_SERVICE_DATABASE_PORT" \
+            -U "$EMAIL_SERVICE_DATABASE_USER" \
+            -d "$EMAIL_SERVICE_DATABASE_NAME" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    if ! PGPASSWORD="$EMAIL_SERVICE_DATABASE_PASSWORD" pg_isready \
+        -h 127.0.0.1 \
+        -p "$EMAIL_SERVICE_DATABASE_PORT" \
+        -U "$EMAIL_SERVICE_DATABASE_USER" \
+        -d "$EMAIL_SERVICE_DATABASE_NAME" >/dev/null 2>&1; then
+        fail "reference email service PostgreSQL did not become ready"
+    fi
+
+    (
+        export SPRING_PROFILES_ACTIVE=dev
+        export EMAIL_SERVICE_BIND_ADDRESS=127.0.0.1
+        export EMAIL_SERVICE_PORT
+        export EMAIL_SERVICE_API_KEY
+        export EMAIL_POSTGRES_HOST=127.0.0.1
+        export EMAIL_POSTGRES_PORT="$EMAIL_SERVICE_DATABASE_PORT"
+        export EMAIL_POSTGRES_DATABASE="$EMAIL_SERVICE_DATABASE_NAME"
+        export EMAIL_POSTGRES_USER="$EMAIL_SERVICE_DATABASE_USER"
+        export EMAIL_POSTGRES_PASSWORD="$EMAIL_SERVICE_DATABASE_PASSWORD"
+        export SMTP_HOST=127.0.0.1
+        export SMTP_PORT=1
+        export SMTP_AUTH=false
+        export SMTP_STARTTLS_ENABLE=false
+        export SMTP_STARTTLS_REQUIRED=false
+        export SMTP_SSL_ENABLE=false
+        export SMTP_SSL_CHECK_SERVER_IDENTITY=true
+        export EMAIL_FROM_ADDRESS=no-reply@example.test
+        export EMAIL_FROM_NAME="UniAuth Reference E2E"
+        export EMAIL_QUEUE_EVENT_DRIVEN=false
+        export EMAIL_RECOVERY_ENABLED=false
+        export EMAIL_RATE_LIMIT_ENABLED=false
+        exec java -jar \
+            "$PROJECT_DIR/reference/email-service/target/email-service-1.0.0.jar"
+    ) >>"$EMAIL_SERVICE_LOG" 2>&1 &
+    EMAIL_SERVICE_PID=$!
+
+    for _ in $(seq 1 90); do
+        if curl -fsS \
+                -H "X-Email-Service-Key: $EMAIL_SERVICE_API_KEY" \
+                "$EMAIL_SERVICE_URL/api/email/health" >/dev/null 2>&1; then
+            return
+        fi
+        if ! kill -0 "$EMAIL_SERVICE_PID" >/dev/null 2>&1; then
+            fail "reference email service exited before becoming ready"
+        fi
+        sleep 1
+    done
+    fail "reference email service did not become ready"
+}
+
 start_email_stub() {
-    EMAIL_STUB_API_KEY="$EMAIL_STUB_API_KEY" \
+    EMAIL_STUB_API_KEY="$EMAIL_SERVICE_API_KEY" \
         python3 "$PROJECT_DIR/scripts/email_service_stub.py" \
             --port "$EMAIL_STUB_PORT" >"$EMAIL_STUB_LOG" 2>&1 &
     EMAIL_STUB_PID=$!
 
     for _ in $(seq 1 50); do
         if curl -fsS \
-                -H "X-Email-Service-Key: $EMAIL_STUB_API_KEY" \
+                -H "X-Email-Service-Key: $EMAIL_SERVICE_API_KEY" \
                 "$EMAIL_STUB_URL/api/email/health" >/dev/null 2>&1; then
             return
         fi
@@ -219,10 +336,10 @@ start_application() {
         export TWITTER_CLIENT_SECRET=e2e-x-secret
         export APP_DEMO_DATA_ENABLED=false
         export APP_DEMO_DATA_DISPOSABLE=false
-        export EMAIL_SERVICE_URL="$EMAIL_STUB_URL"
-        export EMAIL_SERVICE_API_KEY="$EMAIL_STUB_API_KEY"
-        export APP_EMAIL_SERVICE_URL="$EMAIL_STUB_URL"
-        export APP_EMAIL_SERVICE_API_KEY="$EMAIL_STUB_API_KEY"
+        export EMAIL_SERVICE_URL="$ACTIVE_EMAIL_SERVICE_URL"
+        export EMAIL_SERVICE_API_KEY
+        export APP_EMAIL_SERVICE_URL="$ACTIVE_EMAIL_SERVICE_URL"
+        export APP_EMAIL_SERVICE_API_KEY="$EMAIL_SERVICE_API_KEY"
         export APP_FRONTEND_URL="$BASE_URL"
         export APP_WEB3_DOMAIN="127.0.0.1:${SERVER_PORT}"
         exec "$PROJECT_DIR/start.sh"
@@ -334,8 +451,8 @@ if ! PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
     fail "disposable PostgreSQL did not become ready"
 fi
 
-echo "HTTP E2E: starting the controlled email REST service"
-start_email_stub
+echo "HTTP E2E: starting the reference email REST service"
+start_email_service
 
 echo "HTTP E2E: starting the real application through start.sh"
 start_application
@@ -973,6 +1090,27 @@ if ! DISPOSABLE_TEST_ENVIRONMENT=true \
         "$PROJECT_DIR/scripts/test-email-registration.sh"; then
     fail "email registration/password-reset subflow failed"
 fi
+[ "$(email_service_db_value "
+    SELECT count(*)
+    FROM email_queue
+    WHERE recipient = '$email_flow_address'
+      AND email_type = 'VERIFICATION'
+      AND status = 'PENDING';
+")" = "1" ] || fail "reference email service did not persist the registration template"
+[ "$(email_service_db_value "
+    SELECT count(*)
+    FROM email_queue
+    WHERE recipient = '$email_flow_address'
+      AND email_type = 'PASSWORD_RESET'
+      AND status = 'PENDING';
+")" = "1" ] || fail "reference email service did not persist the password-reset template"
+[ "$(email_service_db_value "
+    SELECT count(*)
+    FROM email_queue
+    WHERE recipient = '$email_flow_address'
+      AND html_content <> ''
+      AND status = 'PENDING';
+")" = "2" ] || fail "reference email service did not persist rendered template content"
 
 echo "11/15 Run registration and password-reset rejection contracts"
 if ! DISPOSABLE_TEST_ENVIRONMENT=true \
@@ -985,6 +1123,11 @@ if ! DISPOSABLE_TEST_ENVIRONMENT=true \
 fi
 
 echo "12/15 Reject unsupported purpose and failed email acceptance"
+stop_application
+start_email_stub
+ACTIVE_EMAIL_SERVICE_URL="$EMAIL_STUB_URL"
+start_application
+wait_for_application
 before_failed_send_count="$(db_value "SELECT count(*) FROM email_verification_codes;")"
 for unsupported_purpose in LOGIN PASSWORD_RESET UNKNOWN; do
     unsupported_status="$(

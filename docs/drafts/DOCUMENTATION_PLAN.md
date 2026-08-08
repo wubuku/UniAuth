@@ -86,7 +86,8 @@
 | P1 | 说明 event/recovery 限流 reservation 的 claim 异常释放和投递尝试消费语义 | 已完成 |
 | P1 | 说明限流 reservation 的窗口 generation ownership、幂等释放和 E2E 证据 | 已完成 |
 | P1 | 说明参考服务敏感邮件 API 的 no-store/no-cache/nosniff 响应基线和验证证据 | 已完成 |
-| P1 | 说明邮件服务 API key header 的单值精确匹配要求和重复凭据拒绝证据 | 本轮更新 |
+| P1 | 说明邮件服务 API key header 的单值精确匹配要求和重复凭据拒绝证据 | 已完成 |
+| P1 | 说明根 HTTP E2E 使用真实参考邮件服务完成正常跨进程闭环，并仅用 stub 覆盖 503/429 失败映射 | 已完成 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -139,6 +140,9 @@
   Flyway migrated app 和 Python stub contract 固定。邮件 Shell HTTP/Flyway guard
   当前分别为 10/10 和 11/11，覆盖 queue detail 披露边界、响应安全 header、重复
   鉴权 header，以及 checksum drift 失败关闭、原样保持与显式恢复。
+- 根 `scripts/test-http-e2e.sh` 的正常邮箱注册/重置路径已使用真实
+  `reference/email-service` JAR、独立 PostgreSQL 和真实 HTTP；仅失败/限流映射路径
+  使用受控 stub。参考服务队列中的模板持久化已成为根 E2E 的直接断言。
 - 邮箱验证码发送值已与持久化值一致；同步拒绝/限流/异常不保存 challenge，动态
   有效期/cooldown、按 challenge id 的正确验证码原子消费、禁止 controller 二次
   email/purpose 消费和错误重试 CAS 已有 PostgreSQL、HTTP、Playwright 与 Python
@@ -177,3 +181,5 @@ git diff --check
 - 不在文档整理阶段改变认证架构、数据库 schema 或 token 行为。
 - 不把历史测试记录提升为当前发布证明。
 - 详细 API 文档随下一阶段加固实现和测试补齐后再校准。
+- 不把根 E2E 的受控 stub 描述成完整邮件服务实现；它只负责参考服务不自然产生的
+  `503/429` 失败响应矩阵。

@@ -45,9 +45,11 @@ npm run test:e2e
 
 构建会重建 Spring Boot 静态资源目录。
 
-完整仓库门禁使用一次性 PostgreSQL、受控 loopback 邮件 REST stub、真实后端 HTTP
-E2E、Flyway guard、Mock Playwright 和离线 Python 测试，并先通过无宽松参数的
-`npm ci` 安装前端依赖：
+完整仓库门禁使用一次性 PostgreSQL、真实参考邮件服务及其独立 PostgreSQL、真实后端
+HTTP E2E、Flyway guard、Mock Playwright 和离线 Python 测试，并先通过无宽松参数的
+`npm ci` 安装前端依赖。根 HTTP E2E 的正常邮箱流程直接调用
+`reference/email-service/`；参考实现无法自然产生的拒绝/限流映射另在同一脚本中
+显式切换到受控 loopback stub：
 
 ```bash
 PYTHON_BIN=python3 scripts/verify.sh
@@ -164,9 +166,10 @@ scripts/verify.sh
 
 该门禁包含 Maven/ApplicationContext/GreenMail 测试、runtime guard、真实进程 HTTP
 E2E 和 Flyway fail-closed guard；所有 PostgreSQL 都是 disposable，不会连接外部
-SMTP 或发送真实邮件。入口在进程专属临时源码快照中运行，避免并行 Maven `clean`
-互相删除 `target/`；如果原源码在验证期间变化，门禁会失败并要求重跑。根
-`scripts/verify.sh` 会执行同一入口。
+SMTP 或发送真实邮件。参考服务的真实进程 HTTP E2E 验证其自身 REST/Flyway/队列
+边界，根 HTTP E2E 另外验证 UniAuth 调用它的跨进程模板入队契约。入口在进程专属
+临时源码快照中运行，避免并行 Maven `clean` 互相删除 `target/`；如果原源码在验证
+期间变化，门禁会失败并要求重跑。根 `scripts/verify.sh` 会执行同一入口。
 
 启用邮箱注册验证或密码重置前：
 

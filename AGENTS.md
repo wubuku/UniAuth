@@ -188,10 +188,13 @@ email/purpose 二次标记，否则可能误消费验证期间新建的 challeng
 可靠状态机：
 外部服务已接受后，如果本地 challenge 事务失败，用户可能收到不可用验证码；异步
 delivery 失败也不会自动撤销 challenge。Java 测试使用完整 ApplicationContext、
-PostgreSQL 和真实业务 Bean，只 mock 最外层 `EmailService`；独立 client 集成测试和
-Shell E2E 使用 loopback HTTP server/stub 走真实 `RestTemplate`。这些测试不证明真实
-供应商送达。`reference/email-service` 的默认 E2E 通过真实 HTTP、
-Flyway/PostgreSQL、Spring Beans、Thymeleaf、异步队列和 GreenMail 验证兼容实现。
+  PostgreSQL 和真实业务 Bean，只 mock 最外层 `EmailService`；独立 client 集成测试和
+  Shell E2E 使用真实 `RestTemplate`。根 HTTP E2E 的正常邮箱流程启动
+  `reference/email-service` 的真实 JAR、独立 PostgreSQL 和真实 HTTP 端口，直接断言
+  模板进入其 `email_queue`；只有参考实现不会自然产生的 `503/429` 失败映射场景才
+  切换到受控 loopback stub。这些测试不证明真实供应商送达。`reference/email-service`
+  的默认 E2E 通过真实 HTTP、Flyway/PostgreSQL、Spring Beans、Thymeleaf、异步队列和
+  GreenMail 验证兼容实现。
 
 参考邮件服务的 schema 由其自己的 Flyway V1/V2 管理，history table 是
 `email_service_flyway_schema_history`；所有 profile 使用 Hibernate `validate`，
@@ -325,7 +328,7 @@ PYTHON_BIN=python3 scripts/verify.sh
   PostgreSQL/GreenMail ApplicationContext E2E；runtime 27/27、HTTP 10/10、Flyway
   guard 11/11。配置 API key 时只接受恰好一个精确匹配的 header，重复正确值、
   正确/错误和错误/正确组合均返回 `401`；Python 邮件 stub contract 8/8。
-- Shell HTTP E2E：15/15。
+- Shell HTTP E2E：15/15；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
 - Flyway baseline guard：13/13。
 - Mock Playwright：21 tests。
 - Python 资源服务器：16 tests；邮件 REST stub contract：8 tests。

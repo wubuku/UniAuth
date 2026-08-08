@@ -34,7 +34,8 @@
   加密模式、server identity verification 和邮件 API 响应 no-store/nosniff 做
   失败关闭保护。外部服务同步拒绝、限流或不可用时不保存 challenge；
   外部已接受后本地事务失败和异步 delivery 失败仍需可靠状态机处理。普通邮箱加密码
-  登录不需要每次发信。
+  登录不需要每次发信。根 HTTP E2E 的正常注册/重置请求使用真实参考服务和独立
+  PostgreSQL 验证模板入队；仅 `503/429` 失败映射使用受控 stub。
 - 已建立 PostgreSQL Java 集成测试、真实 HTTP Shell E2E、Mock Playwright 和
   Python 离线 JWT/JWKS/邮件 stub 契约测试；ESLint 与统一验证入口已纳入门禁。
 - `blacksheep_dev` 已通过只读 baseline rehearsal，但尚未执行 baseline apply。

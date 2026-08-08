@@ -38,7 +38,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-for command_name in awk curl docker grep java mvn pg_isready psql; do
+for command_name in awk curl docker grep java jq mvn pg_isready psql; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         fail "required command is unavailable: $command_name"
     fi
@@ -354,13 +354,44 @@ echo "7/11 Preserve V1 history and source data after failed V2"
     "SELECT count(*) FROM email_queue WHERE retry_count = 2 AND max_retries = 1;")" = "1" ] \
     || fail "failed V2 changed source data"
 
-echo "8/11 Forward-fix retry data and apply V2 successfully"
+echo "8/11 Forward-fix retry data, apply V2, and exercise the UniAuth template contract"
 db_command "$V2_DATABASE" \
     -c "UPDATE email_queue SET retry_count = max_retries WHERE retry_count > max_retries;" \
     >/dev/null
 v2_success_log="$TEMP_DIR/v2-success.log"
 start_application "$V2_DATABASE" "$v2_success_log"
 wait_for_application "$v2_success_log"
+template_response="$(
+    curl -fsS \
+        -X POST \
+        -H "Content-Type: application/json" \
+        --data "$(
+            jq -cn '{
+                to: "flyway-template@example.test",
+                subject: "Flyway template contract",
+                templateName: "email/email-verify",
+                variables: {
+                    code: "135790",
+                    verificationCode: "135790",
+                    username: "flyway-template@example.test",
+                    expiryMinutes: 10
+                },
+                emailType: "VERIFICATION"
+            }'
+        )" \
+        "http://127.0.0.1:${SERVER_PORT}/api/email/template"
+)"
+template_queue_id="$(jq -er '.queueId' <<<"$template_response")"
+[ "$(jq -er '.success' <<<"$template_response")" = "true" ] \
+    || fail "migrated application rejected the UniAuth template contract"
+[ "$(db_value "$V2_DATABASE" \
+    "SELECT count(*) FROM email_queue
+     WHERE id = $template_queue_id
+       AND recipient = 'flyway-template@example.test'
+       AND email_type = 'VERIFICATION'
+       AND status = 'PENDING'
+       AND position('135790' in html_content) > 0;")" = "1" ] \
+    || fail "migrated application did not persist the rendered UniAuth template"
 stop_application
 [ "$(db_value "$V2_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '2' AND success;")" = "1" ] \

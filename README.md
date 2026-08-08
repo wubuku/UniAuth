@@ -23,7 +23,7 @@
 | Migration | Flyway V1 baseline + V2 + V3 + V4，history `uniauth_flyway_schema_history` |
 | Java 验证 | 127 tests |
 | 邮件参考服务 | 129 tests；其中 22 个 PostgreSQL/ApplicationContext E2E；另有 runtime 27/27、HTTP 10/10、Flyway guard 11/11 |
-| HTTP E2E | 15/15 |
+| HTTP E2E | 15/15；正常邮箱流程使用真实参考服务，失败映射矩阵使用受控 stub |
 | Flyway baseline guard | 13/13 |
 | Playwright | 21 tests |
 | Python | 16 个资源服务器测试 + 8 个邮件 REST stub 契约测试 |
@@ -81,6 +81,13 @@ nosniff 安全 header，避免队列、日志或错误响应被缓存或 MIME �
 该保证不等同于可靠投递：外部服务已接受后本地事务仍可能失败，异步投递失败也不会
 自动撤销 challenge。当前实现没有 transactional outbox 或统一 delivery/challenge
 状态机。
+
+根目录 `scripts/test-http-e2e.sh` 会为正常邮箱注册和密码重置流程启动
+`reference/email-service/` 的真实 JAR、独立 PostgreSQL 和真实 HTTP 端口，并直接
+断言参考服务的 `email_queue` 已持久化模板邮件；随后仅为参考实现不会主动返回的
+拒绝/限流响应重启 UniAuth 并切换到受控 loopback stub，覆盖客户端的失败映射。
+因此该门禁验证的是 UniAuth 到兼容邮件服务的真实跨进程闭环，同时保留失败语义的
+可重复测试；它不连接真实 SMTP，也不证明最终收件。
 
 | 属性 | 说明 |
 |------|------|

@@ -76,3 +76,6 @@ Flyway 是 PostgreSQL schema owner，history table 是
 证明失败启动不会自动改写 history，只有显式恢复后才能重新通过验证。E2E 必须经过
 真实 HTTP、Flyway/PostgreSQL、真实 Spring Beans、Thymeleaf、异步事件和
 GreenMail SMTP。不要把该参考实现描述为生产就绪服务。
+根项目 `scripts/test-http-e2e.sh` 的正常邮箱注册/重置路径会启动本服务真实 JAR 和
+独立 PostgreSQL，并检查 `email_queue`；根脚本仅在需要稳定制造 `503/429` 失败映射
+时切换到受控 stub。修改根邮件边界文档或脚本时，必须保持这一区分清晰。

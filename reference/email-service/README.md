@@ -88,6 +88,20 @@ challenge；拒绝、限流和网络失败不会留下可验证记录。该顺�
 本服务已经接受或入队后，如果 UniAuth 本地 challenge 事务失败，收件人可能收到
 无法使用的验证码；后续异步投递失败也不会自动撤销 challenge。
 
+### 与 UniAuth 根项目的跨进程验证
+
+根目录 `scripts/test-http-e2e.sh` 会将本参考实现打包为真实 JAR，启动独立的
+PostgreSQL 和 loopback HTTP 进程，再启动 UniAuth。邮箱注册和密码重置的正常路径
+通过生产 `RestTemplateEmailServiceImpl` 调用本服务的 `/api/email/template`，测试
+随后查询本服务的 `email_queue`，确认 `VERIFICATION` 和 `PASSWORD_RESET` 模板已被
+渲染并持久化。该路径不是 Python stub 模拟。
+
+参考实现不会为了测试而伪造 UniAuth 需要的 `503`/`429` 供应商失败响应，所以根
+E2E 在正常路径完成后重启 UniAuth，显式切换到受控 loopback stub 验证失败映射和
+“失败不保存 challenge”约束。参考服务自身的 `scripts/test-http-e2e.sh` 仍独立
+验证其真实 HTTP、Flyway/PostgreSQL、API key、队列和重启持久化边界；默认不启用
+SMTP，GreenMail 的最终投递边界由 Spring ApplicationContext E2E 覆盖。
+
 ## 结构
 
 ```text
@@ -303,9 +317,12 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - 本组件 Shell runtime 27/27、HTTP/PostgreSQL E2E 10/10、Flyway guard 11/11。
 - UniAuth 根项目：Java 127 tests、HTTP 15/15、Flyway 13/13、
   Mock Playwright 21/21、Python 资源服务器 16/16、邮件 REST stub contract 8/8；
-  本轮完整根统一门禁已通过。
-- 根 Shell HTTP E2E 使用受控 loopback REST stub 走真实 UniAuth
-  `RestTemplateEmailServiceImpl`，覆盖接受、拒绝、限流和失败不保存 challenge。
+  本轮功能性门禁已通过；完整根统一门禁的源码快照检查和连续三轮无修改检查仍是
+  提交前门槛。
+- 根 Shell HTTP E2E 的正常邮箱路径使用本参考服务真实 JAR、真实 HTTP 和独立
+  PostgreSQL，直接断言模板进入 `email_queue`；脚本随后只为 `503/429` 失败映射
+  切换到受控 loopback REST stub，仍通过真实 UniAuth
+  `RestTemplateEmailServiceImpl` 验证失败不保存 challenge。
 - 默认门禁仍不连接真实 SMTP/供应商，也不证明最终收件、退信、外部 TLS 或
   “外部已接受后 UniAuth 本地事务失败”窗口。
 

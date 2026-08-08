@@ -37,8 +37,11 @@ JavaMailSender 或邮件供应商 SDK 实现；`RestTemplateEmailServiceImpl` �
 
 服务地址由 `app.email.service.url` 控制，`application.yml` 的显式环境变量入口是
 `EMAIL_SERVICE_URL`，默认值为 `http://localhost:8095`。Spring 标准环境变量
-`APP_EMAIL_SERVICE_URL` 也可覆盖同一属性。Shell E2E 使用该形式指向受控的 loopback
-REST stub，并通过真实 HTTP client 覆盖接受、拒绝和限流路径。
+`APP_EMAIL_SERVICE_URL` 也可覆盖同一属性。根 Shell HTTP E2E 的正常邮箱注册/重置
+路径使用该配置指向真实运行的 `reference/email-service`，并直接检查其
+`email_queue`；只有为了稳定制造参考实现不会自然返回的 `503/429` 失败响应，脚本
+才切换到受控 loopback REST stub。两条路径都通过真实 HTTP client 覆盖接受或失败
+语义。
 该值必须是带真实 host 的绝对 HTTP/HTTPS URL，禁止 userinfo、query 和 fragment；
 允许非空 context path 和尾部斜杠，客户端会在其后追加 `/api/email/*`。
 客户端连接和读取超时共用 `app.email.service.timeout`，通过
