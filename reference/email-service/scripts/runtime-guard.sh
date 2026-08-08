@@ -51,6 +51,23 @@ email_service_require_boolean() {
     esac
 }
 
+email_service_require_host() {
+    local variable_name="$1"
+    local value="$2"
+
+    if [ "${#value}" -gt 255 ]; then
+        echo "Error: ${variable_name} must be a host name or IP address without URI syntax or whitespace" >&2
+        return 1
+    fi
+
+    case "$value" in
+        *[[:space:][:cntrl:]]*|*/*|*@*|*\?*|*\#*)
+            echo "Error: ${variable_name} must be a host name or IP address without URI syntax or whitespace" >&2
+            return 1
+            ;;
+    esac
+}
+
 email_service_is_loopback() {
     case "$1" in
         localhost|127.*|::1|\[::1\])
@@ -159,6 +176,8 @@ email_service_prepare_runtime() {
     email_service_require_env SMTP_HOST || return 1
     email_service_require_env SMTP_PORT || return 1
     email_service_require_one_of EMAIL_FROM_ADDRESS APP_MAIL_FROM_EMAIL || return 1
+    email_service_require_host SMTP_HOST "$SMTP_HOST" || return 1
+    email_service_require_integer_range SMTP_PORT "$SMTP_PORT" 1 65535 || return 1
 
     email_service_require_boolean SMTP_AUTH "$smtp_auth" || return 1
     email_service_require_boolean \

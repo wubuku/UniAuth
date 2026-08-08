@@ -15,6 +15,8 @@
   不能脱离 `STARTTLS_ENABLE=true`，implicit SSL 不能与 STARTTLS 同时启用；`prod`
   只能使用强制 STARTTLS 或 implicit SSL，并保持 server identity verification 开启。
   `dev/test` 才允许为本地 GreenMail 等隔离夹具显式关闭传输加密。
+- `SMTP_HOST` 必须是最长 255 字符、无 URI 语法、空白或控制字符的 host/IP token；
+  `SMTP_PORT` 必须是 `1..65535`。Shell 和 Java guard 必须保持一致。
 - `EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES` 和 stuck timeout 必须在 `1..10080`；
   邮件总开关或队列关闭时，恢复任务不得发送存量。
 - 配置、实体、事件和请求 DTO 不得通过自动 `toString()` 暴露 API key、收件人、

@@ -41,6 +41,7 @@ public class EmailServiceRuntimeGuard {
     void validateRuntime() {
         String profile = validateProfile();
         validateDatabaseTarget();
+        validateSmtpEndpoint();
         validateSmtpAuthentication();
         validateSmtpTransport(profile);
         validateSmtpTimeouts();
@@ -154,6 +155,26 @@ public class EmailServiceRuntimeGuard {
         }
     }
 
+    private void validateSmtpEndpoint() {
+        String host = environment.getProperty("spring.mail.host");
+        if (!StringUtils.hasText(host)
+                || host.length() > 255
+                || host.codePoints().anyMatch(
+                    character -> Character.isWhitespace(character)
+                        || Character.isISOControl(character)
+                )
+                || host.indexOf('/') >= 0
+                || host.indexOf('@') >= 0
+                || host.indexOf('?') >= 0
+                || host.indexOf('#') >= 0) {
+            throw new IllegalStateException(
+                "SMTP_HOST must be a host name or IP address without URI syntax or whitespace"
+            );
+        }
+
+        strictIntegerProperty("spring.mail.port", "SMTP_PORT", 1, 65535);
+    }
+
     private void validateDeliveryConfiguration(String profile) {
         if ("prod".equals(profile)
                 && mailProperties.isEnabled()
@@ -241,6 +262,40 @@ public class EmailServiceRuntimeGuard {
         throw new IllegalStateException(
             environmentVariableName + " must be exactly true or false"
         );
+    }
+
+    private int strictIntegerProperty(
+            String propertyName,
+            String environmentVariableName,
+            int minimum,
+            int maximum) {
+        String value = environment.getProperty(propertyName);
+        if (value == null
+                || value.length() > 9
+                || !value.matches("[0-9]+")) {
+            throw new IllegalStateException(
+                environmentVariableName + " must be an integer from "
+                    + minimum + " to " + maximum
+            );
+        }
+
+        int parsed;
+        try {
+            parsed = Integer.parseInt(value);
+        } catch (NumberFormatException exception) {
+            throw new IllegalStateException(
+                environmentVariableName + " must be an integer from "
+                    + minimum + " to " + maximum,
+                exception
+            );
+        }
+        if (parsed < minimum || parsed > maximum) {
+            throw new IllegalStateException(
+                environmentVariableName + " must be an integer from "
+                    + minimum + " to " + maximum
+            );
+        }
+        return parsed;
     }
 
     private void validateRecoveryConfiguration() {

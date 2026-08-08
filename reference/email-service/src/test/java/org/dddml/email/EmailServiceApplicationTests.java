@@ -32,6 +32,8 @@ class EmailServiceApplicationTests {
 
     @Test
     void contextLoads() {
+        assertThat(mailSender.getHost()).isEqualTo("localhost");
+        assertThat(mailSender.getPort()).isEqualTo(25);
         assertThat(mailSender.getJavaMailProperties())
             .containsEntry("mail.smtp.ssl.checkserveridentity", "true");
     }

@@ -56,6 +56,9 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - 参考邮件服务的 `prod` profile 只接受强制 STARTTLS 或 implicit SSL，禁止两者同时
   启用，并要求 SMTP server identity verification。`dev/test` 明文 SMTP 只用于
   loopback GreenMail 等隔离夹具；Shell 与 Spring ApplicationContext 都执行保护。
+- 参考邮件服务的 `SMTP_HOST` 必须是无 URI 语法、空白或控制字符的 host/IP token；
+  `SMTP_PORT` 必须是 `1..65535`。Shell 和 Java guard 校验同一有效 endpoint，
+  H2/PostgreSQL ApplicationContext 断言配置进入真实 `JavaMailSender`。
 - React 生产构建直接写入 `src/main/resources/static/`，该目录是生成物并被 gitignore。
 - OAuth2 callback 和 `app.frontend.url` 当前包含部署域名硬编码；本地 OAuth2 流程需要显式覆盖配置。
 
@@ -275,6 +278,9 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 2026-08-08 SMTP transport 加固增量：邮件参考服务 101 tests，
   Java runtime guard 17 tests，Shell runtime guard 21/21；HTTP 8/8 和 Flyway
   guard 8/8 保持通过。
+- 2026-08-08 SMTP endpoint 加固增量：邮件参考服务 108 tests，
+  Java runtime guard 24 tests，Shell runtime guard 27/27；HTTP 8/8 和 Flyway
+  guard 8/8 保持通过。
 - Shell HTTP E2E：14/14。
 - Flyway baseline guard：12/12。
 - Mock Playwright：19 tests。
@@ -301,9 +307,10 @@ PYTHON_BIN=python3 scripts/verify.sh
 
 当前增量状态（2026-08-08）：
 
-- SMTP transport 加固及严格布尔值解析修复已通过完整邮件组件门禁和根统一门禁；
-  根 Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19 和 Python 14
-  保持通过。
+- SMTP endpoint 加固已通过完整邮件组件门禁和根统一门禁：邮件参考服务
+  108 tests、Java runtime guard 24 tests、Shell runtime 27/27、HTTP/Flyway
+  各 8/8；根 Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19/19、
+  Python 14/14，前端 lint/type/build 通过。
 
 `start.sh` 可读取显式环境变量或指定的 Google client JSON；
 `start-with-frontend.sh` 要求所有 OAuth2 环境变量。两者都经过

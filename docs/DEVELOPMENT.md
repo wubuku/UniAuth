@@ -156,7 +156,8 @@ SMTP 或发送真实邮件。入口在进程专属临时源码快照中运行，
 2. 为该服务配置模板、队列和 SMTP/邮件供应商凭据；生产 SMTP 使用强制 STARTTLS
    或 implicit SSL，并启用证书/主机身份校验。其他供应商协议应提供等价保护。
 3. 通过参考组件的 `start.sh` 或等价受保护入口启动，确认使用独立邮件数据库；
-   不得通过关闭 `SMTP_SSL_CHECK_SERVER_IDENTITY` 绕过证书错误。
+   `SMTP_HOST` 填写裸 host/IP 而不是 URL，`SMTP_PORT` 使用 `1..65535`；不得通过
+   关闭 `SMTP_SSL_CHECK_SERVER_IDENTITY` 绕过证书错误。
 4. 设置 `EMAIL_SERVICE_URL` 和 `EMAIL_SERVICE_TIMEOUT_MS`；URL 必须是带 host、
    无 userinfo/query/fragment 的绝对 HTTP/HTTPS 地址，timeout 必须在
    `100..600000ms`。若服务要求共享密钥，两端设置相同的
@@ -176,8 +177,8 @@ SMTP 或发送真实邮件。入口在进程专属临时源码快照中运行，
 参考服务的 SMTP runtime guard 同时存在于 Shell 启动入口和 Spring
 ApplicationContext。`prod` 的合法组合及 implicit SSL 切换方式见
 [参考实现配置说明](../reference/email-service/README.md#配置)。默认无副作用门禁
-只验证配置进入真实 `JavaMailSender` Bean，并使用本地明文 GreenMail 完成协议链；
-它不证明真实供应商证书、TLS 握手或网络路径正确。
+验证 endpoint、TLS 和 identity 配置进入真实 `JavaMailSender` Bean，并使用本地
+明文 GreenMail 完成协议链；它不证明真实供应商证书、TLS 握手或网络路径正确。
 
 live 测试脚本默认使用当前端口和一次性数据库；历史脚本/文档仍可能包含旧目标，
 运行前先检查生命周期状态。

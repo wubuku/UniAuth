@@ -22,7 +22,7 @@
 | 数据库 | PostgreSQL-only |
 | Migration | Flyway V1 baseline + V2 + V3 + V4，history `uniauth_flyway_schema_history` |
 | Java 验证 | 98 tests |
-| 邮件参考服务 | 101 tests；另有 runtime 21/21、HTTP 8/8、Flyway guard 8/8 |
+| 邮件参考服务 | 108 tests；另有 runtime 27/27、HTTP 8/8、Flyway guard 8/8 |
 | HTTP E2E | 14/14 |
 | Flyway baseline guard | 12/12 |
 | Playwright | 19 tests |
@@ -69,6 +69,8 @@ connect/read timeout，不只是一个服务 URL；URL 本身也必须是带 hos
 userinfo/query/fragment 的绝对 HTTP/HTTPS 地址。参考实现自身还要求生产 SMTP 使用
 强制 STARTTLS 或 implicit SSL，并保持 server identity verification 开启；其他兼容
 实现如果不使用 SMTP，也必须为其下游供应商连接提供等价的防降级和身份校验保护。
+参考实现的 `SMTP_HOST` 只能是无 URI 语法或空白字符的 host/IP token，
+`SMTP_PORT` 必须在 `1..65535`。
 
 | 属性 | 说明 |
 |------|------|

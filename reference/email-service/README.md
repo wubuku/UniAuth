@@ -164,6 +164,11 @@ ApplicationContext/运行保护阶段被拒绝，避免将无效值传入 HTTP h
 `app.mail.queue.enabled` 和 `app.mail.recovery.enabled` 同时为 true 时才处理
 pending/stuck 队列；关闭邮件或队列不会继续发送已有积压。
 
+`SMTP_HOST` 只填写裸 host/IP token，不填写 `smtp://` URL。它最长 255 字符，不能
+包含空白、控制字符、路径、userinfo、query 或 fragment。`SMTP_PORT` 必须是
+`1..65535` 的十进制整数。Shell 入口和 Spring ApplicationContext 中的 Java guard
+使用同一规则；它们只验证配置形状，不执行 DNS 或真实网络探测。
+
 SMTP 传输模式必须使用下列组合之一：
 
 | 场景 | `STARTTLS_ENABLE` | `STARTTLS_REQUIRED` | `SSL_ENABLE` | `SSL_CHECK_SERVER_IDENTITY` |
@@ -248,6 +253,8 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - SMTP 连接失败、配置化重试、原子 claim 和 stuck `PROCESSING` 恢复。
 - Java/Shell runtime guard 的 STARTTLS、implicit SSL、生产加密和 server identity
   拒绝矩阵；真实 `JavaMailSender` Bean 保留身份校验属性。
+- Java/Shell runtime guard 的 SMTP host/port 拒绝矩阵；H2 和 PostgreSQL
+  ApplicationContext 都确认真实 `JavaMailSender` 使用预期 host/port。
 - 恢复候选按 priority 降序处理；关闭邮件总开关或队列后不投递存量队列。
 - event 与 recovery 并发 claim 同一 PostgreSQL 队列记录时只允许一个投递者成功，
   最终只有一条成功日志和一封 SMTP 邮件。
@@ -263,6 +270,16 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   6 个独立 Flyway migration tests、6 个 context-path/matrix-parameter API key
   filter tests。
 - Shell runtime guard：15/15。
+- Shell HTTP/PostgreSQL E2E：8/8。
+- Shell Flyway guard：8/8。
+
+2026-08-08 SMTP endpoint 配置加固增量：
+
+- Maven：108 tests，0 failures/errors/skips。
+- 其中 14 个完整 ApplicationContext E2E、24 个 Java runtime guard tests。
+- H2 与 PostgreSQL/GreenMail ApplicationContext 均确认有效 host/port 进入真实
+  `JavaMailSender` Bean。
+- Shell runtime guard：27/27。
 - Shell HTTP/PostgreSQL E2E：8/8。
 - Shell Flyway guard：8/8。
 
@@ -288,7 +305,7 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 只合并缺失的变量。`start.sh` 要求 env 文件是普通文件且 group/other 无权限，
 `dev` 数据库名必须包含 `email`/`mail` 和 `dev`/`test`/`demo`/`local` 标记。
 生产启动还会拒绝 SMTP 明文、可降级 STARTTLS、TLS 模式冲突和关闭 server identity
-verification：
+verification；所有 profile 都会拒绝非法 SMTP host/port：
 
 ```bash
 createdb -h 127.0.0.1 -U postgres uniauth_email_demo

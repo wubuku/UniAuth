@@ -57,9 +57,7 @@ class EmailServiceRuntimeGuardTest {
         MailProperties mail = new MailProperties();
         DataSourceProperties datasource = new DataSourceProperties();
         datasource.setUrl("jdbc:postgresql://127.0.0.1:5432/email_service_test");
-        MockEnvironment environment = new MockEnvironment();
-        environment.setProperty("spring.mail.properties.mail.smtp.auth", "false");
-        environment.setActiveProfiles("dev", "test");
+        MockEnvironment environment = environment("dev", "test");
         EmailServiceRuntimeGuard guard = new EmailServiceRuntimeGuard(
             security,
             mail,
@@ -79,8 +77,7 @@ class EmailServiceRuntimeGuardTest {
         MailProperties mail = new MailProperties();
         DataSourceProperties datasource = new DataSourceProperties();
         datasource.setUrl("jdbc:postgresql://127.0.0.1:5432/email_service_test");
-        MockEnvironment environment = new MockEnvironment();
-        environment.setActiveProfiles("test");
+        MockEnvironment environment = environment("test");
         environment.setProperty("spring.mail.properties.mail.smtp.auth", "true");
         EmailServiceRuntimeGuard guard = new EmailServiceRuntimeGuard(
             security,
@@ -103,9 +100,7 @@ class EmailServiceRuntimeGuardTest {
         mail.getRecovery().setEnabled(false);
         DataSourceProperties datasource = new DataSourceProperties();
         datasource.setUrl("jdbc:postgresql://127.0.0.1:5432/email_service_prod");
-        MockEnvironment environment = new MockEnvironment();
-        environment.setActiveProfiles("prod");
-        environment.setProperty("spring.mail.properties.mail.smtp.auth", "false");
+        MockEnvironment environment = environment("prod");
         EmailServiceRuntimeGuard guard = new EmailServiceRuntimeGuard(
             security,
             mail,
@@ -126,9 +121,7 @@ class EmailServiceRuntimeGuardTest {
         mail.getRecovery().setScanIntervalMinutes(10081);
         DataSourceProperties datasource = new DataSourceProperties();
         datasource.setUrl("jdbc:postgresql://127.0.0.1:5432/email_service_test");
-        MockEnvironment environment = new MockEnvironment();
-        environment.setActiveProfiles("test");
-        environment.setProperty("spring.mail.properties.mail.smtp.auth", "false");
+        MockEnvironment environment = environment("test");
         EmailServiceRuntimeGuard guard = new EmailServiceRuntimeGuard(
             security,
             mail,
@@ -149,9 +142,7 @@ class EmailServiceRuntimeGuardTest {
         mail.getRecovery().setStuckTimeoutMinutes(1);
         DataSourceProperties datasource = new DataSourceProperties();
         datasource.setUrl("jdbc:postgresql://127.0.0.1:5432/email_service_test");
-        MockEnvironment environment = new MockEnvironment();
-        environment.setActiveProfiles("test");
-        environment.setProperty("spring.mail.properties.mail.smtp.auth", "false");
+        MockEnvironment environment = environment("test");
         environment.setProperty(
             "spring.mail.properties.mail.smtp.connectiontimeout",
             "30000"
@@ -200,6 +191,121 @@ class EmailServiceRuntimeGuardTest {
         assertThatThrownBy(guard::validateRuntime)
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("1024");
+    }
+
+    @Test
+    void rejectsMissingSmtpHost() {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_test",
+            "127.0.0.1",
+            "",
+            environment -> environment.setProperty("spring.mail.host", "")
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("SMTP_HOST");
+    }
+
+    @Test
+    void rejectsSmtpHostWithUriSyntax() {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_test",
+            "127.0.0.1",
+            "",
+            environment -> environment.setProperty(
+                "spring.mail.host",
+                "smtp://mail.example.test"
+            )
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("SMTP_HOST");
+    }
+
+    @Test
+    void rejectsSmtpHostWithWhitespace() {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_test",
+            "127.0.0.1",
+            "",
+            environment -> environment.setProperty(
+                "spring.mail.host",
+                "mail host.example.test"
+            )
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("SMTP_HOST");
+    }
+
+    @Test
+    void rejectsOversizedSmtpHost() {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_test",
+            "127.0.0.1",
+            "",
+            environment -> environment.setProperty(
+                "spring.mail.host",
+                "a".repeat(256)
+            )
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("SMTP_HOST");
+    }
+
+    @Test
+    void acceptsIpv6SmtpHostToken() {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_test",
+            "127.0.0.1",
+            "",
+            environment -> environment.setProperty("spring.mail.host", "::1")
+        );
+
+        assertThatCode(guard::validateRuntime).doesNotThrowAnyException();
+    }
+
+    @Test
+    void rejectsNonNumericSmtpPort() {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_test",
+            "127.0.0.1",
+            "",
+            environment -> environment.setProperty(
+                "spring.mail.port",
+                "not-a-port"
+            )
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("SMTP_PORT must be an integer from 1 to 65535");
+    }
+
+    @Test
+    void rejectsOutOfRangeSmtpPort() {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_test",
+            "127.0.0.1",
+            "",
+            environment -> environment.setProperty("spring.mail.port", "65536")
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("SMTP_PORT must be an integer from 1 to 65535");
     }
 
     @Test
@@ -404,9 +510,7 @@ class EmailServiceRuntimeGuardTest {
         MailProperties mail = new MailProperties();
         DataSourceProperties datasource = new DataSourceProperties();
         datasource.setUrl(jdbcUrl);
-        MockEnvironment environment = new MockEnvironment();
-        environment.setActiveProfiles(profile);
-        environment.setProperty("spring.mail.properties.mail.smtp.auth", "false");
+        MockEnvironment environment = environment(profile);
         environmentCustomizer.accept(environment);
         return new EmailServiceRuntimeGuard(
             security,
@@ -415,5 +519,14 @@ class EmailServiceRuntimeGuardTest {
             datasource,
             bindAddress
         );
+    }
+
+    private MockEnvironment environment(String... profiles) {
+        MockEnvironment environment = new MockEnvironment();
+        environment.setActiveProfiles(profiles);
+        environment.setProperty("spring.mail.host", "127.0.0.1");
+        environment.setProperty("spring.mail.port", "2525");
+        environment.setProperty("spring.mail.properties.mail.smtp.auth", "false");
+        return environment;
     }
 }

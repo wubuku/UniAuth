@@ -2,7 +2,7 @@
 
 > 状态：Batch A、Batch B1、Batch B2a、Batch B2b 与邮件服务边界加固已完成；
 > 下一批待重新探索后冻结
-> 事实基线：2026-08-07；邮件 SMTP transport 增量：2026-08-08
+> 事实基线：2026-08-07；邮件 SMTP transport/endpoint 增量：2026-08-08
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
 > 前置成果：PostgreSQL-only、Flyway V1 baseline + V2 + V3 + V4、Testcontainers、
 > Java/Shell/Playwright/Python 与邮件参考服务基础门禁
@@ -32,7 +32,7 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
 | Java | `mvn clean compile test-compile` 和 98 tests 已通过 |
-| 邮件参考服务 | 101 tests；14 个完整 ApplicationContext E2E；Java runtime guard 17 tests；Shell runtime 21/21、HTTP 8/8、Flyway guard 8/8 |
+| 邮件参考服务 | 108 tests；14 个完整 ApplicationContext E2E；Java runtime guard 24 tests；Shell runtime 27/27、HTTP 8/8、Flyway guard 8/8 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 14/14 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 12/12 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、19 个 Mock Playwright tests 已通过 |
@@ -618,6 +618,36 @@ challenge、注册、密码重置或登录的用户可见业务语义。
 Shell runtime 21/21、HTTP/PostgreSQL 8/8、Flyway guard 8/8。本轮收敛发现的
 Java/Shell 布尔值解析漂移已通过严格解析和回归测试修复；修复后根统一门禁重新通过
 Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19 和 Python 14。
+
+### 邮件服务 SMTP endpoint 配置加固切片
+
+#### 2026-08-08 固定实施范围
+
+本切片只补齐参考邮件服务 SMTP host/port 的启动期 fail-closed 保护，不改变模板、
+队列、重试、HTTP 契约、Flyway schema 或 UniAuth 邮箱业务流程。
+
+纳入范围：
+
+1. `SMTP_HOST` 只允许最长 255 字符、无 URI 语法、空白或控制字符的 host/IP token。
+2. `SMTP_PORT` 只允许 `1..65535` 的十进制整数。
+3. Java/Shell 双重 runtime guard 使用一致错误语义，直接 JAR 和受保护 Shell 入口
+   都在投递前拒绝配置错误。
+4. H2 和 PostgreSQL/GreenMail ApplicationContext 断言有效 host/port 进入真实
+   `JavaMailSender` Bean。
+5. 扩充 Java guard、Shell runtime guard、组件统一门禁和 live 运维文档。
+
+明确非目标：
+
+- 不解析 DNS，不测试真实网络可达性、SMTP banner、TLS 握手或供应商鉴权。
+- 不限制生产 SMTP 必须使用特定端口，不禁止合法的 loopback relay 或 IPv6 host。
+- 不改变邮件内容、队列状态机、重试、限流、数据库 migration 或 REST 契约。
+
+#### 当前状态
+
+邮件组件完整门禁已通过：108 tests、Java runtime guard 24 tests、
+Shell runtime 27/27、HTTP/PostgreSQL 8/8、Flyway guard 8/8。根统一门禁也已通过：
+Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19/19、Python 14/14，
+前端 lint/type/build 通过。
 
 ### Batch C：JWT、refresh、blacklist 与 HTTP 边界
 

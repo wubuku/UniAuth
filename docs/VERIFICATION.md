@@ -192,6 +192,9 @@ UniAuth 主应用的邮件相关门禁只验证内部状态机和 HTTP 边界：
 - Java/Shell 双重 runtime guard 拒绝 STARTTLS 降级、STARTTLS 与 implicit SSL
   同时启用、生产明文 SMTP 和关闭 server identity verification；H2 与 PostgreSQL
   ApplicationContext 都验证该属性进入真实 `JavaMailSender` Bean。
+- Java/Shell 双重 runtime guard 拒绝带 URI 语法/空白的 SMTP host，以及非数字或
+  超出 `1..65535` 的 SMTP port；H2 与 PostgreSQL ApplicationContext 都验证实际
+  host/port 进入真实 `JavaMailSender` Bean。
 - UniAuth 客户端 URL/timeout 配置拒绝矩阵，以及 context path、尾斜杠和 API key
   请求契约。
 - simple 请求 HTML 与模板渲染后的最终 HTML 都限制为最多 1,000,000 字符。
@@ -233,6 +236,28 @@ stuck reclaim 仍可能重复发送。真实邮箱能力仍需要隔离账户的
 - 根统一门禁：Java 98 tests、HTTP E2E 14/14、Flyway guard 12/12、
   Mock Playwright 19/19、Python 14/14，前端 lint/type/build 通过。
 - 文档相对链接和 patch hygiene 检查通过。
+
+## 2026-08-08 SMTP endpoint 配置加固增量
+
+> 状态：Verified。邮件组件门禁和根统一门禁均已通过。
+
+本轮只补齐参考邮件服务有效 SMTP endpoint 的 fail-closed 保护，不改变模板、队列、
+重试、Flyway schema、HTTP 契约或 UniAuth 邮箱业务语义：
+
+- `SMTP_HOST` 必须是最长 255 字符、无 URI 语法、空白或控制字符的 host/IP token。
+- `SMTP_PORT` 必须是 `1..65535` 的十进制整数。
+- Shell 与 Java runtime guard 使用同一拒绝语义；H2 和 PostgreSQL/GreenMail
+  ApplicationContext 断言真实 `JavaMailSender` 的 host/port。
+
+邮件组件验证结果：
+
+- Maven：108 tests，0 failures/errors/skips；其中 14 个完整 ApplicationContext E2E、
+  24 个 Java runtime guard tests。
+- Shell runtime guard 27/27、HTTP/PostgreSQL E2E 8/8、Flyway guard 8/8。
+- 根统一门禁：Java 98 tests、HTTP E2E 14/14、Flyway guard 12/12、
+  Mock Playwright 19/19、Python 14/14，前端 lint/type/build 通过。
+- 文档相对链接、Shell 语法和 patch hygiene 检查通过。
+- 不连接真实 SMTP，不验证外部 DNS、网络可达性、TLS 握手或供应商鉴权。
 
 Flyway baseline guard 使用 disposable PostgreSQL 16。错误 major 测试通过离线
 `psql` fixture 注入 PostgreSQL 15 版本号，不要求下载或支持 `postgres:15` 镜像。

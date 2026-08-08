@@ -119,6 +119,9 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - SMTP 首选 `SMTP_*` 和 `EMAIL_FROM_*` 变量；从来源 `.env` 复制的
   `SPRING_MAIL_USERNAME`、`SPRING_MAIL_PASSWORD`、`APP_MAIL_FROM_EMAIL` 仍兼容。
 - 本机 `.env` 被忽略且不得提交；它不替代显式数据库、SMTP host/port 和 TLS 配置。
+- `SMTP_HOST` 只接受最长 255 字符、无 URI 路径/userinfo/query/fragment、无空白或
+  控制字符的 host/IP token；不要填写 `smtp://...` URL。`SMTP_PORT` 必须是
+  `1..65535` 的十进制整数。Shell 入口和直接 JAR 的 Java guard 校验相同规则。
 - SMTP 默认使用强制 STARTTLS：
   `SMTP_STARTTLS_ENABLE=true`、`SMTP_STARTTLS_REQUIRED=true`、
   `SMTP_SSL_ENABLE=false`、`SMTP_SSL_CHECK_SERVER_IDENTITY=true`。如果供应商要求
@@ -129,7 +132,8 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
   隔离夹具允许显式明文配置；证书或主机名错误不能通过关闭身份校验绕过。
 - `reference/email-service/start.sh` 会拒绝非邮件专用数据库名、非 disposable 的
   dev 数据库、权限过宽或符号链接形式的 env 文件、未受保护的非 loopback 暴露和
-  不安全的 SMTP transport 组合。直接运行 JAR 时 Java guard 会执行同一组核心校验。
+  非法 SMTP endpoint/transport 组合。直接运行 JAR 时 Java guard 会执行同一组
+  核心校验。
 - `EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES` 有效范围为 `1..10080`；恢复任务只有在
   `app.mail.enabled`、`app.mail.queue.enabled` 和 `app.mail.recovery.enabled`
   同时为 true 时才会处理 pending/stuck 队列。

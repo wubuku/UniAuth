@@ -81,6 +81,7 @@
 | P1 | 说明邮箱认证对独立邮件服务的依赖、契约和验证边界 | 已完成 |
 | P1 | 纳入独立邮件服务参考实现并记录 Flyway、配置和 E2E | 已完成 |
 | P1 | 说明参考服务 SMTP 传输模式、生产身份校验和测试边界 | 已完成 |
+| P1 | 说明参考服务 SMTP host/port 形状、双重 guard 和 Bean 绑定证据 | 已完成 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -122,7 +123,8 @@
   API key/超时、参考组件自己的 Flyway V1/V2、独立数据库、运行保护、完整
   ApplicationContext E2E 和 Shell 进程门禁；URL 结构、恢复开关和敏感对象字符串
   约束也已纳入当前指南。生产 SMTP 的强制 STARTTLS/implicit SSL 二选一、
-  server identity verification 和默认门禁不执行真实 TLS 握手的边界也已说明。
+  server identity verification、host/port 形状和默认门禁不执行真实 TLS 握手的
+  边界也已说明。
 - 邮箱验证码发送值已与持久化值一致；失败、频控和并发语义仍待修复。
 - token blacklist 尚未接入验证、刷新和登出流程。
 - Web3 的 `isNewUser`、bind 返回处理和 EIP-191 字节长度已修复；

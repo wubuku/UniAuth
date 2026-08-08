@@ -165,6 +165,8 @@ class EmailServiceEndToEndIntegrationTest {
 
         assertThat(tableCount).isEqualTo(2);
         assertThat(migrationCount).isEqualTo(2);
+        assertThat(mailSender.getHost()).isEqualTo("127.0.0.1");
+        assertThat(mailSender.getPort()).isEqualTo(SMTP.getSmtp().getPort());
         assertThat(mailSender.getJavaMailProperties())
             .containsEntry("mail.smtp.writetimeout", "10000")
             .containsEntry("mail.smtp.ssl.checkserveridentity", "true");
