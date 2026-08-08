@@ -242,6 +242,7 @@ Profile 行为：
 
 Flyway 是本组件唯一的 schema owner：
 
+- datasource：所有 profile 只接受独立的 `jdbc:postgresql:` URL；H2 不受支持
 - location：`classpath:db/migration/postgresql`
 - history table：`email_service_flyway_schema_history`
 - 当前 migration：V1 建表 + V2 队列完整性、日志外键和恢复查询索引
@@ -262,6 +263,10 @@ generation 必须为 `validate`。因此，环境变量、JVM 系统属性或部
 覆盖不能把 schema owner 切换给 Hibernate、SQL init 或另一套 Flyway 配置。该拒绝
 矩阵由 Java guard 测试、Shell runtime guard、ApplicationContext PostgreSQL 测试、
 HTTP E2E 和 Flyway baseline guard 共同覆盖。
+
+`EmailServiceRuntimeGuard` 会在 Flyway 前拒绝 H2 和其他非 PostgreSQL JDBC URL，
+包括 `test` profile。H2 只在负向测试中作为配置字符串出现，不需要驱动，也不承担
+repository、migration 或 ApplicationContext E2E 后端职责。
 
 V1 创建 `email_queue`、`email_logs`、基础检查约束和查询索引。V2 增加
 `retry_count <= max_retries`、日志到队列的 `ON DELETE SET NULL` 外键，以及恢复和
@@ -326,9 +331,10 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 
 2026-08-08 当前组合基线：
 
-- 本组件 Maven：133 tests，0 failures/errors/skips；其中 22 个
-  PostgreSQL/GreenMail ApplicationContext E2E、26 个 Java runtime guard tests，
-  以及 2 个 PostgreSQL repository constraint tests。
+- 本组件 Maven：135 tests，0 failures/errors/skips；其中 22 个
+  PostgreSQL/GreenMail ApplicationContext E2E、27 个 Java runtime guard tests、
+  1 个 PostgreSQL-only Spring Context 启动 guard test，以及 2 个 PostgreSQL
+  repository constraint tests。
 - 本组件 Shell runtime 39/39、HTTP/PostgreSQL E2E 11/11、Flyway guard 14/14。
 - UniAuth 根项目：Java 131 tests、HTTP 15/15、Flyway 13/13、
   Mock Playwright 21/21、Python 资源服务器 16/16、邮件 REST stub contract 8/8；
@@ -372,6 +378,17 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - 完整邮件服务门禁通过：Maven 133 tests、Shell runtime 39/39、
   HTTP/PostgreSQL E2E 11/11、Flyway baseline guard 14/14。
 
+2026-08-08 PostgreSQL-only runtime guard 收敛增量：
+
+- `EmailServiceRuntimeGuard` 对 `dev`、`test`、`prod` 统一拒绝 H2 和其他
+  非 PostgreSQL datasource，不再为 `test` profile 保留 H2 例外。
+- 直接 Java guard 测试固定拒绝语义；独立 Spring `ApplicationContextRunner`
+  装配真实 configuration properties 和 guard Bean，证明 H2 覆盖在 Flyway 前令
+  Context 启动失败。
+- 定向 Maven 通过 135/135，其中 Java runtime guard 27/27，另有 1 个
+  PostgreSQL-only Spring Context 启动 guard test；完整 Shell runtime 39/39、
+  HTTP/PostgreSQL E2E 11/11 和 Flyway guard 14/14 已随根统一门禁通过。
+
 2026-08-07 初始纳入基线：
 
 - Maven：94 tests，0 failures/errors/skips。
@@ -386,8 +403,8 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 
 - Maven：108 tests，0 failures/errors/skips。
 - 其中 14 个完整 ApplicationContext E2E、24 个 Java runtime guard tests。
-- H2 与 PostgreSQL/GreenMail ApplicationContext 均确认有效 host/port 进入真实
-  `JavaMailSender` Bean。
+- 该早期切片当时由 H2 与 PostgreSQL/GreenMail ApplicationContext 确认有效
+  host/port 进入真实 `JavaMailSender` Bean；当前 H2 测试后端已移除。
 - Shell runtime guard：27/27。
 - Shell HTTP/PostgreSQL E2E：8/8。
 - Shell Flyway guard：8/8。
@@ -470,7 +487,7 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - 其中 14 个完整 ApplicationContext E2E、17 个 Java runtime guard tests、
   6 个独立 Flyway migration tests、6 个 context-path/matrix-parameter API key
   filter tests。
-- H2 与 PostgreSQL ApplicationContext 均确认
+- 该早期切片当时由 H2 与 PostgreSQL ApplicationContext 确认
   `mail.smtp.ssl.checkserveridentity=true` 进入真实 `JavaMailSender` Bean。
 - Shell runtime guard：21/21。
 - Shell HTTP/PostgreSQL E2E：8/8。

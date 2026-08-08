@@ -44,7 +44,9 @@ scripts/verify.sh
 组件级集成测试必须依赖完整 Spring ApplicationContext 和真实业务 Bean，并尽可能从
 真实 HTTP 入口覆盖 Flyway/PostgreSQL、Thymeleaf、队列、异步事件、JavaMailSender
 和 SMTP 结果。PostgreSQL 使用 Testcontainers，SMTP 使用进程内 GreenMail；默认门禁
-不得读取 `.env`、连接真实供应商或发送真实邮件。统一入口还必须执行：
+不得读取 `.env`、连接真实供应商或发送真实邮件。所有 profile 都只接受独立
+PostgreSQL datasource；H2 仅作为 runtime guard 的负向输入，不是测试数据库。统一
+入口还必须执行：
 
 - `scripts/test-runtime-guard.sh`：profile、独立数据库、env 权限、暴露鉴权以及
   STARTTLS/implicit SSL/server identity 配置矩阵。
@@ -153,7 +155,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、独立 PostgreSQL、参考邮件服务跨进程模板入队、失败映射 stub、重启、JWT、Web3 字段篡改/并发 replay、email、登录方式 |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 13/13；exact schema、V2/V4 初始及 apply 前数据预检、V5 history/message 列、非法 email verification state、post-baseline 失败恢复与其他拒绝/清理路径 |
 | Flyway integration | 通过 | fresh V1→V5、existing baseline V1→V5、V3→V5、Hibernate validate、Session、checksum/failure recovery |
-| 邮件参考服务 | 通过 | 133 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、2 个 PostgreSQL repository constraint tests、26 个 Java runtime guard tests；Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14；Flyway schema-owner 与 migration discovery/naming 覆盖拒绝矩阵通过 |
+| 邮件参考服务 | 通过 | 135 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、2 个 PostgreSQL repository constraint tests、27 个 Java runtime guard tests、1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14；Flyway schema-owner、migration discovery/naming 和非 PostgreSQL datasource 拒绝矩阵通过 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
@@ -235,6 +237,9 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
 - `EmailQueueRepositoryTest` 和 `EmailLogRepositoryTest` 使用 disposable PostgreSQL
   + Flyway + Hibernate `validate`，直接验证 retry bound check constraint 和
   `email_logs.queue_id` 外键拒绝 orphan row；repository 测试不再依赖 H2 `create-drop`。
+- `EmailServiceRuntimeGuardTest` 对所有 profile 固定 PostgreSQL-only JDBC URL 约束；
+  独立 `ApplicationContextRunner` 测试装配真实 configuration properties 和 guard
+  Bean，证明 `test` profile 注入 H2 URL 时 Context 在 Flyway 前失败。
 - PostgreSQL/GreenMail ApplicationContext 直接持久化绕过 HTTP 的异常队列行，
   验证 CR/LF subject、过大 HTML 和非法 `emailType` 在 SMTP 前被拒绝，同时保留
   现有失败日志和 retry 状态机。
@@ -295,8 +300,9 @@ stuck reclaim 仍可能重复发送。真实邮箱能力仍需要隔离账户的
 
 - `SMTP_HOST` 必须是最长 255 字符、无 URI 语法、空白或控制字符的 host/IP token。
 - `SMTP_PORT` 必须是 `1..65535` 的十进制整数。
-- Shell 与 Java runtime guard 使用同一拒绝语义；H2 和 PostgreSQL/GreenMail
-  ApplicationContext 断言真实 `JavaMailSender` 的 host/port。
+- Shell 与 Java runtime guard 使用同一拒绝语义；该早期切片曾由 H2 和
+  PostgreSQL/GreenMail ApplicationContext 断言真实 `JavaMailSender` 的 host/port。
+  当前 H2 测试后端已移除，现行集成覆盖统一使用 PostgreSQL。
 
 邮件组件验证结果：
 

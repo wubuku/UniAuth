@@ -102,37 +102,31 @@ public class EmailServiceRuntimeGuard {
                 "Email service test profile requires a disposable test/demo database"
             );
         }
-        if (!"test".equals(profile) && !jdbcUrl.startsWith("jdbc:postgresql:")) {
-            throw new IllegalStateException(
-                "Email service dev/prod profiles require PostgreSQL"
-            );
-        }
     }
 
     private String databaseName(String jdbcUrl) {
         if (!StringUtils.hasText(jdbcUrl)) {
             throw new IllegalStateException("Email service datasource URL is required");
         }
-        if (jdbcUrl.startsWith("jdbc:postgresql:")) {
-            try {
-                String path = URI.create(jdbcUrl.substring("jdbc:".length())).getPath();
-                if (!StringUtils.hasText(path) || "/".equals(path)) {
-                    throw new IllegalStateException(
-                        "Email service PostgreSQL database name is missing"
-                    );
-                }
-                return path.substring(1);
-            } catch (IllegalArgumentException exception) {
+        if (!jdbcUrl.startsWith("jdbc:postgresql:")) {
+            throw new IllegalStateException(
+                "Email service requires a PostgreSQL datasource URL"
+            );
+        }
+        try {
+            String path = URI.create(jdbcUrl.substring("jdbc:".length())).getPath();
+            if (!StringUtils.hasText(path) || "/".equals(path)) {
                 throw new IllegalStateException(
-                    "Invalid email service PostgreSQL datasource URL",
-                    exception
+                    "Email service PostgreSQL database name is missing"
                 );
             }
+            return path.substring(1);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalStateException(
+                "Invalid email service PostgreSQL datasource URL",
+                exception
+            );
         }
-        if (jdbcUrl.startsWith("jdbc:h2:mem:")) {
-            return jdbcUrl.substring("jdbc:h2:mem:".length()).split("[;?]", 2)[0];
-        }
-        throw new IllegalStateException("Unsupported email service datasource URL");
     }
 
     private void validateSchemaOwnershipConfiguration() {

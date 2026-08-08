@@ -35,7 +35,7 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
 | Java | `mvn clean compile test-compile` 和 131 tests 已通过 |
-| 邮件参考服务 | 133 tests；22 个完整 ApplicationContext E2E；2 个 PostgreSQL repository constraint tests；Java runtime guard 26 tests；Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14 |
+| 邮件参考服务 | 135 tests；22 个完整 ApplicationContext E2E；2 个 PostgreSQL repository constraint tests；Java runtime guard 27 tests；1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 15/15 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 13/13 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、21 个 Mock Playwright tests 已通过 |
@@ -1088,6 +1088,22 @@ runtime `27/27`、HTTP `10/10`、Flyway guard `11/11` 均通过。完整根统�
   fail-closed 配置。
 - 邮件组件 Maven `133/133`、Shell runtime `39/39`、HTTP/PostgreSQL E2E `11/11`、
   Flyway baseline guard `14/14` 通过。
+
+#### 2026-08-08 PostgreSQL-only runtime guard 收敛切片
+
+本切片只关闭参考邮件服务 `test` profile 仍可接受 H2 JDBC URL 的配置缺口，不改变
+REST、模板、队列、SMTP、retry、限流或 UniAuth 邮箱业务语义。
+
+1. `EmailServiceRuntimeGuard` 对 `dev`、`test`、`prod` 统一要求
+   `jdbc:postgresql:` datasource，并继续执行邮件专用数据库名和 profile 数据处置检查。
+2. 直接 Java guard 测试证明 `test` profile 拒绝 H2；独立 Spring
+   `ApplicationContextRunner` 装配真实 configuration properties 和 guard Bean，
+   证明该覆盖在 Flyway 前令 Context 启动失败。
+3. H2 只作为不需要驱动的负向配置字符串保留；repository、migration 和组件 E2E
+   继续全部使用 disposable PostgreSQL + Flyway + Hibernate `validate`。
+4. 定向 Maven 结果为 `135/135`，其中直接 Java runtime guard `27/27`，另有
+   1 个 PostgreSQL-only Spring Context 启动 guard test；完整 Shell runtime
+   `39/39`、HTTP `11/11`、Flyway guard `14/14` 和根统一门禁均已通过。
 
 #### 2026-08-08 Web3/SIWE challenge 绑定与 nonce 原子消费切片
 

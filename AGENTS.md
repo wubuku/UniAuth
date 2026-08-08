@@ -61,6 +61,9 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - 参考邮件服务的 `SMTP_HOST` 必须是无 URI 语法、空白或控制字符的 host/IP token；
   `SMTP_PORT` 必须是 `1..65535`。Shell 和 Java guard 校验同一有效 endpoint，
   PostgreSQL ApplicationContext 断言配置进入真实 `JavaMailSender`。
+- 参考邮件服务的 `dev`、`test`、`prod` profile 都只接受独立 PostgreSQL datasource；
+  H2 不再是测试后端。Java guard 会在 Flyway 前拒绝任何非 PostgreSQL JDBC URL，
+  并由真实 Spring ApplicationContext 启动失败测试固定该要求。
 - React 生产构建直接写入 `src/main/resources/static/`，该目录是生成物并被 gitignore。
 - OAuth2 callback 和 `app.frontend.url` 当前包含部署域名硬编码；本地 OAuth2 流程需要显式覆盖配置。
 
@@ -199,7 +202,8 @@ delivery 失败也不会自动撤销 challenge。Java 测试使用完整 Applica
 
 参考邮件服务的 schema 由其自己的 Flyway V1/V2 管理，history table 是
 `email_service_flyway_schema_history`；所有 profile 使用 Hibernate `validate`，
-SQL init 关闭。它必须连接独立数据库，不得连接 UniAuth 或共享数据库。修改该组件时：
+SQL init 关闭。所有 profile 都必须连接独立 PostgreSQL；H2 或其他 datasource 即使
+在 `test` profile 也会在 Flyway 前失败。它不得连接 UniAuth 或共享数据库。修改该组件时：
 
 ```bash
 cd reference/email-service
@@ -346,6 +350,11 @@ PYTHON_BIN=python3 scripts/verify.sh
   依赖；两个 JPA repository 测试使用 disposable PostgreSQL + Flyway +
   Hibernate `validate`，直接覆盖 retry bound 和 queue foreign key 约束。邮件服务
   完整门禁为 Maven 133/133、Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14。
+- 2026-08-08 邮件参考服务 PostgreSQL-only runtime guard 收敛增量：所有 profile
+  在 Flyway 前拒绝 H2 和其他非 PostgreSQL JDBC URL；27 个直接 Java guard tests
+  与 1 个真实 Spring ApplicationContext 启动失败测试共同固定该要求。邮件服务
+  Maven 基线更新为 135/135；Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14
+  仍须随本批完整门禁复验。
 - Shell HTTP E2E：15/15；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
 - Flyway baseline guard：13/13。
 - Mock Playwright：21 tests。

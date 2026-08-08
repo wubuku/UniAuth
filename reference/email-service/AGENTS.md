@@ -37,6 +37,10 @@
   `out-of-order=false`，location/history/default schema/schemas 必须固定；SQL init
   必须为 `never`，Hibernate 必须为 `validate`。Java ApplicationContext guard 和
   `scripts/runtime-guard.sh` 都要拒绝环境变量、JVM 属性或部署平台注入的覆盖。
+- `dev`、`test`、`prod` 的 datasource URL 都必须是 `jdbc:postgresql:`，且数据库
+  必须独立、符合 profile 命名规则；H2 只允许作为负向 guard 输入，不是测试后端。
+  Java guard 必须在 Flyway 前拒绝任何非 PostgreSQL URL，并保留 Spring Context
+  启动失败测试。
 - 所有 `/api/email` 及其子路径的响应都必须设置 `Cache-Control: no-store`、
   `Pragma: no-cache` 和 `X-Content-Type-Options: nosniff`，包括成功、鉴权失败、
   参数拒绝和路由错误；该策略不改变 JSON body 契约。

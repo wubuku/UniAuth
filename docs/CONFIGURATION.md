@@ -120,7 +120,8 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 
 仓库参考实现默认监听 `127.0.0.1:8095`，并有自己的配置和数据库边界：
 
-- 必须使用独立的 `EMAIL_POSTGRES_*` 数据库，不能复用 UniAuth 或共享数据库。
+- 必须使用独立的 `EMAIL_POSTGRES_*` PostgreSQL 数据库，不能复用 UniAuth 或共享
+  数据库；`dev`、`test`、`prod` 均拒绝 H2 和其他非 PostgreSQL datasource。
 - Flyway location 是 `classpath:db/migration/postgresql`，history table 是
   `email_service_flyway_schema_history`，当前 migration 为 V1 + V2。
 - Flyway 缺失 location 和非法 migration 文件命名都必须使启动失败：
@@ -130,7 +131,8 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
   `EmailServiceRuntimeGuard` 和 Shell `runtime-guard.sh` 会拒绝 Flyway disable、
   自动 baseline、clean、validation、out-of-order、缺失 location 策略或 migration
   命名校验覆盖，并拒绝 migration location/history/schema、SQL init 和 Hibernate
-  schema-generation 覆盖。兼容实现也必须保持 Flyway 为唯一 schema owner。
+  schema-generation 覆盖；Java guard 还会在 Flyway 前拒绝非 PostgreSQL JDBC URL。
+  兼容实现也必须保持 Flyway 为唯一 schema owner。
 - loopback 监听时 API key 可选；任何非 loopback 监听都必须设置
   `EMAIL_SERVICE_API_KEY`。设置后所有 `/api/email/**` 端点都要求该 header；参考
   服务同样在启动阶段拒绝超过 1024 字符或包含 CR/LF 的值，并在请求阶段拒绝

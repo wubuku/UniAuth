@@ -146,10 +146,11 @@
   HTTP/Flyway guard 分别达到 10/10 和 11/11，覆盖 queue detail 披露边界、响应
   安全 header、重复鉴权 header，以及 checksum drift 失败关闭、原样保持与显式
   恢复；当前组合计数见下一条。
-- 参考服务当前组合门禁为 Maven 133 tests、Java runtime guard 26/26、Shell
-  runtime 39/39、HTTP 11/11、Flyway guard 14/14；Flyway 唯一 schema owner、缺失
-  location 和 migration 命名校验的
-  固定配置和外部覆盖拒绝已由 Java/Shell/ApplicationContext/Flyway 层共同验证。
+- 参考服务当前组合门禁为 Maven 135 tests、Java runtime guard 27/27、另有 1 个
+  PostgreSQL-only Spring Context 启动 guard test、Shell runtime 39/39、HTTP 11/11、
+  Flyway guard 14/14；所有 profile 均拒绝 H2 和其他非 PostgreSQL datasource。
+  Flyway 唯一 schema owner、缺失 location、migration 命名校验和 datasource 类型的
+  固定配置与外部覆盖拒绝已由 Java/Shell/ApplicationContext/Flyway 层共同验证。
 - 根 `scripts/test-http-e2e.sh` 的正常邮箱注册/重置路径已使用真实
   `reference/email-service` JAR、独立 PostgreSQL 和真实 HTTP；仅失败/限流映射路径
   使用受控 stub。参考服务队列中的模板持久化已成为根 E2E 的直接断言。

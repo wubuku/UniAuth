@@ -25,6 +25,20 @@ class EmailServiceRuntimeGuardTest {
     }
 
     @Test
+    void rejectsH2EvenForTheTestProfile() {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:h2:mem:email_service_test",
+            "127.0.0.1",
+            ""
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("PostgreSQL datasource URL");
+    }
+
+    @Test
     void rejectsFlywaySchemaMutationOverrides() {
         Map<String, String> unsafeOverrides = Map.of(
             "spring.flyway.enabled", "false",
