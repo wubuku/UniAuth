@@ -28,6 +28,17 @@ UniAuth 的 `RestTemplateEmailServiceImpl` 默认访问
 `http://localhost:8095`。邮箱地址首次注册和密码重置需要本服务或一个兼容实现；
 已经建立账户后的邮箱加密码登录不需要调用邮件服务。
 
+UniAuth 侧还有两个运行参数：
+
+- `EMAIL_SERVICE_TIMEOUT_MS`：connect/read timeout，默认 `5000` 毫秒，有效范围
+  `100..600000` 毫秒。
+- `EMAIL_SERVICE_API_KEY`：可选共享密钥；非空时所有请求携带
+  `X-Email-Service-Key`，本服务必须配置相同值；最长 1024 字符且不能包含 CR/LF。
+
+`EMAIL_SERVICE_URL` 必须是带 host 的绝对 HTTP/HTTPS URL，禁止 userinfo、query
+和 fragment。允许 context path 和尾部斜杠；UniAuth 会归一化尾斜杠后追加
+`/api/email/*`。这些约束在 UniAuth ApplicationContext 启动时校验。
+
 UniAuth 只依赖以下最小契约：
 
 | 方法和路径 | 要求 |
@@ -69,6 +80,9 @@ UniAuth 只依赖以下最小契约：
 当前实现还会返回 `queueId` 和 `message`。UniAuth 不保存 `queueId`，并且把
 `success=true` 解释为“已接受/入队”，不是“邮件已送达”。
 
+客户端不自动重试邮件服务请求。非 2xx、超时、空响应、不可解析 JSON 或
+`success != true` 都映射为失败。
+
 ## 结构
 
 ```text
@@ -109,8 +123,22 @@ HTTP request
 | `GET` | `/api/email/queue/{id}` | 队列详情 |
 | `GET` | `/api/email/logs` | 发送日志列表 |
 
-当前所有端点都没有应用层鉴权。默认配置把服务绑定到 `127.0.0.1`；部署到其他主机时，
-必须通过私有网络、网关或其他外部控制限制访问，不能直接暴露到公网。
+`EMAIL_SERVICE_API_KEY` 非空时，所有 `/api/email/**` 端点都要求
+`X-Email-Service-Key`；缺失或不匹配返回 `401`。默认配置把服务绑定到
+`127.0.0.1`，loopback 下密钥可选；任何非 loopback 绑定都必须配置密钥，否则
+ApplicationContext 启动失败。超过 1024 字符或包含 CR/LF 的密钥也会在双方
+ApplicationContext/运行保护阶段被拒绝，避免将无效值传入 HTTP header。该共享密钥
+只是最小服务鉴权，部署仍应使用私有网络、TLS、入口访问控制和独立密钥管理，不能
+直接暴露到公网。
+
+请求边界：
+
+- 收件人最长 255 字符并通过邮箱语法检查。
+- 主题最长 500 字符，拒绝 CR/LF header injection。
+- `/simple` 请求 HTML 和模板渲染后的最终 HTML 最长 1,000,000 字符。
+- 模板只允许本目录提供的三个固定名称，variables 最多 50 项。
+- batch 最多 100 封；日志 page size 最大 100。
+- 对外错误响应不包含内部异常或 SMTP/数据库细节。
 
 ## 配置
 
@@ -121,12 +149,20 @@ HTTP request
 
 | 类型 | 变量 |
 |------|------|
-| 监听 | `EMAIL_SERVICE_BIND_ADDRESS`、`EMAIL_SERVICE_PORT` |
+| 监听/鉴权 | `EMAIL_SERVICE_BIND_ADDRESS`、`EMAIL_SERVICE_PORT`、`EMAIL_SERVICE_API_KEY` |
 | PostgreSQL | `EMAIL_POSTGRES_HOST`、`EMAIL_POSTGRES_PORT`、`EMAIL_POSTGRES_DATABASE`、`EMAIL_POSTGRES_USER`、`EMAIL_POSTGRES_PASSWORD` |
 | SMTP | `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD` |
 | TLS/SSL | `SMTP_STARTTLS_ENABLE`、`SMTP_STARTTLS_REQUIRED`、`SMTP_SSL_ENABLE` |
 | 发件人 | `EMAIL_FROM_ADDRESS`、`EMAIL_FROM_NAME` |
-| 队列 | `EMAIL_RATE_LIMIT_PER_MINUTE`、`EMAIL_RETRY_DELAY_MINUTES`、`EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES` |
+| 队列 | `EMAIL_QUEUE_EVENT_DRIVEN`、`EMAIL_MAX_RETRY_ATTEMPTS`、`EMAIL_RETRY_DELAY_MINUTES` |
+| 限流/恢复 | `EMAIL_RATE_LIMIT_ENABLED`、`EMAIL_RATE_LIMIT_PER_MINUTE`、`EMAIL_RECOVERY_ENABLED`、`EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES`、`EMAIL_STUCK_TIMEOUT_MINUTES` |
+
+`EMAIL_MAX_RETRY_ATTEMPTS` 是保留的兼容名称；当前值写入 `max_retries`，表示首次
+发送失败后允许的最大重试次数，因此总投递尝试次数最多为该值加 1。
+`EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES` 和 `EMAIL_STUCK_TIMEOUT_MINUTES` 的有效
+范围都是 `1..10080`。恢复 worker 只有在 `app.mail.enabled`、
+`app.mail.queue.enabled` 和 `app.mail.recovery.enabled` 同时为 true 时才处理
+pending/stuck 队列；关闭邮件或队列不会继续发送已有积压。
 
 从来源目录复制的本机 `.env` 使用 Spring 标准变量
 `SPRING_MAIL_USERNAME`、`SPRING_MAIL_PASSWORD` 和 `APP_MAIL_FROM_EMAIL`；当前配置
@@ -147,15 +183,17 @@ Flyway 是本组件唯一的 schema owner：
 
 - location：`classpath:db/migration/postgresql`
 - history table：`email_service_flyway_schema_history`
-- 当前 migration：`V1__create_email_queue_and_logs.sql`
+- 当前 migration：V1 建表 + V2 队列完整性、日志外键和恢复查询索引
 - `baseline-on-migrate=false`
 - `clean-disabled=true`
 - `validate-on-migrate=true`
 - SQL init：`never`
 - Hibernate：所有 profile 均为 `ddl-auto=validate`
 
-V1 创建 `email_queue`、`email_logs`、检查约束和查询索引。已发布 migration 不得改写；
-后续 schema 变更必须新增 V2+。邮件服务必须使用独立数据库，不得把该 migration
+V1 创建 `email_queue`、`email_logs`、基础检查约束和查询索引。V2 增加
+`retry_count <= max_retries`、日志到队列的 `ON DELETE SET NULL` 外键，以及恢复和
+状态分页索引。已发布 migration 不得改写；后续 schema 变更必须新增 V3+。邮件服务
+必须使用独立数据库，不得把该 migration
 指向 UniAuth、`blacksheep_dev` 或其他共享 schema。
 
 ## 构建和测试
@@ -166,19 +204,43 @@ Thymeleaf 和进程内 GreenMail SMTP。它不读取 `.env`，也不会连接真
 
 ```bash
 cd reference/email-service
-TESTCONTAINERS_RYUK_DISABLED=true mvn clean compile test-compile
-TESTCONTAINERS_RYUK_DISABLED=true mvn test
+scripts/verify.sh
 ```
 
-E2E 覆盖：
+统一入口执行：
 
-- V1 migration、独立 history table 和 Hibernate `validate`。
+- clean compile/test-compile 和完整 Maven 测试。
+- runtime guard 配置拒绝矩阵。
+- 真实 JAR + HTTP + disposable PostgreSQL Shell E2E。
+- dirty schema、V2 坏数据和 forward-fix Flyway guard。
+- 先把所有非忽略源码复制到进程专属临时目录，所有构建和 E2E 都在该快照内执行；
+  并行运行不会共享 `target/`，原源码在验证期间变化则失败关闭并要求重跑。
+
+ApplicationContext/PostgreSQL/SMTP 覆盖：
+
+- fresh V1→V2、V1→V2 数据保留、独立 history table 和 Hibernate `validate`。
 - `GET /api/email/health` 与必需模板列表的真实 HTTP 契约。
 - `email/email-verify` 和 `email/password-reset` 从 HTTP 入队到 SMTP 收件的完整链路。
+- API key、输入/header injection、batch 和数据库分页边界。
 - 未知模板拒绝且不创建队列/日志。
-- SMTP 连接失败时写入失败日志并把队列安排为可重试状态。
+- SMTP 连接失败、配置化重试、原子 claim 和 stuck `PROCESSING` 恢复。
+- 恢复候选按 priority 降序处理；关闭邮件总开关或队列后不投递存量队列。
+- event 与 recovery 并发 claim 同一 PostgreSQL 队列记录时只允许一个投递者成功，
+  最终只有一条成功日志和一封 SMTP 邮件。
+- API key 配置、实体、事件和请求 DTO 的对象字符串不包含 API key、收件人、
+  验证码或 HTML。
+- V2 不兼容数据拒绝、外键删除行为和非空 schema 不自动 baseline。
+- migration checksum 失配时失败关闭，并保留已有 migration history 和业务数据。
 
-2026-08-07 当前基线：59 tests，0 failures/errors/skips，其中 5 个为上述组件级 E2E。
+2026-08-07 当前基线：
+
+- Maven：94 tests，0 failures/errors/skips。
+- 其中 14 个完整 ApplicationContext E2E、10 个 Java runtime guard tests、
+  6 个独立 Flyway migration tests、6 个 context-path/matrix-parameter API key
+  filter tests。
+- Shell runtime guard：15/15。
+- Shell HTTP/PostgreSQL E2E：8/8。
+- Shell Flyway guard：8/8。
 
 测试需要 Docker。若本机下载依赖受限，只把机器代理临时注入当前命令，不要写入
 仓库配置、`.mvn/` 或可提交的环境文件。
@@ -187,17 +249,14 @@ E2E 覆盖：
 
 不要复用 UniAuth 数据库，也不要连接共享开发库。先创建独立、明确可丢弃的数据库，
 再补齐未提交的 `.env`。如果来源 `.env` 已存在，不要用示例文件覆盖其中的凭据；
-只合并缺失的变量：
+只合并缺失的变量。`start.sh` 要求 env 文件是普通文件且 group/other 无权限，
+`dev` 数据库名必须包含 `email`/`mail` 和 `dev`/`test`/`demo`/`local` 标记：
 
 ```bash
 createdb -h 127.0.0.1 -U postgres uniauth_email_demo
 test -f .env || cp .env.example .env
-
-set -a
-source .env
-set +a
-
-mvn spring-boot:run -Dspring-boot.run.profiles=dev
+chmod 600 .env
+./start.sh
 ```
 
 启动后可做无邮件副作用的存活检查：
@@ -213,7 +272,14 @@ UniAuth 通过以下配置指向该服务：
 
 ```bash
 EMAIL_SERVICE_URL=http://127.0.0.1:8095
+EMAIL_SERVICE_TIMEOUT_MS=5000
+EMAIL_SERVICE_API_KEY=
 ```
+
+如果组件配置了 `EMAIL_SERVICE_API_KEY`，UniAuth 必须使用完全相同的值；该值最长
+1024 字符且不能包含 CR/LF。
+若 URL 带 context path，例如 `http://127.0.0.1:8095/mail`，服务必须在该前缀下
+暴露 `/api/email/*`。
 
 ## 状态模型
 
@@ -227,18 +293,22 @@ EMAIL_SERVICE_URL=http://127.0.0.1:8095
 `email_logs` 会保存收件人、主题、HTML 内容、供应商、错误和耗时。它包含个人信息和
 可能敏感的验证码内容，必须限制数据库和日志访问，并定义保留/清理策略。
 
+异步执行器饱和或关闭时不会把已经提交的入队请求反向变成 HTTP 失败；对应事件会被
+放弃即时执行，由持久队列的 recovery 扫描继续处理。该降级依赖 recovery 保持启用。
+
 ## 已知限制
 
 - `health` 始终报告进程存活，不探测 SMTP、供应商或真实投递。
 - HTTP `success=true` 只表示模板已渲染并写入队列。
-- 所有 REST 端点未鉴权，管理和日志端点也不例外。
+- API key 是全服务共享密钥，没有身份分级、轮换协议或端点级权限。
 - 没有 API idempotency key，调用方重试可能创建重复邮件。
+- 投递语义是至少一次而不是恰好一次：SMTP 已接受后若数据库提交失败、进程崩溃或
+  stuck 记录被 recovery worker 重新领取，可能再次发送同一 `X-Queue-ID` 邮件。
 - 限流计数保存在单进程内存中，多实例之间不共享。
 - 定时恢复每次最多处理 50 条，没有容量或积压恢复证明。
-- Flyway V1 和 PostgreSQL E2E 已存在，但没有生产 migration 发布/回滚演练。
+- Flyway V1/V2 和失败关闭测试已存在，但没有生产发布、备份或灾难恢复演练。
 - GreenMail E2E 证明本地 SMTP 协议链，不证明供应商鉴权、TLS 策略、退信处理或
   外部真实收件。
-- `/api/email/logs` 先加载全部匹配记录再在内存分页，不适合大数据量。
 - 邮件队列和发送日志会保存完整 HTML；验证码清理和数据保留策略尚未实现。
 
 ## 与来源版本的调整
@@ -248,8 +318,13 @@ EMAIL_SERVICE_URL=http://127.0.0.1:8095
 
 - 使用显式环境变量和显式 profile。
 - 默认只监听 loopback。
-- 启用 Flyway V1 作为唯一 schema owner，并让所有 profile 使用 Hibernate `validate`。
+- 启用 Flyway V1/V2 作为唯一 schema owner，并让所有 profile 使用 Hibernate `validate`。
 - 增加 PostgreSQL/Flyway/HTTP/GreenMail 的完整 ApplicationContext E2E。
+- 增加可选 API key、运行保护、真实进程 HTTP E2E 和 Flyway fail-closed guard。
+- 增加输入、header injection、batch、分页和错误信息边界。
+- 避免配置、实体、事件和请求 DTO 的自动对象字符串暴露 API key 或邮件内容。
+- 将队列 claim/delivery 拆为独立事务 Bean，原子恢复 stuck `PROCESSING` 记录。
+- 邮件或队列关闭时停止恢复扫描投递，恢复候选按 priority 优先处理。
 - 让异步发送事件在入队事务提交后、独立事务中处理。
 - 将 PostgreSQL 不支持的 `LONGTEXT` 列声明改为 `TEXT`。
 - 修正恢复扫描间隔的分钟换算。

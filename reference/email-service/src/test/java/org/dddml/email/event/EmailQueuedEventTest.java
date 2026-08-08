@@ -9,23 +9,20 @@ class EmailQueuedEventTest {
     @Test
     void testEventCreation() {
         Object source = new Object();
-        EmailQueuedEvent event = new EmailQueuedEvent(source, 123L, "test@example.com", "Test Subject");
+        EmailQueuedEvent event = new EmailQueuedEvent(source, 123L);
 
         assertEquals(123L, event.getQueueId());
-        assertEquals("test@example.com", event.getRecipient());
-        assertEquals("Test Subject", event.getSubject());
         assertEquals(source, event.getSource());
         assertNotNull(event.getTimestamp());
     }
 
     @Test
-    void testEventToString() {
-        EmailQueuedEvent event = new EmailQueuedEvent(this, 1L, "test@example.com", "Subject");
+    void eventStringDoesNotContainRecipientOrSubjectData() {
+        EmailQueuedEvent event = new EmailQueuedEvent(this, 1L);
 
         String result = event.toString();
 
-        assertTrue(result.contains("1"));
-        assertTrue(result.contains("test@example.com"));
-        assertTrue(result.contains("Subject"));
+        assertFalse(result.contains("test@example.com"));
+        assertFalse(result.contains("Sensitive subject"));
     }
 }

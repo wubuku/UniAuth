@@ -2,15 +2,19 @@ package org.dddml.email.service;
 
 import org.dddml.email.config.MailProperties;
 import org.dddml.email.entity.EmailQueue;
+import org.dddml.email.repository.EmailLogRepository;
 import org.junit.jupiter.api.Test;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.thymeleaf.TemplateEngine;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
 
 class EmailServiceValidationTest {
 
     @Test
     void testIsValidEmail_Valid() {
-        EmailService emailService = new EmailService();
+        EmailService emailService = newEmailService();
 
         assertTrue(emailService.isValidEmail("test@example.com"));
         assertTrue(emailService.isValidEmail("user.name@domain.co.uk"));
@@ -21,7 +25,7 @@ class EmailServiceValidationTest {
 
     @Test
     void testIsValidEmail_Invalid() {
-        EmailService emailService = new EmailService();
+        EmailService emailService = newEmailService();
 
         assertFalse(emailService.isValidEmail(""));
         assertFalse(emailService.isValidEmail("not-an-email"));
@@ -34,7 +38,7 @@ class EmailServiceValidationTest {
 
     @Test
     void testGetMailProvider_Various() throws Exception {
-        EmailService emailService = new EmailService();
+        EmailService emailService = newEmailService();
 
         assertEquals("Gmail", getMailProvider(emailService, "smtp.gmail.com"));
         assertEquals("163", getMailProvider(emailService, "smtp.163.com"));
@@ -53,6 +57,37 @@ class EmailServiceValidationTest {
         java.lang.reflect.Method method = EmailService.class.getDeclaredMethod("getMailProvider");
         method.setAccessible(true);
         return (String) method.invoke(emailService);
+    }
+
+    private EmailService newEmailService() {
+        return newEmailService(new MailProperties());
+    }
+
+    private EmailService newEmailService(MailProperties mailProperties) {
+        return new EmailService(
+            mock(JavaMailSender.class),
+            mock(TemplateEngine.class),
+            mock(EmailLogRepository.class),
+            mock(EmailQueueService.class),
+            mailProperties
+        );
+    }
+
+    @Test
+    void disabledQueueRejectsSimpleEmailInsteadOfSilentlyPersistingIt() {
+        MailProperties mailProperties = new MailProperties();
+        mailProperties.getQueue().setEnabled(false);
+
+        EmailService emailService = newEmailService(mailProperties);
+
+        assertThrows(
+            IllegalStateException.class,
+            () -> emailService.sendSimpleHtmlEmail(
+                "test@example.com",
+                "Subject",
+                "<p>Content</p>"
+            )
+        );
     }
 
     @Test
@@ -89,5 +124,20 @@ class EmailServiceValidationTest {
         assertEquals(5, queue.getPriority());
         assertEquals(0, queue.getRetryCount());
         assertEquals(3, queue.getMaxRetries());
+    }
+
+    @Test
+    void emailQueueStringDoesNotExposeRecipientOrRenderedContent() {
+        EmailQueue queue = EmailQueue.builder()
+                .id(2L)
+                .recipient("sensitive@example.test")
+                .subject("Sensitive subject")
+                .htmlContent("<p>verification-code-135790</p>")
+                .build();
+
+        String result = queue.toString();
+
+        assertFalse(result.contains("sensitive@example.test"));
+        assertFalse(result.contains("verification-code-135790"));
     }
 }

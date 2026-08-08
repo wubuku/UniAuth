@@ -11,7 +11,7 @@ async function openClientRoute(
   }, path);
 }
 
-test('OAuth callback refreshes the HttpOnly token path and loads the user', async ({ page }) => {
+test('OAuth callback processes once under React StrictMode and loads the user', async ({ page }) => {
   let refreshCalls = 0;
   let currentUserCalls = 0;
 

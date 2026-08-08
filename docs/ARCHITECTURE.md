@@ -66,13 +66,20 @@ Authorization Server 协议已经完整接通。
 UniAuth 主应用内的 `RestTemplateEmailServiceImpl` 只是 HTTP 客户端，不直接连接
 SMTP 或邮件供应商。外部服务必须提供 health、模板邮件端点、模板和约定的 JSON 响应；
 仓库提供一个独立的[邮件服务参考实现](../reference/email-service/README.md)，其 schema
-由独立 Flyway V1 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP E2E
-验证。详细契约见 [配置基线](CONFIGURATION.md#邮件服务依赖)。虽然
+由独立 Flyway V1/V2 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP
+E2E 验证。客户端使用专用 `RestTemplate`，统一应用 connect/read timeout，并可向
+所有邮件服务请求发送 `X-Email-Service-Key`；类型化配置在 ApplicationContext
+启动时拒绝无 host、非 HTTP/HTTPS、含 userinfo/query/fragment 的 URL 和越界
+timeout，也拒绝超过 1024 字符或包含 CR/LF 的 API key。详细契约见
+[配置基线](CONFIGURATION.md#邮件服务依赖)。虽然
 `VerificationPurpose.LOGIN` 和前端联合类型仍存在，当前没有受支持的邮箱验证码
 无密码登录 endpoint。
 
 当前发送流程只把外部 `success=true` 解释为“已接受/入队”，不证明最终送达。
 外部服务不可用或拒绝请求时，代码仍可能保存验证码并返回发送成功，这是待加固行为。
+参考服务自己的恢复 worker 只有在邮件总开关、队列和 recovery 都启用时才处理
+存量，避免停用投递后定时任务继续发送。参考服务提供至少一次而非恰好一次投递：
+SMTP 已接受后若数据库提交或进程失败，stuck recovery 可能使用相同 queue id 再次发送。
 
 ### API 认证
 

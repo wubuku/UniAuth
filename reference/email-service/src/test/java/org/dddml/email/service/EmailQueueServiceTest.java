@@ -63,13 +63,9 @@ class EmailQueueServiceTest {
 
     @Test
     void testEmailQueuedEvent_Creation() {
-        EmailQueuedEvent event = new EmailQueuedEvent(
-                this, 123L, "user@example.com", "Test Subject"
-        );
+        EmailQueuedEvent event = new EmailQueuedEvent(this, 123L);
 
         assertEquals(123L, event.getQueueId());
-        assertEquals("user@example.com", event.getRecipient());
-        assertEquals("Test Subject", event.getSubject());
         assertNotNull(event.getTimestamp());
     }
 

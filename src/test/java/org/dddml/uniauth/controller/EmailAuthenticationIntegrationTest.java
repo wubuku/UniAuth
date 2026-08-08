@@ -31,6 +31,7 @@ import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -265,6 +266,54 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(jsonPath("$.error").value("COOLDOWN"));
 
         assertThat(verificationCodeRepository.findByEmail(email)).hasSize(1);
+    }
+
+    @Test
+    void emailStatusAndReadOnlyCodeCheckTrackThePersistedChallenge() throws Exception {
+        String email = uniqueEmail("status");
+        sendRegistrationCode(email);
+        EmailVerificationCode code = latestCode(
+                email,
+                EmailVerificationCode.VerificationPurpose.REGISTRATION
+        );
+        String invalidCode = "000000".equals(code.getVerificationCode())
+                ? "111111"
+                : "000000";
+
+        mockMvc.perform(get("/api/auth/email/status/{email}", email))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.email").value(email))
+                .andExpect(jsonPath("$.hasPendingVerification").value(true));
+
+        mockMvc.perform(post("/api/auth/check-verification-code")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "email", email,
+                                "verificationCode", invalidCode,
+                                "purpose", "REGISTRATION"
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.valid").value(false))
+                .andExpect(jsonPath("$.status").value("INVALID"))
+                .andExpect(jsonPath("$.remainingAttempts").value(5));
+
+        assertThat(verificationCodeRepository.findById(code.getId()))
+                .get()
+                .extracting(EmailVerificationCode::getRetryCount)
+                .isEqualTo(0);
+
+        mockMvc.perform(post("/api/auth/verify-email")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "email", email,
+                                "verificationCode", code.getVerificationCode()
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        mockMvc.perform(get("/api/auth/email/status/{email}", email))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasPendingVerification").value(false));
     }
 
     @Test

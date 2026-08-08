@@ -3,23 +3,23 @@ package org.dddml.email.service;
 import org.dddml.email.entity.EmailQueue;
 import org.dddml.email.event.EmailQueuedEvent;
 import org.dddml.email.repository.EmailQueueRepository;
+import org.dddml.email.config.MailProperties;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class EmailQueueService {
 
     private static final Logger log = LoggerFactory.getLogger(EmailQueueService.class);
 
-    @Autowired
-    private EmailQueueRepository emailQueueRepository;
-
-    @Autowired
-    private ApplicationEventPublisher eventPublisher;
+    private final EmailQueueRepository emailQueueRepository;
+    private final ApplicationEventPublisher eventPublisher;
+    private final MailProperties mailProperties;
 
     @Transactional
     public EmailQueue enqueue(String recipient, String subject, String htmlContent,
@@ -32,16 +32,14 @@ public class EmailQueueService {
                 .status("PENDING")
                 .priority(priority != null ? priority : 5)
                 .retryCount(0)
-                .maxRetries(3)
+                .maxRetries(mailProperties.getRetry().getMaxAttempts())
                 .build();
 
         EmailQueue saved = emailQueueRepository.save(emailQueue);
-        log.info("Email enqueued [ID={}]: {}", saved.getId(), recipient);
+        log.info("Email enqueued [ID={}]", saved.getId());
 
         try {
-            EmailQueuedEvent event = new EmailQueuedEvent(
-                this, saved.getId(), saved.getRecipient(), saved.getSubject()
-            );
+            EmailQueuedEvent event = new EmailQueuedEvent(this, saved.getId());
             eventPublisher.publishEvent(event);
         } catch (Exception e) {
             log.error("Event publish failed [ID={}], scheduled task will handle", saved.getId());

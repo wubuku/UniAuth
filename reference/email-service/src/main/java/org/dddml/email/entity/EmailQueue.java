@@ -2,8 +2,9 @@ package org.dddml.email.entity;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -17,7 +18,8 @@ import java.time.LocalDateTime;
     @Index(name = "idx_email_queue_next_retry", columnList = "next_retry_time"),
     @Index(name = "idx_email_queue_status_updated", columnList = "status,updated_time")
 })
-@Data
+@Getter
+@Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder

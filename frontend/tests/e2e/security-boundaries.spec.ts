@@ -295,6 +295,77 @@ test('refresh failure clears auth state without retrying the refresh endpoint', 
   }))).toEqual({ access: null, refresh: null });
 });
 
+test('logout calls the backend once and clears application authentication state', async ({ page }) => {
+  let logoutCalls = 0;
+
+  await page.goto('/login');
+  await page.evaluate(() => {
+    localStorage.setItem('auth_user', JSON.stringify({
+      authenticated: true,
+      provider: 'local',
+      userName: 'logout-user',
+      userEmail: 'logout-user@example.invalid',
+      userId: 'logout-user-id',
+    }));
+    localStorage.setItem('accessToken', 'logout.access.token');
+    localStorage.setItem('refreshToken', 'logout.refresh.token');
+    localStorage.setItem('unrelated-preference', 'preserve-in-a-later-hardening-batch');
+  });
+  await page.route(/\/api\/user(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        authenticated: true,
+        provider: 'local',
+        userName: 'logout-user',
+        userEmail: 'logout-user@example.invalid',
+        userId: 'logout-user-id',
+      }),
+    });
+  });
+  await page.route(/\/api\/user\/login-methods$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        loginMethods: [
+          {
+            id: '00000000-0000-0000-0000-000000000001',
+            authProvider: 'local',
+            localUsername: 'logout-user',
+            isPrimary: true,
+            isVerified: true,
+            linkedAt: '2026-08-07T00:00:00Z',
+          },
+        ],
+        count: 1,
+      }),
+    });
+  });
+  await page.route(/\/api\/auth\/logout$/, async (route) => {
+    logoutCalls += 1;
+    expect(route.request().method()).toBe('POST');
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ message: 'Logged out successfully' }),
+    });
+  });
+
+  await page.goto('/test');
+  await expect(page.getByRole('button', { name: '登出' })).toBeVisible();
+  await page.getByRole('button', { name: '登出' }).click();
+
+  await expect(page).toHaveURL('/login');
+  expect(logoutCalls).toBe(1);
+  await expect.poll(() => page.evaluate(() => ({
+    user: localStorage.getItem('auth_user'),
+    access: localStorage.getItem('accessToken'),
+    refresh: localStorage.getItem('refreshToken'),
+  }))).toEqual({ user: null, access: null, refresh: null });
+});
+
 test('login-method conflicts remain visible and do not mutate the list', async ({ page }) => {
   const githubId = '00000000-0000-0000-0000-000000000002';
 

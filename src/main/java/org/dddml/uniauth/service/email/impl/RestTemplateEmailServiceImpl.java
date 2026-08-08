@@ -1,15 +1,17 @@
 package org.dddml.uniauth.service.email.impl;
 
+import org.dddml.uniauth.config.EmailServiceClientProperties;
 import org.dddml.uniauth.service.email.EmailService;
 import org.dddml.uniauth.service.email.EmailSendResult;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.HashMap;
@@ -18,15 +20,20 @@ import java.util.regex.Pattern;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class RestTemplateEmailServiceImpl implements EmailService {
 
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
-
-    @Value("${app.email.service.url:http://localhost:8095}")
-    private String emailServiceUrl;
+    private static final String API_KEY_HEADER = "X-Email-Service-Key";
 
     private final RestTemplate restTemplate;
+    private final EmailServiceClientProperties properties;
+
+    public RestTemplateEmailServiceImpl(
+            @Qualifier("emailRestTemplate") RestTemplate restTemplate,
+            EmailServiceClientProperties properties) {
+        this.restTemplate = restTemplate;
+        this.properties = properties;
+    }
 
     @Override
     public EmailSendResult sendTemplateEmail(
@@ -41,10 +48,8 @@ public class RestTemplateEmailServiceImpl implements EmailService {
             return EmailSendResult.INVALID_EMAIL;
         }
 
-        String url = emailServiceUrl + "/api/email/template";
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
+        String url = serviceUrl("/api/email/template");
+        HttpHeaders headers = requestHeaders();
 
         Map<String, Object> body = new HashMap<>();
         body.put("to", to);
@@ -74,10 +79,8 @@ public class RestTemplateEmailServiceImpl implements EmailService {
 
     @Override
     public EmailSendResult sendSimpleEmail(String to, String subject, String htmlContent) {
-        String url = emailServiceUrl + "/api/email/simple";
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
+        String url = serviceUrl("/api/email/simple");
+        HttpHeaders headers = requestHeaders();
 
         Map<String, Object> body = new HashMap<>();
         body.put("to", to);
@@ -106,9 +109,15 @@ public class RestTemplateEmailServiceImpl implements EmailService {
     @Override
     public boolean isAvailable() {
         try {
-            String healthUrl = emailServiceUrl + "/api/email/health";
+            String healthUrl = serviceUrl("/api/email/health");
+            HttpEntity<Void> request = new HttpEntity<>(requestHeaders());
             @SuppressWarnings("unchecked")
-            Map<String, Object> response = restTemplate.getForEntity(healthUrl, Map.class).getBody();
+            Map<String, Object> response = restTemplate.exchange(
+                healthUrl,
+                HttpMethod.GET,
+                request,
+                Map.class
+            ).getBody();
             return response != null && "UP".equals(response.get("status"));
         } catch (Exception e) {
             log.warn("Email service health check failed");
@@ -118,5 +127,22 @@ public class RestTemplateEmailServiceImpl implements EmailService {
 
     private boolean isValidEmail(String email) {
         return email != null && EMAIL_PATTERN.matcher(email).matches();
+    }
+
+    private HttpHeaders requestHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        if (StringUtils.hasText(properties.getApiKey())) {
+            headers.set(API_KEY_HEADER, properties.getApiKey());
+        }
+        return headers;
+    }
+
+    private String serviceUrl(String path) {
+        String baseUrl = properties.getUrl();
+        while (baseUrl.endsWith("/")) {
+            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+        }
+        return baseUrl + path;
     }
 }

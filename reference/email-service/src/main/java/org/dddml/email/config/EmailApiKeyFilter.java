@@ -1,0 +1,68 @@
+package org.dddml.email.config;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
+import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.UrlPathHelper;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Map;
+
+@Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
+@RequiredArgsConstructor
+public class EmailApiKeyFilter extends OncePerRequestFilter {
+
+    private final EmailSecurityProperties securityProperties;
+    private final ObjectMapper objectMapper;
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String servletPath = UrlPathHelper.defaultInstance.removeSemicolonContent(
+            request.getServletPath()
+        );
+        boolean emailApi = "/api/email".equals(servletPath)
+            || servletPath.startsWith("/api/email/");
+        return !emailApi || !StringUtils.hasText(securityProperties.getApiKey());
+    }
+
+    @Override
+    protected void doFilterInternal(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            FilterChain filterChain) throws ServletException, IOException {
+        String suppliedKey = request.getHeader(EmailSecurityProperties.API_KEY_HEADER);
+        if (!matchesConfiguredKey(suppliedKey)) {
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            objectMapper.writeValue(
+                response.getOutputStream(),
+                Map.of("success", false, "message", "Unauthorized")
+            );
+            return;
+        }
+        filterChain.doFilter(request, response);
+    }
+
+    private boolean matchesConfiguredKey(String suppliedKey) {
+        if (suppliedKey == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+            securityProperties.getApiKey().getBytes(StandardCharsets.UTF_8),
+            suppliedKey.getBytes(StandardCharsets.UTF_8)
+        );
+    }
+}

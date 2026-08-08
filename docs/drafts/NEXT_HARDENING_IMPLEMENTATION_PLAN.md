@@ -1,6 +1,7 @@
 # UniAuth 下一轮加固实施计划
 
-> 状态：Batch A、Batch B1、Batch B2a、Batch B2b 已完成；下一批待重新探索后冻结
+> 状态：Batch A、Batch B1、Batch B2a、Batch B2b 与邮件服务边界加固已完成；
+> 下一批待重新探索后冻结
 > 事实基线：2026-08-07
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
 > 前置成果：PostgreSQL-only、Flyway V1 baseline + V2 + V3 + V4、Testcontainers、
@@ -30,12 +31,12 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | 当前 migration | V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束/索引对齐 |
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
-| Java | `mvn clean compile test-compile` 和 83 tests 已通过 |
-| 邮件参考服务 | 独立 compile/test-compile 和 59 tests 已通过，其中 5 个完整 E2E |
-| HTTP E2E | `scripts/test-http-e2e.sh` 13/13 已通过 |
-| Flyway guard | `scripts/test-flyway-baseline-guard.sh` 11/11 已通过 |
-| 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、18 个 Mock Playwright tests 已通过 |
-| Python | 9 个离线 JWT/JWKS/Flask tests 已通过 |
+| Java | `mvn clean compile test-compile` 和 98 tests 已通过 |
+| 邮件参考服务 | 94 tests；14 个完整 ApplicationContext E2E；Shell runtime 15/15、HTTP 8/8、Flyway guard 8/8 |
+| HTTP E2E | `scripts/test-http-e2e.sh` 14/14 已通过 |
+| Flyway guard | `scripts/test-flyway-baseline-guard.sh` 12/12 已通过 |
+| 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、19 个 Mock Playwright tests 已通过 |
+| Python | 14 个离线 JWT/JWKS/Flask tests 已通过 |
 | 统一入口 | `scripts/verify.sh` 本地通过；CI 使用同一入口 |
 | 既有库演练 | `blacksheep_dev` 只读 rehearsal 已通过 |
 | Schema fingerprint | `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
@@ -526,6 +527,64 @@ Batch A 通过后才开始。
 - audit migration、append/outbox、事务回滚、不可变性和权限拒绝测试通过。
 - G1 数据门禁完成；Batch C 不得绕过审计接口另建日志式替代品。
 - 生产目标只生成预检报告，不自动 apply。
+
+### 邮件服务边界加固切片
+
+#### 2026-08-07 固定实施范围
+
+本切片只加固 UniAuth 到外部邮件服务的 HTTP 边界和仓库内参考实现，不改变邮箱
+challenge、注册、密码重置或登录的用户可见业务语义。
+
+纳入范围：
+
+1. UniAuth 邮件客户端使用独立 `RestTemplate`，实际绑定 connect/read timeout，
+   支持可选 `X-Email-Service-Key`，验证绝对 HTTP/HTTPS URL 的 host/userinfo/
+   query/fragment 约束，并覆盖真实本地 HTTP 超时和 header 契约。
+2. 参考邮件服务增加可选 API key；非 loopback 暴露缺少密钥时必须在启动阶段失败。
+3. 参考服务拒绝不安全 env 文件、共享数据库和不符合 profile 的数据库目标，并在
+   Flyway 前通过 Java runtime guard 重复校验，避免绕过 Shell 入口。
+4. HTTP 输入增加收件人、主题、模板、batch、HTML 和分页边界；异常响应不得泄露
+   SMTP、数据库或内部 exception 细节；日志分页下推到数据库。
+5. 队列 retry 上限改为配置驱动；event 与 scheduled recovery 共用单进程限流，
+   通过条件更新原子 claim，event 不得绕过 `next_retry_time`，stuck `PROCESSING`
+   可由恢复扫描重新 claim。
+6. 禁用邮件或队列时拒绝继续入队，不能返回空对象伪装成功。
+7. 参考服务新增不可修改的 Flyway V2，约束 retry 边界，建立日志外键和恢复/分页索引。
+8. 根统一门禁纳入参考组件 Shell syntax、Maven、runtime guard、真实进程 HTTP E2E
+   和 Flyway fail-closed guard；同步扩充根 Shell、Playwright 和 Python 契约覆盖。
+
+明确非目标：
+
+- 不把 UniAuth 邮件 challenge 改造成可靠 outbox/idempotency 状态机。
+- 不改变“外部服务 `success=true` 只表示接受或入队”的现有语义。
+- 不调用真实 SMTP、真实 OAuth provider，不连接或写入 `blacksheep_dev`。
+- 不实现多实例分布式限流、供应商退信、生产备份/灾备或密钥轮换协议。
+- 不增加用户功能、公共 endpoint、悲观锁或 JPA `@Version`。
+
+#### 实际结果
+
+2026-08-07 已完成实现与完整硬门槛：
+
+- UniAuth 专用邮件客户端的 URL、超时和 API key 均由类型化配置绑定；真实本地 HTTP
+  测试验证 template/health header 和 read timeout。
+- 参考服务 API key、输入边界、错误脱敏、数据库分页和 Java/Shell 双层启动保护通过。
+- Flyway V2 fresh/upgrade/坏数据/dirty schema/forward-fix 路径通过。
+- event 与 recovery 使用同一限流器和独立事务 claim/delivery；配置化 retry、
+  delayed retry、优先级恢复、stuck recovery、并发 claim 单投递者、禁用队列拒绝
+  和邮件/队列关闭时不恢复存量均有自动化覆盖。
+- simple 请求 HTML 和模板渲染后的最终 HTML 都有 1,000,000 字符上限；Flyway
+  checksum 失配会失败关闭并保留已迁移数据；配置、实体、事件和请求 DTO 不通过
+  自动 `toString()` 暴露 API key、收件人、验证码或 HTML。
+- 根 Java 98 tests、HTTP E2E 14/14、Flyway guard 12/12、Mock Playwright 19、
+  Python 14 全部通过。
+- 参考邮件服务 94 tests；另有 Shell runtime 15/15、HTTP/PostgreSQL 8/8 和
+  Flyway guard 8/8。
+- 邮件服务统一入口使用进程专属临时源码快照，已由两套完整门禁并行运行验证，
+  消除了共享 `target/` 被并发 `mvn clean` 删除的验证竞态；源文件变化时失败关闭。
+- 所有自动化只使用 disposable PostgreSQL、本地 HTTP、进程内 GreenMail 和离线
+  JWT/JWKS fixture；未访问共享数据库或真实外部服务。
+
+连续三轮无问题检查按验证规则只在当次工作报告逐轮输出；无问题轮次不修改本文。
 
 ### Batch C：JWT、refresh、blacklist 与 HTTP 边界
 

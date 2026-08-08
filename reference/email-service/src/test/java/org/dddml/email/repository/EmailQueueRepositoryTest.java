@@ -194,4 +194,30 @@ class EmailQueueRepositoryTest {
         assertEquals(1, pendingCount);
         assertEquals(1, completedCount);
     }
+
+    @Test
+    void claimPendingDoesNotBypassTheScheduledRetryTime() {
+        LocalDateTime now = LocalDateTime.now();
+        EmailQueue pendingRetry = EmailQueue.builder()
+                .recipient("retry@example.com")
+                .subject("Retry later")
+                .htmlContent("<p>Retry later</p>")
+                .status("PENDING")
+                .priority(5)
+                .retryCount(1)
+                .maxRetries(3)
+                .nextRetryTime(now.plusMinutes(5))
+                .build();
+        entityManager.persistAndFlush(pendingRetry);
+        entityManager.clear();
+
+        assertEquals(0, emailQueueRepository.claimPending(pendingRetry.getId(), now));
+        assertEquals(
+            1,
+            emailQueueRepository.claimPending(
+                pendingRetry.getId(),
+                now.plusMinutes(6)
+            )
+        );
+    }
 }

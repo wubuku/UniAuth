@@ -38,14 +38,19 @@ mvn test
 
 ```bash
 cd reference/email-service
-TESTCONTAINERS_RYUK_DISABLED=true mvn clean compile test-compile
-TESTCONTAINERS_RYUK_DISABLED=true mvn test
+scripts/verify.sh
 ```
 
 组件级集成测试必须依赖完整 Spring ApplicationContext 和真实业务 Bean，并尽可能从
 真实 HTTP 入口覆盖 Flyway/PostgreSQL、Thymeleaf、队列、异步事件、JavaMailSender
 和 SMTP 结果。PostgreSQL 使用 Testcontainers，SMTP 使用进程内 GreenMail；默认门禁
-不得读取 `.env`、连接真实供应商或发送真实邮件。
+不得读取 `.env`、连接真实供应商或发送真实邮件。统一入口还必须执行：
+
+- `scripts/test-runtime-guard.sh`：profile、独立数据库、env 权限和暴露鉴权矩阵。
+- `scripts/test-http-e2e.sh`：真实 JAR、真实 HTTP、Flyway/PostgreSQL、API key、
+  模板渲染、边界拒绝和重启持久化。
+- `scripts/test-flyway-baseline-guard.sh`：dirty schema 拒绝、V2 坏数据失败关闭和
+  forward-fix。
 
 ### 前端
 
@@ -132,26 +137,26 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 
 ## 2026-08-07 当前加固门禁
 
-> 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1、Batch B2a 和
-> Batch B2b 触达路径；
+> 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1、Batch B2a、
+> Batch B2b 和邮件服务边界加固触达路径；
 > 不代表 H1.4-H8、完整认证正确性或生产就绪。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 83 tests，0 failures/errors/skips |
-| `scripts/test-http-e2e.sh` | 通过 | 13/13；真实应用、PostgreSQL、重启、JWT、Web3、email、登录方式 |
-| `scripts/test-flyway-baseline-guard.sh` | 通过 | 11/11；exact schema、V2/V4 初始及 apply 前数据预检、post-baseline 失败恢复与其他拒绝/清理路径 |
+| `mvn test` | 通过 | 98 tests，0 failures/errors/skips |
+| `scripts/test-http-e2e.sh` | 通过 | 14/14；真实应用、PostgreSQL、重启、JWT、Web3、email、登录方式 |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 12/12；exact schema、V2/V4 初始及 apply 前数据预检、post-baseline 失败恢复与其他拒绝/清理路径 |
 | Flyway integration | 通过 | fresh V1→V4、existing baseline V1→V4、V3→V4、Hibernate validate、Session、checksum/failure recovery |
-| 邮件参考服务 | 通过 | 59 tests；其中 5 个 E2E 覆盖真实 HTTP、Flyway V1、PostgreSQL、Spring Beans、Thymeleaf、GreenMail、失败重试 |
+| 邮件参考服务 | 通过 | 94 tests；14 个完整 ApplicationContext E2E、10 个 Java runtime guard tests、6 个 Flyway migration tests、6 个 context-path/matrix-parameter API key filter tests；Shell runtime 15/15、HTTP 8/8、Flyway guard 8/8 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
 | `npm audit --audit-level=high` | 通过 | 0 high/critical；2 个 React Router moderate advisories 见下文 |
 | `npx tsc --noEmit` | 通过 | 无 TypeScript 错误 |
 | `npm run build` | 通过 | Vite 生产构建成功，保留 chunk warning |
-| `npm run test:e2e` | 通过 | 18/18 Chrome-channel Mock Playwright tests |
-| Python | 通过 | 9/9 离线 RSA/JWKS/Flask tests |
+| `npm run test:e2e` | 通过 | 19/19 Chrome-channel Mock Playwright tests |
+| Python | 通过 | 14/14 离线 RSA/JWKS/Flask tests |
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 | Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
 
@@ -180,12 +185,30 @@ UniAuth 主应用的邮件相关门禁只验证内部状态机和 HTTP 边界：
 独立参考实现补充了默认无外部副作用的组件级 E2E：
 
 - 完整 Spring ApplicationContext 和随机真实 HTTP 端口。
-- Flyway V1、独立 history table、PostgreSQL 16 和 Hibernate `validate`。
+- Flyway V1/V2、独立 history table、PostgreSQL 16 和 Hibernate `validate`。
 - 两个必需模板经过真实 service/repository/event Bean、Thymeleaf、队列和 GreenMail 收件。
-- 未知模板拒绝，以及 SMTP 连接失败后的失败日志和可重试队列状态。
+- API key、输入和分页边界、未知模板拒绝、SMTP 连接失败后的失败日志和可重试状态。
+- UniAuth 客户端 URL/timeout 配置拒绝矩阵，以及 context path、尾斜杠和 API key
+  请求契约。
+- simple 请求 HTML 与模板渲染后的最终 HTML 都限制为最多 1,000,000 字符。
+- 原子队列 claim、stuck `PROCESSING` 恢复和配置化最大重试次数。
+- 恢复候选按优先级处理；邮件总开关或队列关闭时，存量 pending/stuck 邮件不投递。
+- event 与 recovery 并发竞争同一 PostgreSQL 队列记录时，只有一个投递者成功，
+  最终只产生一条成功日志和一封 SMTP 邮件。
+- 异步执行器拒绝任务时不向已提交的入队事务传播异常，持久队列可由 recovery 接管。
+- API key 配置、实体、事件和 HTTP 请求 DTO 的对象字符串不会包含 API key、
+  收件人、验证码或 HTML。
+- 独立 Shell 进程门禁验证无 SMTP 副作用的 HTTP/数据库契约、启动保护和 Flyway
+  dirty-schema/V2 坏数据失败关闭。
+- 独立 Flyway 集成测试验证 checksum 失配会在 migrate 阶段失败关闭，并保留已有
+  migration history 和业务数据。
+- 统一入口在进程专属临时源码快照中执行 Maven 和 Shell E2E，已通过两套完整门禁
+  并行运行验证；原工作区源码在门禁期间变化时会失败关闭，不能继承旧结果。
 
 该 E2E 证明参考实现的本地协议链，不证明真实供应商鉴权、TLS、退信或外部收件。
-真实邮箱能力仍需要隔离账户的显式 opt-in 测试，不进入默认无副作用门禁。
+参考服务是至少一次而非恰好一次投递；SMTP 已接受后的数据库提交/进程失败窗口和
+stuck reclaim 仍可能重复发送。真实邮箱能力仍需要隔离账户的显式 opt-in 测试，
+不进入默认无副作用门禁。
 
 Flyway baseline guard 使用 disposable PostgreSQL 16。错误 major 测试通过离线
 `psql` fixture 注入 PostgreSQL 15 版本号，不要求下载或支持 `postgres:15` 镜像。
@@ -228,8 +251,7 @@ mvn clean compile test-compile
 mvn test
 
 cd reference/email-service
-TESTCONTAINERS_RYUK_DISABLED=true mvn clean compile test-compile
-TESTCONTAINERS_RYUK_DISABLED=true mvn test
+scripts/verify.sh
 ```
 
 应检查 Surefire 输出中的实际 test count，避免测试被过滤或空执行仍被误报为通过。
@@ -249,7 +271,8 @@ npm run test:e2e
 ### Shell
 
 ```bash
-bash -n build-frontend.sh start.sh start-with-frontend.sh scripts/*.sh
+bash -n build-frontend.sh start.sh start-with-frontend.sh scripts/*.sh \
+  reference/email-service/start.sh reference/email-service/scripts/*.sh
 ```
 
 ### Python

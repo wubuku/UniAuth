@@ -52,6 +52,7 @@ spring:
           auth: ${SMTP_AUTH:true}
           connectiontimeout: ${SMTP_CONNECTION_TIMEOUT_MS:10000}
           timeout: ${SMTP_READ_TIMEOUT_MS:10000}
+          writetimeout: ${SMTP_WRITE_TIMEOUT_MS:10000}
           starttls:
             enable: ${SMTP_STARTTLS_ENABLE:true}
             required: ${SMTP_STARTTLS_REQUIRED:true}
@@ -59,21 +60,23 @@ spring:
             enable: ${SMTP_SSL_ENABLE:false}
 
 app:
+  security:
+    api-key: ${EMAIL_SERVICE_API_KEY:}
   mail:
     from-email: ${EMAIL_FROM_ADDRESS:${APP_MAIL_FROM_EMAIL}}
     from-name: ${EMAIL_FROM_NAME:UniAuth}
     enabled: true
     queue:
       enabled: true
-      event-driven: true
+      event-driven: ${EMAIL_QUEUE_EVENT_DRIVEN:true}
     retry:
-      max-attempts: 3
+      max-attempts: ${EMAIL_MAX_RETRY_ATTEMPTS:3}
       delay-minutes: ${EMAIL_RETRY_DELAY_MINUTES:10}
     rate-limit:
-      enabled: true
+      enabled: ${EMAIL_RATE_LIMIT_ENABLED:true}
       max-per-minute: ${EMAIL_RATE_LIMIT_PER_MINUTE:60}
     recovery:
-      enabled: true
+      enabled: ${EMAIL_RECOVERY_ENABLED:true}
       scan-interval-minutes: ${EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES:5}
       stuck-timeout-minutes: ${EMAIL_STUCK_TIMEOUT_MINUTES:10}
 

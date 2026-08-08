@@ -1,37 +1,26 @@
 package org.dddml.email.event;
 
 import org.dddml.email.config.MailProperties;
-import org.dddml.email.entity.EmailLog;
-import org.dddml.email.entity.EmailQueue;
-import org.dddml.email.repository.EmailQueueRepository;
-import org.dddml.email.service.EmailService;
+import org.dddml.email.service.EmailDeliveryService;
+import org.dddml.email.service.EmailQueueClaimService;
+import org.dddml.email.service.EmailRateLimiter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
 
 import java.time.LocalDateTime;
-import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class EmailEventListenerTest {
-
-    private static class TestEventSource {}
-
-    @Mock
-    private EmailQueueRepository emailQueueRepository;
-
-    @Mock
-    private EmailService emailService;
 
     @Mock
     private MailProperties mailProperties;
@@ -40,182 +29,82 @@ class EmailEventListenerTest {
     private MailProperties.Queue queueConfig;
 
     @Mock
-    private MailProperties.RateLimit rateLimitConfig;
+    private EmailRateLimiter rateLimiter;
 
     @Mock
-    private MailProperties.Retry retryConfig;
+    private EmailQueueClaimService claimService;
+
+    @Mock
+    private EmailDeliveryService deliveryService;
 
     @InjectMocks
     private EmailEventListener emailEventListener;
 
-    private EmailQueue testQueue;
-    private EmailQueuedEvent testEvent;
-    private EmailLog successLog;
+    private EmailQueuedEvent event;
 
     @BeforeEach
     void setUp() {
-        testQueue = EmailQueue.builder()
-                .id(1L)
-                .recipient("test@example.com")
-                .subject("Test Subject")
-                .htmlContent("<p>Test Content</p>")
-                .emailType("TEST")
-                .status("PENDING")
-                .priority(5)
-                .retryCount(0)
-                .maxRetries(3)
-                .build();
-
-        testEvent = new EmailQueuedEvent(new TestEventSource(), 1L, "test@example.com", "Test Subject");
-
-        successLog = EmailLog.builder()
-                .id(1L)
-                .queueId(1L)
-                .recipient("test@example.com")
-                .subject("Test Subject")
-                .status("SUCCESS")
-                .emailType("TEST")
-                .build();
-
+        event = new EmailQueuedEvent(this, 1L);
         when(mailProperties.getQueue()).thenReturn(queueConfig);
-        when(mailProperties.getRateLimit()).thenReturn(rateLimitConfig);
-        when(mailProperties.getRetry()).thenReturn(retryConfig);
-        when(retryConfig.getDelayMinutes()).thenReturn(10);
     }
 
     @Test
-    void testHandleEmailQueuedEvent_EventDrivenDisabled() {
+    void eventDrivenDisabledLeavesTheQueueForRecovery() {
         when(queueConfig.isEventDriven()).thenReturn(false);
 
-        emailEventListener.handleEmailQueuedEvent(testEvent);
+        emailEventListener.handleEmailQueuedEvent(event);
 
-        verify(emailQueueRepository, never()).findById(any());
-        verify(emailService, never()).sendEmailDirectly(any(), any());
+        verify(rateLimiter, never()).tryAcquire();
+        verify(claimService, never()).claimPending(eq(1L), any(LocalDateTime.class));
+        verify(deliveryService, never()).deliver(1L, "EVENT");
     }
 
     @Test
-    void testHandleEmailQueuedEvent_QueueNotFound() {
+    void rateLimitDenialLeavesTheQueuePending() {
         when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimitConfig.isEnabled()).thenReturn(false);
-        when(emailQueueRepository.findById(1L)).thenReturn(Optional.empty());
+        when(rateLimiter.tryAcquire()).thenReturn(false);
 
-        emailEventListener.handleEmailQueuedEvent(testEvent);
+        emailEventListener.handleEmailQueuedEvent(event);
 
-        verify(emailQueueRepository).findById(1L);
-        verify(emailService, never()).sendEmailDirectly(any(), any());
+        verify(claimService, never()).claimPending(eq(1L), any(LocalDateTime.class));
+        verify(deliveryService, never()).deliver(1L, "EVENT");
     }
 
     @Test
-    void testHandleEmailQueuedEvent_NotPendingStatus() {
+    void failedClaimReleasesTheReservedRateLimitSlot() {
         when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimitConfig.isEnabled()).thenReturn(false);
-        testQueue.setStatus("PROCESSING");
-        when(emailQueueRepository.findById(1L)).thenReturn(Optional.of(testQueue));
+        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(claimService.claimPending(eq(1L), any(LocalDateTime.class))).thenReturn(false);
 
-        emailEventListener.handleEmailQueuedEvent(testEvent);
+        emailEventListener.handleEmailQueuedEvent(event);
 
-        verify(emailQueueRepository, never()).updateStatusToProcessing(anyLong(), any());
-        verify(emailService, never()).sendEmailDirectly(any(), any());
+        verify(rateLimiter).release();
+        verify(deliveryService, never()).deliver(1L, "EVENT");
     }
 
     @Test
-    void testHandleEmailQueuedEvent_AlreadyProcessedByAnotherThread() {
+    void claimedQueueIsDeliveredByTheTransactionalDeliveryBean() {
         when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimitConfig.isEnabled()).thenReturn(false);
-        when(emailQueueRepository.findById(1L)).thenReturn(Optional.of(testQueue));
-        when(emailQueueRepository.updateStatusToProcessing(eq(1L), any())).thenReturn(0);
+        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(claimService.claimPending(eq(1L), any(LocalDateTime.class))).thenReturn(true);
+        when(deliveryService.deliver(1L, "EVENT"))
+            .thenReturn(EmailDeliveryService.DeliveryOutcome.SUCCESS);
 
-        emailEventListener.handleEmailQueuedEvent(testEvent);
+        emailEventListener.handleEmailQueuedEvent(event);
 
-        verify(emailQueueRepository).updateStatusToProcessing(eq(1L), any());
-        verify(emailService, never()).sendEmailDirectly(any(), any());
+        verify(deliveryService).deliver(1L, "EVENT");
     }
 
     @Test
-    void testHandleEmailQueuedEvent_Success() {
+    void skippedDeliveryReleasesTheReservedRateLimitSlot() {
         when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimitConfig.isEnabled()).thenReturn(false);
-        when(emailQueueRepository.findById(1L)).thenReturn(Optional.of(testQueue));
-        when(emailQueueRepository.updateStatusToProcessing(eq(1L), any())).thenReturn(1);
-        when(emailService.sendEmailDirectly(any(), eq("EVENT"))).thenReturn(successLog);
+        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(claimService.claimPending(eq(1L), any(LocalDateTime.class))).thenReturn(true);
+        when(deliveryService.deliver(1L, "EVENT"))
+            .thenReturn(EmailDeliveryService.DeliveryOutcome.SKIPPED);
 
-        emailEventListener.handleEmailQueuedEvent(testEvent);
+        emailEventListener.handleEmailQueuedEvent(event);
 
-        verify(emailQueueRepository, times(2)).findById(1L);
-        verify(emailService).sendEmailDirectly(any(), eq("EVENT"));
-        verify(emailQueueRepository).save(any());
-        assertEquals("COMPLETED", testQueue.getStatus());
-    }
-
-    @Test
-    void testHandleEmailQueuedEvent_FailureWithRetry() {
-        when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimitConfig.isEnabled()).thenReturn(false);
-        when(emailQueueRepository.findById(1L)).thenReturn(Optional.of(testQueue));
-        when(emailQueueRepository.updateStatusToProcessing(eq(1L), any())).thenReturn(1);
-
-        EmailLog failedLog = EmailLog.builder()
-                .id(1L)
-                .queueId(1L)
-                .status("FAILED")
-                .errorMessage("SMTP error")
-                .build();
-        when(emailService.sendEmailDirectly(any(), eq("EVENT"))).thenReturn(failedLog);
-
-        emailEventListener.handleEmailQueuedEvent(testEvent);
-
-        verify(emailService).sendEmailDirectly(any(), eq("EVENT"));
-        verify(emailQueueRepository).save(any());
-        assertEquals(1, testQueue.getRetryCount());
-        assertEquals("PENDING", testQueue.getStatus());
-    }
-
-    @Test
-    void testHandleEmailQueuedEvent_PermanentFailure() {
-        when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimitConfig.isEnabled()).thenReturn(false);
-        testQueue.setRetryCount(3);
-        when(emailQueueRepository.findById(1L)).thenReturn(Optional.of(testQueue));
-        when(emailQueueRepository.updateStatusToProcessing(eq(1L), any())).thenReturn(1);
-
-        EmailLog failedLog = EmailLog.builder()
-                .id(1L)
-                .queueId(1L)
-                .status("FAILED")
-                .errorMessage("SMTP error")
-                .build();
-        when(emailService.sendEmailDirectly(any(), eq("EVENT"))).thenReturn(failedLog);
-
-        emailEventListener.handleEmailQueuedEvent(testEvent);
-
-        verify(emailService).sendEmailDirectly(any(), eq("EVENT"));
-        verify(emailQueueRepository).save(any());
-        assertEquals("FAILED", testQueue.getStatus());
-        assertEquals("SMTP error", testQueue.getErrorMessage());
-    }
-
-    @Test
-    void testHandleEmailQueuedEvent_RateLimitExceeded() {
-        when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimitConfig.isEnabled()).thenReturn(true);
-        when(rateLimitConfig.getMaxPerMinute()).thenReturn(60);
-        when(emailQueueRepository.findById(1L)).thenReturn(Optional.of(testQueue));
-
-        emailEventListener.handleEmailQueuedEvent(testEvent);
-
-        verify(emailService, never()).sendEmailDirectly(any(), any());
-    }
-
-    @Test
-    void testHandleEmailQueuedEvent_RateLimitDisabled() {
-        when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimitConfig.isEnabled()).thenReturn(false);
-        when(emailQueueRepository.findById(1L)).thenReturn(Optional.of(testQueue));
-        when(emailQueueRepository.updateStatusToProcessing(eq(1L), any())).thenReturn(1);
-        when(emailService.sendEmailDirectly(any(), eq("EVENT"))).thenReturn(successLog);
-
-        emailEventListener.handleEmailQueuedEvent(testEvent);
-
-        verify(emailService).sendEmailDirectly(any(), eq("EVENT"));
+        verify(rateLimiter).release();
     }
 }

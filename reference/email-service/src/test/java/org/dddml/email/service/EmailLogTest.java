@@ -77,4 +77,19 @@ class EmailLogTest {
         assertEquals("SUCCESS", emailLog.getStatus());
         assertEquals(200L, emailLog.getDurationMs());
     }
+
+    @Test
+    void entityStringDoesNotExposeRecipientOrEmailContent() {
+        EmailLog emailLog = EmailLog.builder()
+                .id(3L)
+                .recipient("sensitive@example.test")
+                .subject("Sensitive subject")
+                .emailContent("<p>verification-code-246810</p>")
+                .build();
+
+        String result = emailLog.toString();
+
+        assertFalse(result.contains("sensitive@example.test"));
+        assertFalse(result.contains("verification-code-246810"));
+    }
 }

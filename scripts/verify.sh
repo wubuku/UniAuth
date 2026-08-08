@@ -34,7 +34,9 @@ bash -n \
     build-frontend.sh \
     start.sh \
     start-with-frontend.sh \
-    scripts/*.sh
+    scripts/*.sh \
+    reference/email-service/start.sh \
+    reference/email-service/scripts/*.sh
 
 echo "Verification 2/11: frontend clean dependency install"
 (
@@ -55,11 +57,7 @@ echo "Verification 5/11: Java integration tests"
 mvn test
 
 echo "Verification 6/11: reference email-service compilation and integration tests"
-(
-    cd reference/email-service
-    mvn clean compile test-compile
-    mvn test
-)
+reference/email-service/scripts/verify.sh
 
 echo "Verification 7/11: HTTP and Flyway shell E2E"
 scripts/test-http-e2e.sh

@@ -2,8 +2,9 @@ package org.dddml.email.entity;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 
 import jakarta.persistence.*;
@@ -16,7 +17,8 @@ import java.time.LocalDateTime;
     @Index(name = "idx_email_logs_sent_time", columnList = "sent_time"),
     @Index(name = "idx_email_logs_queue_id", columnList = "queue_id")
 })
-@Data
+@Getter
+@Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder

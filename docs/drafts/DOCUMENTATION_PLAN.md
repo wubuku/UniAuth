@@ -108,9 +108,9 @@
 - Flyway V1 baseline + V2 + V3 + V4 已接管 8 张认证/Session 表，并加固登录方式
   行形状、primary、集合变更 CAS 以及其余目标实体约束和 email repository 索引；
   旧 SQL 已归档到 runtime classpath 外。
-- Java 已有 PostgreSQL/Testcontainers 集成测试，当前完整门禁为 83 tests。
-- HTTP Shell E2E 当前 13/13，Flyway baseline guard 11/11，
-  Mock Playwright 18 tests，Python 9 tests。
+- Java 已有 PostgreSQL/Testcontainers 集成测试，当前完整门禁为 98 tests。
+- HTTP Shell E2E 当前 14/14，Flyway baseline guard 12/12，
+  Mock Playwright 19 tests，Python 14 tests。
 - 前端严格 `npm ci`、high/critical 依赖审计、lint、typecheck 和生产构建通过；
   `scripts/verify.sh` 与 GitHub Actions 使用统一验证入口。
 - npm audit 仍有 2 个 React Router moderate advisories；当前客户端路由 pathname
@@ -118,7 +118,9 @@
   RSC/SSR data-router/外部输入决定目标 URL 路径；后续版本升级继续跟踪。
 - UniAuth 主应用只包含外部邮件服务 HTTP 适配器；仓库已纳入独立参考实现。
   live guides 已明确邮箱注册/重置的运行依赖、端点和模板契约、普通密码登录边界，
-  以及参考组件自己的 Flyway V1、独立数据库和完整 ApplicationContext E2E。
+  API key/超时、参考组件自己的 Flyway V1/V2、独立数据库、运行保护、完整
+  ApplicationContext E2E 和 Shell 进程门禁；URL 结构、恢复开关和敏感对象字符串
+  约束也已纳入当前指南。
 - 邮箱验证码发送值已与持久化值一致；失败、频控和并发语义仍待修复。
 - token blacklist 尚未接入验证、刷新和登出流程。
 - Web3 的 `isNewUser`、bind 返回处理和 EIP-191 字节长度已修复；

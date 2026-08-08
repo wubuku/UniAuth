@@ -1,38 +1,34 @@
 package org.dddml.email.service;
 
 import lombok.extern.slf4j.Slf4j;
+import lombok.RequiredArgsConstructor;
 import org.dddml.email.config.MailProperties;
-import org.dddml.email.entity.EmailLog;
 import org.dddml.email.entity.EmailQueue;
 import org.dddml.email.repository.EmailQueueRepository;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class EmailProcessorService {
 
-    @Autowired
-    private EmailQueueRepository emailQueueRepository;
+    private final EmailQueueRepository emailQueueRepository;
+    private final EmailQueueClaimService claimService;
+    private final EmailDeliveryService deliveryService;
+    private final EmailRateLimiter rateLimiter;
+    private final MailProperties mailProperties;
 
-    @Autowired
-    private EmailService emailService;
-
-    @Autowired
-    private MailProperties mailProperties;
-
-    @Scheduled(fixedDelayString = "#{${app.mail.recovery.scan-interval-minutes:5} * 60000}",
+    @Scheduled(fixedDelayString = "#{${app.mail.recovery.scan-interval-minutes:5} * 60000L}",
                initialDelay = 60000)
-    @Transactional
     public void recoverFailedEmails() {
-        if (!mailProperties.getRecovery().isEnabled()) {
+        if (!mailProperties.isEnabled()
+                || !mailProperties.getQueue().isEnabled()
+                || !mailProperties.getRecovery().isEnabled()) {
             return;
         }
 
@@ -57,53 +53,50 @@ public class EmailProcessorService {
 
             for (EmailQueue emailQueue : failedEmails) {
                 try {
-                    int updated = emailQueueRepository.updateStatusToProcessing(
-                        emailQueue.getId(), LocalDateTime.now());
+                    if (!rateLimiter.tryAcquire()) {
+                        log.warn("Recovery rate limit reached; remaining candidates stay pending");
+                        break;
+                    }
 
-                    if (updated == 0) {
+                    LocalDateTime claimTime = LocalDateTime.now();
+                    if (!claimService.claimRecoverable(
+                            emailQueue.getId(),
+                            claimTime,
+                            stuckTime)) {
+                        rateLimiter.release();
                         log.debug("Email already handled by event, skipping [ID={}]", emailQueue.getId());
                         continue;
                     }
 
-                    log.info("Recovering email [ID={}]: {}", emailQueue.getId(), emailQueue.getRecipient());
-
-                    emailQueue = emailQueueRepository.findById(emailQueue.getId()).orElse(null);
-                    if (emailQueue == null) continue;
-
-                    EmailLog emailLog = emailService.sendEmailDirectly(emailQueue, "SCHEDULED");
-
-                    if ("SUCCESS".equals(emailLog.getStatus())) {
-                        emailQueue.markAsCompleted();
+                    log.info("Recovering email [ID={}]", emailQueue.getId());
+                    EmailDeliveryService.DeliveryOutcome outcome =
+                        deliveryService.deliver(emailQueue.getId(), "SCHEDULED");
+                    if (outcome == EmailDeliveryService.DeliveryOutcome.SUCCESS) {
                         successCount++;
-                    } else {
-                        handleFailure(emailQueue);
+                    } else if (outcome == EmailDeliveryService.DeliveryOutcome.FAILED) {
                         failedCount++;
+                    } else {
+                        rateLimiter.release();
                     }
 
-                    emailQueueRepository.save(emailQueue);
-
-                } catch (Exception e) {
-                    log.error("Recovery send failed [ID={}]: {}", emailQueue.getId(), e.getMessage());
+                } catch (Exception exception) {
+                    log.error(
+                        "Recovery send failed [ID={}, error={}]",
+                        emailQueue.getId(),
+                        exception.getClass().getSimpleName()
+                    );
                     failedCount++;
                 }
             }
 
             log.info("Recovery scan complete - success: {}, failed: {}", successCount, failedCount);
 
-        } catch (Exception e) {
-            log.error("Recovery scan error", e);
+        } catch (Exception exception) {
+            log.error(
+                "Recovery scan error [error={}]",
+                exception.getClass().getSimpleName()
+            );
         }
     }
 
-    private void handleFailure(EmailQueue emailQueue) {
-        if (emailQueue.getRetryCount() < emailQueue.getMaxRetries()) {
-            emailQueue.incrementRetry(mailProperties.getRetry().getDelayMinutes());
-            log.warn("Email will retry [ID={}, retry: {}/{}]",
-                     emailQueue.getId(), emailQueue.getRetryCount(),
-                     emailQueue.getMaxRetries());
-        } else {
-            emailQueue.markAsFailed("Max retry attempts exceeded");
-            log.error("Email permanently failed [ID={}]", emailQueue.getId());
-        }
-    }
 }

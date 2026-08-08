@@ -51,7 +51,8 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - 外部邮件服务默认地址：`http://localhost:8095`。
 - UniAuth 主应用只实现邮件服务 HTTP 适配器；真实邮箱注册验证和密码重置需要独立
   邮件服务满足当前 HTTP、模板和响应契约。`reference/email-service/` 提供可运行参考，
-  但不会由根应用自动启动；普通邮箱加密码登录不发信。
+  但不会由根应用自动启动；普通邮箱加密码登录不发信。客户端 timeout 默认 5 秒，
+  可选通过 `X-Email-Service-Key` 使用共享密钥。
 - React 生产构建直接写入 `src/main/resources/static/`，该目录是生成物并被 gitignore。
 - OAuth2 callback 和 `app.frontend.url` 当前包含部署域名硬编码；本地 OAuth2 流程需要显式覆盖配置。
 
@@ -156,7 +157,12 @@ JWKS、旧 token 和 Python 资源服务器；真实环境仍需外部密钥管�
 - `POST /api/email/template` 接收 `to`、`subject`、`templateName`、`variables`
   和 `emailType`，并以 JSON `success=true` 表示已接受或入队。
 - 外部服务提供 `email/email-verify` 和 `email/password-reset` 模板，使用
-  `username`、`verificationCode` 和 `expiryMinutes`；当前请求不携带服务鉴权 header。
+  `username`、`verificationCode` 和 `expiryMinutes`，并兼容同时发送的 `code`。
+- `EMAIL_SERVICE_TIMEOUT_MS` 同时约束 connect/read timeout；`EMAIL_SERVICE_API_KEY`
+  非空时，所有 health/template/simple 请求发送 `X-Email-Service-Key`；密钥最长
+  1024 字符且不能包含 CR/LF。
+- `EMAIL_SERVICE_URL` 必须是带 host 的绝对 HTTP/HTTPS URL，禁止 userinfo、query
+  和 fragment；允许 context path 和尾部斜杠。timeout 范围是 `100..600000ms`。
 
 真实邮箱注册验证和密码重置依赖该服务及其下游 SMTP/供应商配置。普通
 `POST /api/auth/login` 的邮箱加密码登录不调用邮件服务；虽然 enum 和前端类型仍有
@@ -168,18 +174,21 @@ JWKS、旧 token 和 Python 资源服务器；真实环境仍需外部密钥管�
 服务行为。`reference/email-service` 的默认 E2E 通过真实 HTTP、Flyway/PostgreSQL、
 真实 Spring Beans、Thymeleaf、异步队列和 GreenMail 验证兼容实现，但不证明真实供应商送达。
 
-参考邮件服务的 schema 由其自己的 Flyway V1 管理，history table 是
+参考邮件服务的 schema 由其自己的 Flyway V1/V2 管理，history table 是
 `email_service_flyway_schema_history`；所有 profile 使用 Hibernate `validate`，
 SQL init 关闭。它必须连接独立数据库，不得连接 UniAuth 或共享数据库。修改该组件时：
 
 ```bash
 cd reference/email-service
-TESTCONTAINERS_RYUK_DISABLED=true mvn clean compile test-compile
-TESTCONTAINERS_RYUK_DISABLED=true mvn test
+scripts/verify.sh
 ```
 
-默认测试使用 disposable PostgreSQL 和进程内 GreenMail，不读取 `.env`，也不发送真实
-邮件。真实 SMTP/供应商验证仍须显式 opt in。
+默认测试使用 disposable PostgreSQL、进程内 GreenMail 和无投递副作用的 Shell
+进程门禁，不读取 `.env`，也不发送真实邮件。`start.sh` 还会拒绝不安全 env 文件、
+非邮件专用数据库和无 API key 的非 loopback 暴露。真实 SMTP/供应商验证仍须显式
+opt in。恢复任务只有在邮件总开关、队列和 recovery 都启用时才处理存量；配置、
+实体、事件和请求 DTO 不得通过自动 `toString()` 泄露 API key、收件人、验证码或
+HTML。
 
 ## Database Reality
 
@@ -242,7 +251,8 @@ npm run test:e2e
 mvn clean compile test-compile
 mvn test
 cd frontend && npm run lint && npx tsc --noEmit && npm run build && npm run test:e2e
-bash -n build-frontend.sh start.sh start-with-frontend.sh scripts/*.sh
+bash -n build-frontend.sh start.sh start-with-frontend.sh scripts/*.sh \
+  reference/email-service/start.sh reference/email-service/scripts/*.sh
 python3 -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") for root in ("python-resource-server", "scripts") for p in Path(root).glob("*.py")]'
 (cd python-resource-server && python3 -m unittest -v test_app.py)
 ```
@@ -256,12 +266,13 @@ PYTHON_BIN=python3 scripts/verify.sh
 
 已知状态（2026-08-07 当前工作树）：
 
-- Maven：83 tests，0 failures/errors/skips。
-- 邮件参考服务：59 tests，0 failures/errors/skips；其中 5 个完整 ApplicationContext E2E。
-- Shell HTTP E2E：13/13。
-- Flyway baseline guard：11/11。
-- Mock Playwright：18 tests。
-- Python：9 tests。
+- Maven：98 tests，0 failures/errors/skips。
+- 邮件参考服务：94 tests，0 failures/errors/skips；另有 runtime guard 15/15、
+  Shell HTTP 8/8 和 Flyway guard 8/8。
+- Shell HTTP E2E：14/14。
+- Flyway baseline guard：12/12。
+- Mock Playwright：19 tests。
+- Python：14 tests。
 - 前端 ESLint、TypeScript 和生产构建通过。
 - 每个未提交批次仍必须在完整门禁后重新执行连续三轮无修改检查；无问题轮次只记录在
   当次工作报告，不为留痕修改仓库文件。
@@ -276,6 +287,8 @@ PYTHON_BIN=python3 scripts/verify.sh
   guard failure matrix 和 `blacksheep_dev` 只读 rehearsal 已通过。
 - `scripts/verify.sh` 是本地统一验证入口；`.github/workflows/verification.yml` 在 CI
   中执行同一入口。
+- 邮件参考服务的统一入口会复制当前非忽略源码到进程专属临时目录后执行全部 Maven
+  和 E2E 阶段，避免并行 `mvn clean` 共享 `target/`；验证期间源文件变化会失败关闭。
 - 后续变更必须重新运行受影响门禁，不能继承该结果。
 - Python 资源服务器已有离线 RSA/JWKS/Flask 测试。
 - 真实 OAuth2、真实邮件和共享数据库写操作仍属于显式 opt-in 验证。

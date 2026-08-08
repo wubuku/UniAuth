@@ -11,7 +11,8 @@ app:
   email:
     service:
       url: ${EMAIL_SERVICE_URL:http://localhost:8095}
-      timeout: 5000
+      timeout: ${EMAIL_SERVICE_TIMEOUT_MS:5000}
+      api-key: ${EMAIL_SERVICE_API_KEY:}
     verification:
       code-length: 6
       expiry-minutes: 10

@@ -76,6 +76,18 @@ class ResourceServerTest(unittest.TestCase):
 
         self.assertEqual(401, response.status_code)
 
+    def test_protected_endpoint_rejects_malformed_authorization_header(self):
+        response = self.client.get(
+            "/api/protected",
+            headers={"Authorization": "Basic not-a-bearer-token"},
+        )
+
+        self.assertEqual(401, response.status_code)
+        self.assertEqual(
+            {"error": "Invalid Authorization header format"},
+            response.get_json(),
+        )
+
     @patch.object(resource_server, "get_jwks")
     def test_valid_rs256_token_reaches_protected_endpoint(self, get_jwks):
         get_jwks.return_value = self.jwks
@@ -108,6 +120,42 @@ class ResourceServerTest(unittest.TestCase):
 
         self.assertFalse(valid)
         self.assertEqual("Invalid token", result)
+
+    def test_missing_kid_is_rejected_before_jwks_lookup(self):
+        now = datetime.now(timezone.utc)
+        token = jwt.encode(
+            {
+                "sub": "user-id",
+                "iss": resource_server.JWT_ISSUER,
+                "aud": resource_server.JWT_AUDIENCE,
+                "iat": now,
+                "exp": now + timedelta(minutes=5),
+            },
+            self.private_key,
+            algorithm="RS256",
+        )
+
+        with patch.object(resource_server, "get_jwks") as get_jwks:
+            valid, result = resource_server.validate_token(token)
+
+        self.assertFalse(valid)
+        self.assertEqual("Invalid token", result)
+        get_jwks.assert_not_called()
+
+    @patch.object(resource_server, "get_jwks")
+    def test_jwks_unavailability_fails_closed(self, get_jwks):
+        get_jwks.return_value = None
+
+        valid, result = resource_server.validate_token(self.token())
+        response = self.client.get(
+            "/api/protected",
+            headers={"Authorization": f"Bearer {self.token()}"},
+        )
+
+        self.assertFalse(valid)
+        self.assertEqual("Validation unavailable", result)
+        self.assertEqual(401, response.status_code)
+        self.assertEqual({"error": "Invalid token"}, response.get_json())
 
     @patch.object(resource_server, "get_jwks")
     def test_wrong_issuer_is_rejected(self, get_jwks):
@@ -187,6 +235,33 @@ class ResourceServerTest(unittest.TestCase):
         self.assertFalse(valid)
         self.assertEqual("Invalid token", result)
         get_jwks.assert_not_called()
+
+    @patch.object(resource_server, "get_jwks")
+    def test_valid_token_reaches_protected_info_endpoint(self, get_jwks):
+        get_jwks.return_value = self.jwks
+
+        response = self.client.get(
+            "/api/protected/info",
+            headers={"Authorization": f"Bearer {self.token()}"},
+        )
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(
+            {
+                "info": "This resource is protected by UniAuth",
+                "allowed_resources": [
+                    "/api/protected",
+                    "/api/protected/info",
+                ],
+            },
+            response.get_json(),
+        )
+
+    def test_protected_info_rejects_missing_bearer_token(self):
+        response = self.client.get("/api/protected/info")
+
+        self.assertEqual(401, response.status_code)
+        self.assertEqual({"error": "Unauthorized"}, response.get_json())
 
 
 if __name__ == "__main__":

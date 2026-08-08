@@ -38,6 +38,15 @@ JavaMailSender 或邮件供应商 SDK 实现；`RestTemplateEmailServiceImpl` �
 服务地址由 `app.email.service.url` 控制，`application.yml` 的显式环境变量入口是
 `EMAIL_SERVICE_URL`，默认值为 `http://localhost:8095`。Spring 标准环境变量
 `APP_EMAIL_SERVICE_URL` 也可覆盖同一属性，Shell E2E 使用该形式指向不可达测试地址。
+该值必须是带真实 host 的绝对 HTTP/HTTPS URL，禁止 userinfo、query 和 fragment；
+允许非空 context path 和尾部斜杠，客户端会在其后追加 `/api/email/*`。
+客户端连接和读取超时共用 `app.email.service.timeout`，通过
+`EMAIL_SERVICE_TIMEOUT_MS` 设置，默认 `5000` 毫秒，有效范围为 `100..600000`
+毫秒。URL 或 timeout 不符合约束时，Spring ApplicationContext 启动失败。
+`EMAIL_SERVICE_API_KEY` 非空时，health、模板和简单邮件请求都会发送
+`X-Email-Service-Key`；外部服务必须配置相同值。该值最长 1024 字符且不能包含
+CR/LF；不符合约束时 UniAuth 会在 ApplicationContext 启动阶段失败，而不是等到
+第一次构造 HTTP header 时才失败。
 
 这里的依赖是协议契约，不只是一个 host/port。外部 RESTful 服务必须满足：
 
@@ -48,7 +57,8 @@ JavaMailSender 或邮件供应商 SDK 实现；`RestTemplateEmailServiceImpl` �
 | 模板 | 提供 `email/email-verify` 和 `email/password-reset` |
 | 模板变量 | 支持 `username`、`verificationCode`、`expiryMinutes`；请求还会同时发送 `code` |
 | 成功响应 | 返回 2xx JSON `success=true`；UniAuth 将其解释为 `QUEUED` |
-| 服务鉴权 | 当前客户端不发送 API key、Bearer token 或其他服务鉴权 header |
+| 服务鉴权 | 可选共享密钥 header `X-Email-Service-Key`；值来自 `EMAIL_SERVICE_API_KEY`，最长 1024 字符且禁止 CR/LF |
+| 超时 | 调用必须在配置的 connect/read timeout 内完成；UniAuth 客户端不自动重试 |
 
 health 响应的最小兼容形状：
 
@@ -87,7 +97,7 @@ health 响应的最小兼容形状：
 外部服务可以额外返回 `queueId`、`message` 等字段，但 UniAuth 当前不会保存或跟踪
 这些值。非 2xx、空响应、无法解析的 JSON 或 `success` 不为 `true` 都不会被适配器
 视为已接受。`/api/email/simple` 虽然存在于当前适配器接口中，但邮箱注册和密码重置
-只依赖模板邮件端点。
+只依赖模板邮件端点。服务 URL 末尾可以有斜杠，客户端会在拼接路径前归一化。
 
 `success=true` 只表示外部服务接受或入队，不代表 SMTP/供应商已经送达邮件。外部服务
 仍需自行负责模板渲染、队列、重试、SMTP/供应商凭据和投递状态。
@@ -96,21 +106,31 @@ health 响应的最小兼容形状：
 
 - 必须使用独立的 `EMAIL_POSTGRES_*` 数据库，不能复用 UniAuth 或共享数据库。
 - Flyway location 是 `classpath:db/migration/postgresql`，history table 是
-  `email_service_flyway_schema_history`，当前 migration 为 V1。
+  `email_service_flyway_schema_history`，当前 migration 为 V1 + V2。
 - 所有 profile 使用 Hibernate `validate`，SQL init 关闭。
+- loopback 监听时 API key 可选；任何非 loopback 监听都必须设置
+  `EMAIL_SERVICE_API_KEY`。设置后所有 `/api/email/**` 端点都要求该 header；参考
+  服务同样在启动阶段拒绝超过 1024 字符或包含 CR/LF 的值。
 - SMTP 首选 `SMTP_*` 和 `EMAIL_FROM_*` 变量；从来源 `.env` 复制的
   `SPRING_MAIL_USERNAME`、`SPRING_MAIL_PASSWORD`、`APP_MAIL_FROM_EMAIL` 仍兼容。
 - 本机 `.env` 被忽略且不得提交；它不替代显式数据库、SMTP host/port 和 TLS 配置。
+- `reference/email-service/start.sh` 会拒绝非邮件专用数据库名、非 disposable 的
+  dev 数据库、权限过宽或符号链接形式的 env 文件，以及未受保护的非 loopback 暴露。
+- `EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES` 有效范围为 `1..10080`；恢复任务只有在
+  `app.mail.enabled`、`app.mail.queue.enabled` 和 `app.mail.recovery.enabled`
+  同时为 true 时才会处理 pending/stuck 队列。
+- API key 配置对象、持久化实体、队列事件和 HTTP 请求 DTO 不生成包含 API key、
+  收件人、验证码或 HTML 的自动 `toString()`；日志和异常仍需遵守同一脱敏边界。
 
 完整启动、Flyway 和验证说明见
 [邮件服务参考实现 README](../reference/email-service/README.md)。
 
-当前实现还有两个必须显式知晓的限制：
+当前实现还有一个必须显式知晓的限制：
 
-- `app.email.service.timeout: 5000` 已出现在 YAML，但 `RestTemplate` 仍以
-  `new RestTemplate()` 创建，该值目前没有绑定到 connect/read timeout。
-- 邮件服务不可用、返回失败或后续异步投递失败时，UniAuth 仍可能保存验证码，
+- 邮件服务不可用、超时、返回失败或后续异步投递失败时，UniAuth 仍可能保存验证码，
   `/api/auth/send-verification-code` 和忘记密码接口仍可能返回发送成功。
+- 参考服务的队列恢复是至少一次语义；SMTP 已接受后若数据库提交失败、进程崩溃或
+  stuck 记录被 recovery worker 重新领取，可能重复发送同一 queue id 的邮件。
 
 因此，生产启用邮箱流程前不能只检查 UniAuth 接口返回值；必须另外验证外部服务
 可达、模板存在、SMTP/供应商凭据有效，并完成一条显式 opt-in 的真实收件测试。

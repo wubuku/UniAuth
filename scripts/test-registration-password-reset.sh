@@ -42,7 +42,8 @@ post_json() {
 value_or_empty() {
   local response="$1"
   local filter="$2"
-  jq -r "${filter} // empty" <<<"${response}" 2>/dev/null
+  jq -r "(${filter}) | if . == null then empty else . end" \
+    <<<"${response}" 2>/dev/null
 }
 
 echo "Registration and password-reset API contract check"

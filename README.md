@@ -2,7 +2,7 @@
 
 > 状态：Needs verification。H0.1-H0.3、PostgreSQL/Flyway H1.1-H1.3、测试基础
 > Batch A、登录方式约束 Batch B1、删除/primary 并发保护 Batch B2a 与实体约束/索引
-> 对齐 Batch B2b 已完成加固验证，但项目尚无生产就绪证明。
+> 对齐 Batch B2b、邮件服务边界与参考实现已完成加固验证，但项目尚无生产就绪证明。
 > 仓库不默认激活 Spring profile，所有 profile 只支持显式 PostgreSQL，Flyway 是唯一
 > schema owner，演示数据默认关闭且不执行全表清理。
 > 开始开发或启动前，请先阅读 [文档导航](docs/README.md)、
@@ -21,12 +21,12 @@
 | 邮件发送 | 外部 HTTP 服务，默认端口 `8095`；`reference/email-service/` 提供独立参考实现 |
 | 数据库 | PostgreSQL-only |
 | Migration | Flyway V1 baseline + V2 + V3 + V4，history `uniauth_flyway_schema_history` |
-| Java 验证 | 83 tests |
-| 邮件参考服务 | 59 tests，其中 5 个 PostgreSQL/HTTP/SMTP E2E |
-| HTTP E2E | 13/13 |
-| Flyway baseline guard | 11/11 |
-| Playwright | 18 tests |
-| Python | 9 tests |
+| Java 验证 | 98 tests |
+| 邮件参考服务 | 94 tests；另有 runtime 15/15、HTTP 8/8、Flyway guard 8/8 |
+| HTTP E2E | 14/14 |
+| Flyway baseline guard | 12/12 |
+| Playwright | 19 tests |
+| Python | 14 tests |
 | 前端 lint/type/build | 通过 |
 
 安全启动、测试和 baseline 操作见 [开发指南](docs/DEVELOPMENT.md) 与
@@ -63,7 +63,10 @@ HTTP 客户端适配器，不直接连接 SMTP 或邮件供应商；仓库中的
 [邮件服务参考实现](reference/email-service/README.md) 是独立 Maven 组件，不由根应用
 自动构建或启动。已建立账户后的邮箱加密码登录不发送邮件；当前也没有受支持的
 “每次登录发送验证码”无密码登录接口。完整依赖契约见
-[配置基线](docs/CONFIGURATION.md#邮件服务依赖)。
+[配置基线](docs/CONFIGURATION.md#邮件服务依赖)。该契约包括固定 health/template
+端点、模板名和变量、`success=true` 入队语义、可选 `X-Email-Service-Key` 以及
+connect/read timeout，不只是一个服务 URL；URL 本身也必须是带 host、无
+userinfo/query/fragment 的绝对 HTTP/HTTPS 地址。
 
 | 属性 | 说明 |
 |------|------|

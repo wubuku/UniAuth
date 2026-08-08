@@ -261,7 +261,7 @@ echo "HTTP E2E: starting the real application through start.sh"
 start_application
 wait_for_application
 
-echo "1/13 Verify Flyway-owned PostgreSQL startup"
+echo "1/14 Verify Flyway-owned PostgreSQL startup"
 [ "$(db_value "
     SELECT count(*)
     FROM uniauth_flyway_schema_history
@@ -419,7 +419,7 @@ expect_db_rejection "
     COMMIT;
 " "database accepted an invalid provider login-method shape"
 
-echo "2/13 Verify fail-closed HTTP security boundaries"
+echo "2/14 Verify fail-closed HTTP security boundaries"
 [ "$(request_status GET /api/user)" = "401" ] \
     || fail "anonymous current-user request did not return 401"
 [ "$(request_status GET /api/auth/check-user)" = "403" ] \
@@ -435,7 +435,7 @@ jwks_response="$(curl -sS "${BASE_URL}/oauth2/jwks")"
 [ "$(jq -er '.keys[0].alg' <<<"$jwks_response")" = "RS256" ] \
     || fail "JWKS did not expose RS256"
 
-echo "3/13 Register and authenticate a local account"
+echo "3/14 Register and authenticate a local account"
 local_username="shell-user-${RUN_ID}"
 local_email="${local_username}@example.invalid"
 local_password="initial-password-${RUN_ID}"
@@ -484,7 +484,7 @@ login_response="$(
 access_token="$(jq -er '.accessToken' <<<"$login_response")"
 refresh_token="$(jq -er '.refreshToken' <<<"$login_response")"
 
-echo "4/13 Verify protected APIs, persistence, and JWT contracts"
+echo "4/14 Verify protected APIs, persistence, and JWT contracts"
 current_user="$(
     curl -sS \
         -H "Authorization: Bearer $access_token" \
@@ -531,7 +531,7 @@ introspection="$(
       AND last_used_at IS NOT NULL;
 ")" = "1" ] || fail "successful login did not persist last_used_at"
 
-echo "5/13 Restart the application without replaying migrations or losing data"
+echo "5/14 Restart the application without replaying migrations or losing data"
 stop_application
 start_application
 wait_for_application
@@ -551,7 +551,7 @@ restarted_user="$(
 [ "$(jq -er '.userId' <<<"$restarted_user")" = "$local_user_id" ] \
     || fail "the pre-restart access token did not work after restart"
 
-echo "6/13 Refresh tokens and reject token type confusion"
+echo "6/14 Refresh tokens and reject token type confusion"
 refresh_response="$(
     curl -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
         -X POST "${BASE_URL}/api/auth/refresh"
@@ -579,7 +579,7 @@ access_as_refresh_status="$(
 [ "$access_as_refresh_status" = "401" ] \
     || fail "access token was accepted as a refresh token"
 
-echo "7/13 Authenticate a new Web3 account and reject message tampering"
+echo "7/14 Authenticate a new Web3 account and reject message tampering"
 web3_wallet="$(create_wallet)"
 web3_address="$(jq -er '.address' <<<"$web3_wallet")"
 web3_challenge="$(signed_challenge "$web3_wallet")"
@@ -621,7 +621,7 @@ repeat_web3_login="$(post_json /api/auth/web3/verify "$repeat_web3_challenge")"
 [ "$(jq -er '.isNewUser' <<<"$repeat_web3_login")" = "false" ] \
     || fail "repeat Web3 login was incorrectly marked as new"
 
-echo "8/13 Verify header/cookie identity precedence"
+echo "8/14 Verify header/cookie identity precedence"
 conflicting_identity="$(
     curl -sS \
         -H "Authorization: Bearer $web3_access_token" \
@@ -638,7 +638,7 @@ manual_cookie_identity="$(
 [ "$(jq -er '.userId' <<<"$manual_cookie_identity")" = "$local_user_id" ] \
     || fail "cookie-only authentication selected the wrong identity"
 
-echo "9/13 Bind and manage a Web3 login method for the local account"
+echo "9/14 Bind and manage a Web3 login method for the local account"
 binding_wallet="$(create_wallet)"
 binding_challenge="$(signed_challenge "$binding_wallet")"
 missing_binding_token_status="$(
@@ -867,10 +867,11 @@ delete_last_status="$(
 [ "$delete_last_status" = "400" ] \
     || fail "the last login method could be deleted"
 
-echo "10/13 Run the email registration and password-reset HTTP flow"
+echo "10/14 Run the email registration and password-reset HTTP flow"
+email_flow_address="shell-email-${RUN_ID}@example.invalid"
 if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     BASE_URL="$BASE_URL" \
-    EMAIL="shell-email-${RUN_ID}@example.invalid" \
+    EMAIL="$email_flow_address" \
     PASSWORD="$local_password" \
     NEW_PASSWORD="$local_new_password" \
     POSTGRES_HOST=127.0.0.1 \
@@ -882,7 +883,17 @@ if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     fail "email registration/password-reset subflow failed"
 fi
 
-echo "11/13 Exhaust an invalid email verification retry budget"
+echo "11/14 Run registration and password-reset rejection contracts"
+if ! DISPOSABLE_TEST_ENVIRONMENT=true \
+    BASE_URL="$BASE_URL" \
+    EMAIL_EXISTS="$email_flow_address" \
+    EMAIL_NOT_REGISTERED="shell-contract-${RUN_ID}@example.invalid" \
+    TEST_PASSWORD="$local_new_password" \
+        "$PROJECT_DIR/scripts/test-registration-password-reset.sh"; then
+    fail "registration/password-reset rejection contract subflow failed"
+fi
+
+echo "12/14 Exhaust an invalid email verification retry budget"
 retry_email="shell-retry-${RUN_ID}@example.invalid"
 retry_send_payload="$(
     jq -cn \
@@ -936,7 +947,7 @@ done
     WHERE email = '$retry_email' AND is_used = false;
 ")" = "0" ] || fail "exhausted email verification challenge remained usable"
 
-echo "12/13 Verify logout cookie clearing"
+echo "13/14 Verify logout cookie clearing"
 logout_headers="$TEMP_DIR/logout-headers.txt"
 logout_response="$(
     curl -sS -D "$logout_headers" \
@@ -950,7 +961,7 @@ grep -qi 'set-cookie: accessToken=.*Max-Age=0' "$logout_headers" \
 grep -qi 'set-cookie: refreshToken=.*Max-Age=0' "$logout_headers" \
     || fail "logout did not clear the refresh-token cookie"
 
-echo "13/13 Verify final database invariants"
+echo "14/14 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
     || fail "the E2E harness connected to an unexpected database"
 [ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "4" ] \

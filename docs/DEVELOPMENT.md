@@ -140,26 +140,36 @@ Flyway 是唯一 schema owner。已发布 migration 不得改写；新增结构�
 
 ```bash
 cd reference/email-service
-TESTCONTAINERS_RYUK_DISABLED=true mvn clean compile test-compile
-TESTCONTAINERS_RYUK_DISABLED=true mvn test
+scripts/verify.sh
 ```
 
-该门禁使用 disposable PostgreSQL、Flyway 和进程内 GreenMail，覆盖真实 HTTP 与完整
-Spring ApplicationContext，但不会连接外部 SMTP 或发送真实邮件。统一
-`scripts/verify.sh` 会执行同一门禁。
+该门禁包含 Maven/ApplicationContext/GreenMail 测试、runtime guard、真实进程 HTTP
+E2E 和 Flyway fail-closed guard；所有 PostgreSQL 都是 disposable，不会连接外部
+SMTP 或发送真实邮件。入口在进程专属临时源码快照中运行，避免并行 Maven `clean`
+互相删除 `target/`；如果原源码在验证期间变化，门禁会失败并要求重跑。根
+`scripts/verify.sh` 会执行同一入口。
 
 启用邮箱注册验证或密码重置前：
 
 1. 单独启动[参考实现](../reference/email-service/README.md)或其他满足
    [邮件服务契约](CONFIGURATION.md#邮件服务依赖)的独立服务。
 2. 为该服务配置模板、队列和 SMTP/邮件供应商凭据。
-3. 设置 `EMAIL_SERVICE_URL`，并确认后端进程能够访问 `/api/email/health`。
-4. 明确认知 health 和 `success=true` 只证明服务存活或请求入队，不证明最终送达。
-5. 使用隔离账户执行显式 opt-in 的真实收件测试；不要把它加入默认门禁。
+3. 通过参考组件的 `start.sh` 或等价受保护入口启动，确认使用独立邮件数据库。
+4. 设置 `EMAIL_SERVICE_URL` 和 `EMAIL_SERVICE_TIMEOUT_MS`；URL 必须是带 host、
+   无 userinfo/query/fragment 的绝对 HTTP/HTTPS 地址，timeout 必须在
+   `100..600000ms`。若服务要求共享密钥，两端设置相同的
+   `EMAIL_SERVICE_API_KEY`；该值最长 1024 字符且不能包含 CR/LF。
+5. 确认后端进程能够携带所需 header 访问 `/api/email/health`。
+6. 明确认知 health 和 `success=true` 只证明服务存活或请求入队，不证明最终送达。
+7. 使用隔离账户执行显式 opt-in 的真实收件测试；不要把它加入默认门禁。
 
 邮件服务未启动不会阻止 Spring Boot 启动，也不会影响已验证账户的邮箱加密码登录。
 但当前降级行为会让注册/重置接口在部分投递失败场景下仍报告成功，因此不能把
 “接口返回成功”当作邮件能力已配置完成的证据。
+
+参考服务的恢复扫描间隔必须在 `1..10080` 分钟。关闭邮件总开关、队列或 recovery
+任一项后，恢复任务不得发送既有 pending/stuck 队列；重新启用前应先确认积压和真实
+投递副作用。
 
 live 测试脚本默认使用当前端口和一次性数据库；历史脚本/文档仍可能包含旧目标，
 运行前先检查生命周期状态。

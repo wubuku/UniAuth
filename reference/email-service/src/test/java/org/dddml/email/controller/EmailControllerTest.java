@@ -8,11 +8,14 @@ import org.dddml.email.service.EmailQueueService;
 import org.dddml.email.service.EmailService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -45,12 +48,15 @@ class EmailControllerTest {
         emailQueueService = mock(EmailQueueService.class);
         emailLogRepository = mock(EmailLogRepository.class);
 
-        emailController = new EmailController();
-        setField(emailController, "emailService", emailService);
-        setField(emailController, "emailQueueService", emailQueueService);
-        setField(emailController, "emailLogRepository", emailLogRepository);
+        emailController = new EmailController(
+            emailService,
+            emailQueueService,
+            emailLogRepository
+        );
 
-        mockMvc = MockMvcBuilders.standaloneSetup(emailController).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(emailController)
+            .setControllerAdvice(new EmailControllerAdvice())
+            .build();
 
         testQueue = EmailQueue.builder()
                 .id(1L)
@@ -75,16 +81,6 @@ class EmailControllerTest {
                 .durationMs(100L)
                 .sentTime(LocalDateTime.now())
                 .build();
-    }
-
-    private void setField(Object target, String fieldName, Object value) {
-        try {
-            java.lang.reflect.Field field = target.getClass().getDeclaredField(fieldName);
-            field.setAccessible(true);
-            field.set(target, value);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
     }
 
     @Test
@@ -129,7 +125,7 @@ class EmailControllerTest {
                         .content(requestBody))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.message").value("SMTP connection failed"));
+                .andExpect(jsonPath("$.message").value("Email service request failed"));
     }
 
     @Test
@@ -205,7 +201,8 @@ class EmailControllerTest {
 
     @Test
     void testGetEmailLogs() throws Exception {
-        when(emailLogRepository.findAll()).thenReturn(List.of(testLog));
+        when(emailLogRepository.findAll(org.mockito.ArgumentMatchers.any(Pageable.class)))
+            .thenReturn(new PageImpl<>(List.of(testLog)));
 
         mockMvc.perform(get("/api/email/logs")
                         .param("page", "1")
@@ -220,7 +217,10 @@ class EmailControllerTest {
 
     @Test
     void testGetEmailLogs_FilterByStatus() throws Exception {
-        when(emailLogRepository.findByStatus("SUCCESS")).thenReturn(List.of(testLog));
+        when(emailLogRepository.findByStatus(
+                eq("SUCCESS"),
+                org.mockito.ArgumentMatchers.any(Pageable.class)))
+            .thenReturn(new PageImpl<>(List.of(testLog)));
 
         mockMvc.perform(get("/api/email/logs")
                         .param("status", "SUCCESS"))
@@ -246,5 +246,23 @@ class EmailControllerTest {
                 .andExpect(jsonPath("$.status").value("UP"))
                 .andExpect(jsonPath("$.service").value("email-service"))
                 .andExpect(jsonPath("$.timestamp").exists());
+    }
+
+    @Test
+    void requestObjectsDoNotExposeRecipientsOrEmailContentInObjectStrings() {
+        EmailController.SimpleEmailRequest simple =
+            new EmailController.SimpleEmailRequest();
+        simple.setTo("sensitive@example.test");
+        simple.setHtmlContent("<p>verification-code-246810</p>");
+
+        EmailController.TemplateEmailRequest template =
+            new EmailController.TemplateEmailRequest();
+        template.setTo("template-sensitive@example.test");
+        template.setVariables(java.util.Map.of("verificationCode", "135790"));
+
+        assertThat(simple.toString())
+            .doesNotContain("sensitive@example.test", "verification-code-246810");
+        assertThat(template.toString())
+            .doesNotContain("template-sensitive@example.test", "135790");
     }
 }

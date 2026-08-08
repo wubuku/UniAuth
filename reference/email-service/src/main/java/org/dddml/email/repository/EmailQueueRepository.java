@@ -19,17 +19,27 @@ public interface EmailQueueRepository extends JpaRepository<EmailQueue, Long> {
     @Query("SELECT e FROM EmailQueue e WHERE " +
            "(e.status = 'PENDING' AND (e.nextRetryTime IS NULL OR e.nextRetryTime <= :now)) " +
            "OR (e.status = 'PROCESSING' AND e.updatedTime < :stuckTime) " +
-           "ORDER BY e.priority ASC, e.createdTime ASC")
+           "ORDER BY e.priority DESC, e.createdTime ASC")
     Page<EmailQueue> findFailedOrStuckEmails(
         @Param("now") LocalDateTime now,
         @Param("stuckTime") LocalDateTime stuckTime,
         Pageable pageable);
 
-    @Modifying
-    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE EmailQueue e SET e.status = 'PROCESSING', e.updatedTime = :now " +
-           "WHERE e.id = :id AND e.status = 'PENDING'")
-    int updateStatusToProcessing(@Param("id") Long id, @Param("now") LocalDateTime now);
+           "WHERE e.id = :id AND e.status = 'PENDING' " +
+           "AND (e.nextRetryTime IS NULL OR e.nextRetryTime <= :now)")
+    int claimPending(@Param("id") Long id, @Param("now") LocalDateTime now);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE EmailQueue e SET e.status = 'PROCESSING', e.updatedTime = :now " +
+           "WHERE e.id = :id AND (" +
+           "(e.status = 'PENDING' AND (e.nextRetryTime IS NULL OR e.nextRetryTime <= :now)) " +
+           "OR (e.status = 'PROCESSING' AND e.updatedTime < :stuckTime))")
+    int claimRecoverable(
+        @Param("id") Long id,
+        @Param("now") LocalDateTime now,
+        @Param("stuckTime") LocalDateTime stuckTime);
 
     long countByStatus(String status);
 
