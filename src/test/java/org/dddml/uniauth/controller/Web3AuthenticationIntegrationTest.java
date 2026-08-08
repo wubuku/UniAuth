@@ -6,6 +6,7 @@ import jakarta.servlet.http.Cookie;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.repository.Web3NonceRepository;
+import org.dddml.uniauth.service.Web3NonceService;
 import org.dddml.uniauth.support.PostgreSqlIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,6 +23,12 @@ import org.web3j.utils.Numeric;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -45,6 +52,9 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
 
     @Autowired
     private Web3NonceRepository web3NonceRepository;
+
+    @Autowired
+    private Web3NonceService web3NonceService;
 
     @Test
     void signedNonceCreatesOneWeb3UserAndCannotBeReplayed() throws Exception {
@@ -198,6 +208,129 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
+    void everySiweFieldIsBoundToTheIssuedChallenge() throws Exception {
+        ECKeyPair keyPair = Keys.createEcKeyPair();
+        String walletAddress = "0x" + Keys.getAddress(keyPair.getPublicKey());
+        SignedChallenge challenge = requestSignedChallenge(walletAddress, keyPair);
+
+        List<String> tamperedMessages = List.of(
+                challenge.message().replaceFirst(
+                        "^.* wants you to sign in",
+                        "attacker.example wants you to sign in"
+                ),
+                challenge.message().replace(
+                        walletAddress,
+                        "0x0000000000000000000000000000000000000001"
+                ),
+                challenge.message().replace(
+                        "URI: https://api.u2511175.nyat.app",
+                        "URI: https://attacker.example"
+                ),
+                challenge.message().replace("Chain ID: 1", "Chain ID: 5"),
+                challenge.message().replace(
+                        "Nonce: " + challenge.nonce(),
+                        "Nonce: replaced-nonce"
+                ),
+                challenge.message().replace(
+                        "Issued At: ",
+                        "Issued At: 2000-01-01T00:00:00Z\n# Issued At: "
+                ),
+                challenge.message().replace(
+                        "Expiration Time: ",
+                        "Expiration Time: 2099-01-01T00:00:00Z\n# Expiration Time: "
+                )
+        );
+
+        for (String tamperedMessage : tamperedMessages) {
+            String tamperedSignature = signMessage(tamperedMessage, keyPair);
+            mockMvc.perform(post("/api/auth/web3/verify")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(requestBody(
+                                    challenge.walletAddress(),
+                                    tamperedMessage,
+                                    tamperedSignature,
+                                    challenge.nonce(),
+                                    1
+                            )))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.errorCode").value("INVALID_SIGNATURE"));
+        }
+
+        mockMvc.perform(post("/api/auth/web3/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(challenge.requestBody()))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void requestChainIdMustMatchTheSupportedSiweChain() throws Exception {
+        ECKeyPair keyPair = Keys.createEcKeyPair();
+        String walletAddress = "0x" + Keys.getAddress(keyPair.getPublicKey());
+        SignedChallenge challenge = requestSignedChallenge(walletAddress, keyPair);
+
+        mockMvc.perform(post("/api/auth/web3/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody(
+                                challenge.walletAddress(),
+                                challenge.message(),
+                                challenge.signature(),
+                                challenge.nonce(),
+                                5
+                        )))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.errorCode").value("INVALID_SIGNATURE"));
+
+        mockMvc.perform(post("/api/auth/web3/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(challenge.requestBody()))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void theSameSignedChallengeCanOnlyBeConsumedOnceConcurrently() throws Exception {
+        ECKeyPair keyPair = Keys.createEcKeyPair();
+        String walletAddress = "0x" + Keys.getAddress(keyPair.getPublicKey());
+        SignedChallenge challenge = requestSignedChallenge(walletAddress, keyPair);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        List<Integer> statuses = new ArrayList<>();
+
+        try {
+            var futures = List.of(1, 2).stream()
+                    .map(ignored -> executor.submit(() -> {
+                        ready.countDown();
+                        assertThat(start.await(10, TimeUnit.SECONDS)).isTrue();
+                        return mockMvc.perform(post("/api/auth/web3/verify")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(challenge.requestBody()))
+                                .andReturn()
+                                .getResponse()
+                                .getStatus();
+                    }))
+                    .toList();
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            futures.forEach(future -> {
+                try {
+                    statuses.add(future.get(10, TimeUnit.SECONDS));
+                } catch (Exception e) {
+                    throw new AssertionError("Concurrent Web3 verification failed", e);
+                }
+            });
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(statuses).containsExactlyInAnyOrder(200, 401);
+        assertThat(web3NonceRepository.findByWalletAddress(walletAddress)).isEmpty();
+        assertThat(loginMethodRepository.findByAuthProviderAndProviderUserId(
+                UserLoginMethod.AuthProvider.WEB3,
+                walletAddress
+        )).isPresent();
+    }
+
+    @Test
     void latestNonceSupersedesEarlierChallengeForTheSameWallet() throws Exception {
         ECKeyPair keyPair = Keys.createEcKeyPair();
         String walletAddress = "0x" + Keys.getAddress(keyPair.getPublicKey());
@@ -214,6 +347,64 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(latestChallenge.requestBody()))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void concurrentNonceGenerationLeavesOneCompleteLatestChallenge() throws Exception {
+        ECKeyPair keyPair = Keys.createEcKeyPair();
+        String walletAddress = "0x" + Keys.getAddress(keyPair.getPublicKey());
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        List<JsonNode> responses = new ArrayList<>();
+
+        try {
+            var futures = List.of(1, 2).stream()
+                    .map(ignored -> executor.submit(() -> {
+                        ready.countDown();
+                        assertThat(start.await(10, TimeUnit.SECONDS)).isTrue();
+                        return responseJson(mockMvc.perform(
+                                get("/api/auth/web3/nonce/{wallet}", walletAddress)
+                        ).andExpect(status().isOk()).andReturn());
+                    }))
+                    .toList();
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            futures.forEach(future -> {
+                try {
+                    responses.add(future.get(10, TimeUnit.SECONDS));
+                } catch (Exception e) {
+                    throw new AssertionError("Concurrent Web3 nonce generation failed", e);
+                }
+            });
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(responses).hasSize(2);
+        assertThat(web3NonceRepository.findByWalletAddress(walletAddress))
+                .isPresent()
+                .get()
+                .satisfies(nonce -> {
+                    assertThat(responses).anyMatch(response ->
+                            nonce.getMessage().equals(response.path("message").asText())
+                                    && nonce.getNonce().equals(response.path("nonce").asText())
+                    );
+                });
+    }
+
+    @Test
+    void expiredNonceLookupRemovesTheChallenge() {
+        String walletAddress = "0x0000000000000000000000000000000000000001";
+        web3NonceService.saveNonce(
+                walletAddress,
+                "expired-nonce",
+                "expired-message",
+                Instant.now().minusSeconds(1)
+        );
+
+        assertThat(web3NonceService.getNonce(walletAddress)).isNull();
+        assertThat(web3NonceRepository.findByWalletAddress(walletAddress)).isEmpty();
     }
 
     @Test
@@ -245,6 +436,17 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
         JsonNode nonceBody = responseJson(nonceResult);
         String nonce = nonceBody.path("nonce").asText();
         String message = nonceBody.path("message").asText();
+        Instant messageExpiration = message.lines()
+                .filter(line -> line.startsWith("Expiration Time: "))
+                .map(line -> line.substring("Expiration Time: ".length()))
+                .map(Instant::parse)
+                .findFirst()
+                .orElseThrow();
+        assertThat(web3NonceRepository.findByWalletAddress(walletAddress))
+                .isPresent()
+                .get()
+                .extracting(storedNonce -> storedNonce.getExpiresAt())
+                .isEqualTo(messageExpiration);
         String signature = signMessage(message, keyPair);
 
         return new SignedChallenge(
@@ -261,12 +463,21 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
             String message,
             String signature,
             String nonce) throws Exception {
+        return requestBody(walletAddress, message, signature, nonce, 1);
+    }
+
+    private String requestBody(
+            String walletAddress,
+            String message,
+            String signature,
+            String nonce,
+            Integer chainId) throws Exception {
         return objectMapper.writeValueAsString(new Web3Request(
                 walletAddress,
                 message,
                 signature,
                 nonce,
-                1
+                chainId
         ));
     }
 

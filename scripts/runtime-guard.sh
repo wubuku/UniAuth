@@ -53,9 +53,18 @@ uniauth_require_disposable_database_name() {
     esac
 }
 
+uniauth_require_schema_owner() {
+    if [ "${SPRING_FLYWAY_ENABLED:-true}" != "true" ]; then
+        echo "Error: SPRING_FLYWAY_ENABLED must be exactly true" >&2
+        return 1
+    fi
+}
+
 uniauth_prepare_runtime() {
     local project_dir="$1"
     local profile="${SPRING_PROFILES_ACTIVE:-dev}"
+
+    uniauth_require_schema_owner || return 1
 
     case "$profile" in
         dev)

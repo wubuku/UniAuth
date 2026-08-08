@@ -3,6 +3,7 @@ package org.dddml.uniauth.config;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.core.env.PropertySource;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.core.io.ClassPathResource;
 
 import java.io.IOException;
@@ -12,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ConfigurationSafetyTest {
 
@@ -64,14 +66,24 @@ class ConfigurationSafetyTest {
     @Test
     void supportedProfilesDelegateSchemaOwnershipToFlyway() throws IOException {
         assertThat(property("application.yml", "spring.flyway.enabled")).isEqualTo(true);
+        assertThat(property("application.yml", "spring.flyway.fail-on-missing-locations"))
+                .isEqualTo(true);
         assertThat(property("application.yml", "spring.flyway.locations"))
                 .isEqualTo("classpath:db/migration/postgresql");
         assertThat(property("application.yml", "spring.flyway.table"))
                 .isEqualTo("uniauth_flyway_schema_history");
         assertThat(property("application.yml", "spring.flyway.baseline-on-migrate"))
                 .isEqualTo(false);
+        assertThat(property("application.yml", "spring.flyway.baseline-version"))
+                .isEqualTo(0);
         assertThat(property("application.yml", "spring.flyway.clean-disabled"))
                 .isEqualTo(true);
+        assertThat(property("application.yml", "spring.flyway.validate-migration-naming"))
+                .isEqualTo(true);
+        assertThat(property("application.yml", "spring.flyway.validate-on-migrate"))
+                .isEqualTo(true);
+        assertThat(property("application.yml", "spring.flyway.out-of-order"))
+                .isEqualTo(false);
 
         for (String profile : List.of("dev", "test", "prod")) {
             assertThat(property("application-" + profile + ".yml", "spring.jpa.hibernate.ddl-auto"))
@@ -81,6 +93,18 @@ class ConfigurationSafetyTest {
             assertThat(property("application-" + profile + ".yml",
                     "spring.session.jdbc.initialize-schema")).isEqualTo("never");
         }
+    }
+
+    @Test
+    void runtimeRejectsFlywayBeingDisabled() {
+        MockEnvironment environment = new MockEnvironment()
+                .withProperty("spring.flyway.enabled", "false");
+
+        assertThatThrownBy(() ->
+                new UniAuthFlywayMigrationConfig()
+                        .uniAuthFlywayMigrationStrategy(environment))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("SPRING_FLYWAY_ENABLED");
     }
 
     @Test
@@ -112,7 +136,8 @@ class ConfigurationSafetyTest {
                             "V1__baseline_uniauth_auth_schema.sql",
                             "V2__harden_login_method_invariants.sql",
                             "V3__add_login_method_revision.sql",
-                            "V4__align_entity_constraints_and_indexes.sql"
+                            "V4__align_entity_constraints_and_indexes.sql",
+                            "V5__bind_web3_nonce_to_siwe_message.sql"
                     );
         }
     }
@@ -162,9 +187,21 @@ class ConfigurationSafetyTest {
         assertThat(runRuntimeGuard("test", "blacksheep_dev")).isNotZero();
         assertThat(runRuntimeGuard("test", "uniauth_http_e2e_test")).isZero();
         assertThat(runRuntimeGuard("dev", "blacksheep_dev")).isZero();
+        assertThat(runRuntimeGuard(
+                "test",
+                "uniauth_http_e2e_test",
+                Map.of("SPRING_FLYWAY_ENABLED", "false")
+        )).isNotZero();
     }
 
     private int runRuntimeGuard(String profile, String databaseName) throws IOException {
+        return runRuntimeGuard(profile, databaseName, Map.of());
+    }
+
+    private int runRuntimeGuard(
+            String profile,
+            String databaseName,
+            Map<String, String> overrides) throws IOException {
         ProcessBuilder processBuilder = new ProcessBuilder(
                 "bash",
                 "-c",
@@ -177,6 +214,8 @@ class ConfigurationSafetyTest {
         environment.put("POSTGRES_DATABASE", databaseName);
         environment.put("POSTGRES_USER", "uniauth");
         environment.put("POSTGRES_PASSWORD", "test-only");
+        environment.put("SPRING_FLYWAY_ENABLED", "true");
+        environment.putAll(overrides);
         processBuilder.redirectErrorStream(true);
 
         Process process = processBuilder.start();

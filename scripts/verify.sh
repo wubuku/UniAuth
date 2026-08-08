@@ -249,6 +249,7 @@ if [ "$VERIFICATION_ARTIFACTS_ENABLED" = "true" ]; then
 fi
 
 echo "Verification 7/11: HTTP and Flyway shell E2E"
+scripts/test-email-shared-schema-e2e.sh
 scripts/test-http-e2e.sh
 scripts/test-flyway-baseline-guard.sh
 

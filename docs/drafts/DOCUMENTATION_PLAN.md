@@ -91,6 +91,7 @@
 | P1 | 说明参考服务 Flyway schema-owner 配置不可被外部覆盖，并记录 Java/Shell/ApplicationContext/Flyway guard 证据 | 已完成 |
 | P1 | 说明参考服务缺失 migration location 与非法 migration 命名必须 fail closed，并记录覆盖拒绝证据 | 已完成 |
 | P1 | 说明参考服务 JPA repository 测试必须使用 PostgreSQL + Flyway + Hibernate validate，并记录真实约束断言 | 已完成 |
+| P1 | 明确邮件 relation 与 UniAuth V1-V5 无命名冲突，并记录同 public schema 下独立 history、受控 baseline V0、精确 peer history、半成品 peer 拒绝、双启动顺序与选择性备份边界 | 已完成 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -115,13 +116,13 @@
 
 ## 已知事实与待修复项
 
-- `dev`、`test`、`prod` 已统一为显式 PostgreSQL，SQLite runtime 已退役。
-- Flyway V1 baseline + V2 + V3 + V4 已接管 8 张认证/Session 表，并加固登录方式
-  行形状、primary、集合变更 CAS 以及其余目标实体约束和 email repository 索引；
-  旧 SQL 已归档到 runtime classpath 外。
-- Java 已有 PostgreSQL/Testcontainers 集成测试；当前完整门禁数量以最近一次
-  `mvn test` Surefire 汇总为准，Web3 V5 slice 另增字段绑定、并发 upsert/consume
-  覆盖。
+- `dev`、`test`、`prod` 已统一为显式 PostgreSQL 16，SQLite runtime 已退役。
+- Flyway V1 baseline + V2 + V3 + V4 + V5 已接管 8 张认证/Session 表，并加固登录
+  方式行形状、primary、集合变更 CAS、其余目标实体约束、email repository 索引以及
+  Web3/SIWE challenge message 绑定和原子消费；旧 SQL 已归档到 runtime classpath 外。
+- Java 已有 PostgreSQL/Testcontainers 集成测试；当前完整门禁为 140/140，
+  Web3 V5 slice 另增字段绑定、并发 upsert/consume 覆盖，shared-schema slice
+  增加两侧 bootstrap/ApplicationContext 与双进程启动顺序覆盖。
 - HTTP Shell E2E 当前 15/15，Flyway baseline guard 13/13，
   Mock Playwright 21 tests，Python 资源服务器 16 tests，邮件 REST stub contract
   8 tests。
@@ -132,8 +133,9 @@
   RSC/SSR data-router/外部输入决定目标 URL 路径；后续版本升级继续跟踪。
 - UniAuth 主应用只包含外部邮件服务 HTTP 适配器；仓库已纳入独立参考实现。
   live guides 已明确邮箱注册/重置的运行依赖、端点和模板契约、普通密码登录边界，
-  API key/超时、参考组件自己的 Flyway V1/V2、独立数据库、运行保护、完整
-  ApplicationContext E2E 和 Shell 进程门禁；URL 结构、恢复开关和敏感对象字符串
+  API key/超时、参考组件自己的 Flyway V1/V2/V3、默认 `dedicated` 与显式
+  `shared-uniauth` 数据库布局、运行保护、完整 ApplicationContext E2E 和 Shell
+  进程门禁；URL 结构、恢复开关和敏感对象字符串
   约束也已纳入当前指南。生产 SMTP 的强制 STARTTLS/implicit SSL 二选一、
   server identity verification、host/port 形状和默认门禁不执行真实 TLS 握手的
   边界也已说明；最终投递对持久化 recipient/subject/HTML/header token 的二次校验
@@ -146,9 +148,13 @@
   HTTP/Flyway guard 分别达到 10/10 和 11/11，覆盖 queue detail 披露边界、响应
   安全 header、重复鉴权 header，以及 checksum drift 失败关闭、原样保持与显式
   恢复；当前组合计数见下一条。
-- 参考服务当前组合门禁为 Maven 135 tests、Java runtime guard 27/27、另有 1 个
-  PostgreSQL-only Spring Context 启动 guard test、Shell runtime 39/39、HTTP 11/11、
-  Flyway guard 14/14；所有 profile 均拒绝 H2 和其他非 PostgreSQL datasource。
+- 参考服务当前组合门禁为 Maven 148 tests、Java runtime guard 30 tests、另有 1 个
+  PostgreSQL-only Spring Context 启动 guard test、22 个 PostgreSQL/GreenMail
+  ApplicationContext E2E、1 个 shared-schema ApplicationContext test、6 个
+  shared-schema bootstrap tests、Shell runtime 43/43、HTTP 11/11、Flyway guard
+  15/15、backup/restore rehearsal 10/10；根 shared-schema 双进程 E2E 4/4。所有
+  profile 均拒绝 H2 和
+  其他非 PostgreSQL datasource。
   Flyway 唯一 schema owner、缺失 location、migration 命名校验和 datasource 类型的
   固定配置与外部覆盖拒绝已由 Java/Shell/ApplicationContext/Flyway 层共同验证。
 - 根 `scripts/test-http-e2e.sh` 的正常邮箱注册/重置路径已使用真实
@@ -160,8 +166,10 @@
   stub 契约覆盖。外部接受后本地事务失败、异步 delivery 失败、单一 pending
   challenge、canonical email 和可靠 outbox 状态机仍待修复。
 - token blacklist 尚未接入验证、刷新和登出流程。
-- Web3 的 `isNewUser`、bind 返回处理和 EIP-191 字节长度已修复；
-  SIWE 字段绑定、nonce 原子消费和并发重放仍待修复。
+- Web3 的 `isNewUser`、bind 返回处理、EIP-191 字节长度、完整 SIWE message 绑定、
+  PostgreSQL nonce 原子 upsert、带 message/有效期条件的原子消费和并发重放均已
+  修复并由 V5、Java 集成测试和真实 HTTP E2E 覆盖；后续只在新的固定范围中继续
+  复核与 token transport、domain allowlist 等相邻边界的交互。
 - `blacksheep_dev` 只读 baseline rehearsal 已通过，但 baseline apply 尚未执行。
 
 这些问题的总路线图见 `HARDENING_IMPLEMENTATION_PLAN.md`，下一轮实际顺序见

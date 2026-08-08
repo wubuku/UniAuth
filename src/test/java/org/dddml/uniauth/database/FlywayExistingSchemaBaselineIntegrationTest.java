@@ -49,9 +49,9 @@ class FlywayExistingSchemaBaselineIntegrationTest extends PostgreSqlIntegrationT
                 .load();
 
         adoptionFlyway.baseline();
-        assertThat(adoptionFlyway.migrate().migrationsExecuted).isEqualTo(3);
+        assertThat(adoptionFlyway.migrate().migrationsExecuted).isEqualTo(4);
         assertThat(adoptionFlyway.info().current()).isNotNull();
-        assertThat(adoptionFlyway.info().current().getVersion().toString()).isEqualTo("4");
+        assertThat(adoptionFlyway.info().current().getVersion().toString()).isEqualTo("5");
 
         JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
         assertThat(jdbcTemplate.queryForObject(
@@ -96,7 +96,7 @@ class FlywayExistingSchemaBaselineIntegrationTest extends PostgreSqlIntegrationT
             Flyway runtimeFlyway = context.getBean(Flyway.class);
             assertThat(runtimeFlyway.migrate().migrationsExecuted).isZero();
             assertThat(runtimeFlyway.info().current()).isNotNull();
-            assertThat(runtimeFlyway.info().current().getVersion().toString()).isEqualTo("4");
+            assertThat(runtimeFlyway.info().current().getVersion().toString()).isEqualTo("5");
             assertThat(context.getBean(JdbcTemplate.class)
                     .queryForObject("SELECT count(*) FROM users", Long.class))
                     .isZero();

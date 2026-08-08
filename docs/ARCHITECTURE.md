@@ -70,9 +70,20 @@ UniAuth 主应用内的 `RestTemplateEmailServiceImpl` 只是 HTTP 客户端，�
 SMTP 或邮件供应商。外部服务必须提供 health、模板邮件端点、模板和约定的 JSON 响应；
 仓库提供一个独立的[邮件服务参考实现](../reference/email-service/README.md)，其 schema
 由独立 Flyway V1/V2/V3 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP
-E2E 验证。该参考实现的 `dev`、`test`、`prod` profile 均只接受独立 PostgreSQL，
-非 PostgreSQL datasource 会在 Flyway 前失败。参考服务的所有邮件 API 响应还统一
-禁止缓存和 MIME 嗅探。客户端使用专用
+E2E 验证。数据库默认使用独立 PostgreSQL；显式 `shared-uniauth` 可在完整 UniAuth
+V1-V5 的同一 `public` schema 中使用独立 history table 共存，两种启动顺序由共享
+advisory lock 串行化并有真实 ApplicationContext 与双进程 E2E。邮件组件只创建
+`email_queue`、`email_logs`、对应序列/索引/约束和
+`email_service_flyway_schema_history`；这些 relation 名称与 UniAuth V1-V5 无冲突。
+原始兼容问题是后启动 Flyway 面对非空 `public` schema 且缺少自身 history，而不是
+业务表重名。受控兼容路径只在 peer 完整、本侧 relation 不存在且 history 无失败记录
+时创建 baseline V0，`baseline-on-migrate` 仍保持 `false`。非 PostgreSQL datasource 会
+在 Flyway 前失败。双方 history 同时存在后，后续启动继续重新校验 peer history 和
+核心 relation；peer history 必须精确匹配预期成功 SQL 版本，仅可附带 0 或 1 个成功
+V0 baseline，失败、重复、未知 versioned 或 repeatable 记录均被拒绝。任一侧 relation
+已经出现但对应 peer history 不存在时，也视为半成品布局并失败关闭。邮件服务必须
+持续显式选择 `shared-uniauth`。参考服务的所有邮件 API 响应还统一禁止缓存和 MIME
+嗅探。客户端使用专用
 `RestTemplate`，统一应用 connect/read timeout，并可向
 所有邮件服务请求各发送一个 `X-Email-Service-Key`；配置密钥时，兼容服务必须只
 接受恰好一个该 header 且整值精确匹配，缺失、错误或重复同名凭据都返回 `401`，
@@ -101,9 +112,11 @@ generation 并幂等释放，因此旧窗口迟到释放不会误释放新窗口
 可以保留下次重试时间，只有 `FAILED` 可以保留最终错误；worker claim 和所有状态转换
 会清除对新状态已无意义的元数据。该约束属于参考实现内部持久化模型，不要求其他兼容
 REST 服务采用相同表结构。
-参考实现另提供只读、owner-only、同 PostgreSQL major 的 custom backup 工具，并在
-disposable 空库中恢复后启动真实 Spring 应用验证 Flyway history、数据、约束和继续写入；
-这属于参考实现运维证据，不构成生产灾难恢复或外部存储/加密承诺。
+参考实现另提供只读、owner-only、同 PostgreSQL major 的 custom backup 工具。该工具
+在独立或共享布局下都只导出邮件队列、日志、序列和邮件 Flyway history，不会导出
+UniAuth 用户/认证表；disposable 空库恢复后会启动真实 Spring 应用验证 history、
+数据、约束和继续写入。这属于组件级恢复证据，不替代共享数据库的整库灾备，也不
+构成生产灾难恢复或外部存储/加密承诺。
 
 ### API 认证
 

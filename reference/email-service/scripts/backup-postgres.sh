@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 
-# Creates an owner-only PostgreSQL custom-format backup for the standalone
-# email service. The command is read-only against PostgreSQL and publishes the
-# archive only after pg_dump and pg_restore validation both succeed.
+# Creates an owner-only PostgreSQL custom-format backup containing only the
+# email-service relations and Flyway history. The command is read-only against
+# PostgreSQL and publishes the archive only after pg_dump and pg_restore
+# validation both succeed.
 
 set -euo pipefail
 
@@ -83,6 +84,7 @@ database_user="$EMAIL_POSTGRES_USER"
 database_password="$EMAIL_POSTGRES_PASSWORD"
 connect_timeout="${EMAIL_BACKUP_CONNECT_TIMEOUT_SECONDS:-5}"
 backup_dir="$EMAIL_BACKUP_DIR"
+database_layout="${EMAIL_DATABASE_LAYOUT:-dedicated}"
 pg_dump_bin="${EMAIL_PG_DUMP_BIN:-pg_dump}"
 pg_restore_bin="${EMAIL_PG_RESTORE_BIN:-pg_restore}"
 
@@ -98,7 +100,10 @@ email_service_require_integer_range \
     EMAIL_POSTGRES_PORT "$database_port" 1 65535 || exit 1
 email_service_require_integer_range \
     EMAIL_BACKUP_CONNECT_TIMEOUT_SECONDS "$connect_timeout" 1 60 || exit 1
-email_service_require_dedicated_database "$profile" "$database_name" || exit 1
+email_service_require_database_target \
+    "$profile" \
+    "$database_name" \
+    "$database_layout" || exit 1
 
 case "$database_name" in
     *[!A-Za-z0-9_.-]*)
@@ -147,6 +152,103 @@ if ! [[ "$server_version_num" =~ ^[0-9]+$ ]]; then
     fail "unable to determine the source PostgreSQL major version"
 fi
 server_major=$((10#$server_version_num / 10000))
+
+for relation_name in \
+        email_queue \
+        email_queue_id_seq \
+        email_logs \
+        email_logs_id_seq \
+        email_service_flyway_schema_history; do
+    relation_exists="$(
+        PGPASSWORD="$database_password" \
+        PGCONNECT_TIMEOUT="$connect_timeout" \
+        psql \
+            -X -qAt -v ON_ERROR_STOP=1 \
+            --no-password \
+            --host="$database_host" \
+            --port="$database_port" \
+            --username="$database_user" \
+            --dbname="$database_name" \
+            -c "SELECT to_regclass('public.${relation_name}') IS NOT NULL;"
+    )"
+    if [ "$relation_exists" != "t" ]; then
+        fail "email service schema object is missing: public.${relation_name}"
+    fi
+done
+
+successful_migration_counts="$(
+    PGPASSWORD="$database_password" \
+    PGCONNECT_TIMEOUT="$connect_timeout" \
+    psql \
+        -X -qAt -v ON_ERROR_STOP=1 \
+        --no-password \
+        --host="$database_host" \
+        --port="$database_port" \
+        --username="$database_user" \
+        --dbname="$database_name" \
+        -c "
+            SELECT concat_ws(
+                ',',
+                count(*) FILTER (WHERE success IS TRUE AND version = '1'),
+                count(*) FILTER (WHERE success IS TRUE AND version = '2'),
+                count(*) FILTER (WHERE success IS TRUE AND version = '3')
+            )
+            FROM public.email_service_flyway_schema_history
+        "
+)"
+baseline_migrations="$(
+    PGPASSWORD="$database_password" \
+    PGCONNECT_TIMEOUT="$connect_timeout" \
+    psql \
+        -X -qAt -v ON_ERROR_STOP=1 \
+        --no-password \
+        --host="$database_host" \
+        --port="$database_port" \
+        --username="$database_user" \
+        --dbname="$database_name" \
+        -c "
+            SELECT count(*)
+            FROM public.email_service_flyway_schema_history
+            WHERE success IS TRUE
+              AND type = 'BASELINE'
+              AND version = '0';
+        "
+)"
+unexpected_migrations="$(
+    PGPASSWORD="$database_password" \
+    PGCONNECT_TIMEOUT="$connect_timeout" \
+    psql \
+        -X -qAt -v ON_ERROR_STOP=1 \
+        --no-password \
+        --host="$database_host" \
+        --port="$database_port" \
+        --username="$database_user" \
+        --dbname="$database_name" \
+        -c "
+            SELECT count(*)
+            FROM public.email_service_flyway_schema_history
+            WHERE success IS NOT TRUE
+               OR (
+                    (type = 'SQL' AND version IN ('1', '2', '3'))
+                    OR (type = 'BASELINE' AND version = '0')
+               ) IS NOT TRUE;
+        "
+)"
+baseline_history_is_valid=false
+if [ "$database_layout" = "dedicated" ] \
+        && [ "$baseline_migrations" = "0" ]; then
+    baseline_history_is_valid=true
+elif [ "$database_layout" = "shared-uniauth" ] \
+        && { [ "$baseline_migrations" = "0" ] \
+            || [ "$baseline_migrations" = "1" ]; }; then
+    baseline_history_is_valid=true
+fi
+if [ "$successful_migration_counts" != "1,1,1" ] \
+        || [ "$baseline_history_is_valid" != "true" ] \
+        || [ "$unexpected_migrations" != "0" ]; then
+    fail "email service Flyway history must match the expected V1 through V3 chain"
+fi
+
 pg_dump_major="$(
     "$pg_dump_bin" --version \
         | awk '{
@@ -202,6 +304,12 @@ PGCONNECT_TIMEOUT="$connect_timeout" \
     --format=custom \
     --no-owner \
     --no-acl \
+    --strict-names \
+    --table=public.email_queue \
+    --table=public.email_queue_id_seq \
+    --table=public.email_logs \
+    --table=public.email_logs_id_seq \
+    --table=public.email_service_flyway_schema_history \
     --host="$database_host" \
     --port="$database_port" \
     --username="$database_user" \

@@ -7,6 +7,7 @@ REPOSITORY_ROOT="$(cd "$SOURCE_PROJECT_DIR/../.." && pwd)"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/email-verification.XXXXXX")"
 PROJECT_DIR="$TEMP_DIR/project"
 APPLICATION_JAR="$TEMP_DIR/email-service-1.0.0.jar"
+UNIAUTH_MIGRATIONS_DIR="$TEMP_DIR/uniauth-migrations"
 RUN_ID="email-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 EMAIL_SERVICE_VERIFICATION_ARTIFACTS_DIR="${EMAIL_SERVICE_VERIFICATION_ARTIFACTS_DIR:-}"
 EMAIL_SERVICE_VERIFICATION_ARTIFACTS_ENABLED=false
@@ -18,7 +19,9 @@ source "$REPOSITORY_ROOT/scripts/verification-artifacts-guard.sh"
 source_fingerprint() {
     (
         cd "$REPOSITORY_ROOT"
-        git ls-files -co --exclude-standard -z -- reference/email-service \
+        git ls-files -co --exclude-standard -z -- \
+            reference/email-service \
+            src/main/resources/db/migration/postgresql \
             | sort -z \
             | xargs -0 shasum -a 256 \
             | shasum -a 256 \
@@ -102,6 +105,10 @@ rsync -a \
     --exclude '/target/' \
     "$SOURCE_PROJECT_DIR/" \
     "$PROJECT_DIR/"
+mkdir -p "$UNIAUTH_MIGRATIONS_DIR"
+rsync -a \
+    "$REPOSITORY_ROOT/src/main/resources/db/migration/postgresql/" \
+    "$UNIAUTH_MIGRATIONS_DIR/"
 if [ "$(source_fingerprint)" != "$SOURCE_FINGERPRINT" ]; then
     echo "ERROR: email service sources changed while creating the verification snapshot; rerun the gate" >&2
     exit 1
@@ -114,7 +121,7 @@ echo "Email verification 2/6: compilation and ApplicationContext tests"
 (
     cd "$PROJECT_DIR"
     mvn clean compile test-compile
-    mvn test
+    mvn -Duniauth.migrations.dir="$UNIAUTH_MIGRATIONS_DIR" test
     mvn -DskipTests package
 )
 cp "$PROJECT_DIR/target/email-service-1.0.0.jar" "$APPLICATION_JAR"

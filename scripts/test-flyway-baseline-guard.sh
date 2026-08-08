@@ -215,6 +215,18 @@ grep -Fq "restored_v4_history_type=SQL" \
 grep -Fq "fresh_v4_history_type=SQL" \
     "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
     || fail "fresh rehearsal did not apply Flyway V4"
+grep -Fq "restored_v5_history_type=SQL" \
+    "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
+    || fail "existing-schema rehearsal did not apply Flyway V5"
+grep -Fq "fresh_v5_history_type=SQL" \
+    "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
+    || fail "fresh rehearsal did not apply Flyway V5"
+grep -Fq "restored_web3_message_column=text:NO" \
+    "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
+    || fail "existing-schema rehearsal did not require the Web3 SIWE message"
+grep -Fq "fresh_web3_message_column=text:NO" \
+    "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
+    || fail "fresh rehearsal did not require the Web3 SIWE message"
 valid_fingerprint="$(awk '/^Schema fingerprint: / {print $3}' "$valid_output")"
 [ -n "$valid_fingerprint" ] || fail "rehearsal did not report a schema fingerprint"
 

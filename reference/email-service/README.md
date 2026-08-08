@@ -228,26 +228,29 @@ server identity verification 绕过证书或主机名错误；应修复 SMTP hos
 从来源目录复制的本机 `.env` 使用 Spring 标准变量
 `SPRING_MAIL_USERNAME`、`SPRING_MAIL_PASSWORD` 和 `APP_MAIL_FROM_EMAIL`；当前配置
 继续兼容这些名称。该文件被 gitignore 且不得提交，但它不包含完整运行配置：
-仍必须补充独立邮件数据库的 `EMAIL_POSTGRES_*`、`SMTP_HOST`、`SMTP_PORT` 和适用的
-TLS/SSL 设置。不要在文档或日志中打印变量值。
+仍必须补充所选 database layout 的 `EMAIL_POSTGRES_*`、`SMTP_HOST`、`SMTP_PORT`
+和适用的 TLS/SSL 设置。不要在文档或日志中打印变量值。
 
 Profile 行为：
 
 | Profile | Hibernate schema 行为 | SMTP 传输要求 | 用途 |
 |---------|-----------------------|----------------|------|
-| `dev` | `validate` | 允许显式明文，仅用于隔离本地 SMTP | 独立、可丢弃的本地参考数据库 |
-| `prod` | `validate` | 强制 STARTTLS 或 implicit SSL；必须校验 server identity | 部署环境的独立邮件数据库 |
+| `dev` | `validate` | 允许显式明文，仅用于隔离本地 SMTP | 默认独立、可丢弃；shared-uniauth 仅显式 opt-in |
+| `prod` | `validate` | 强制 STARTTLS 或 implicit SSL；必须校验 server identity | 默认独立；共享布局需单独审批与整库运维 |
 
 ## 数据库与 Flyway
 
 Flyway 是本组件唯一的 schema owner：
 
-- datasource：所有 profile 只接受独立的 `jdbc:postgresql:` URL；H2 不受支持
+- datasource：所有 profile 只接受 `jdbc:postgresql:` URL；H2 不受支持
+- database layout：默认 `EMAIL_DATABASE_LAYOUT=dedicated`；显式
+  `shared-uniauth` 才允许与完整 UniAuth V1-V5 共用 `public` schema
 - location：`classpath:db/migration/postgresql`
 - history table：`email_service_flyway_schema_history`
 - 当前 migration：V1 建表 + V2 队列/日志完整性 + V3 队列生命周期行形状
 - `fail-on-missing-locations=true`
 - `baseline-on-migrate=false`
+- `baseline-version=0`
 - `clean-disabled=true`
 - `validate-migration-naming=true`
 - `validate-on-migrate=true`
@@ -275,12 +278,30 @@ V1 创建 `email_queue`、`email_logs`、基础检查约束和查询索引。V2 
 可以保留 `next_retry_time`，只有 `FAILED` 可以保留 `error_message`，终态必须有
 `processed_time`，非终态不得有 `processed_time`。缺少终态处理时间的历史行使用
 `updated_time`、`created_time` 或迁移时间依次补齐。已发布 migration 不得改写；
-后续 schema 变更必须新增 V4+。邮件服务必须使用独立数据库，不得把该 migration
-指向 UniAuth、`blacksheep_dev` 或其他共享 schema。
+后续 schema 变更必须新增 V4+。默认独立布局要求邮件专用数据库。显式
+`shared-uniauth` 会先验证 UniAuth V1-V5 的完整关系和成功 history，再以 baseline
+V0 建立独立 `email_service_flyway_schema_history` 并迁移 V1-V3；UniAuth 反向启动
+也会验证邮件 V1-V3 后建立自己的 history。两侧使用同一 PostgreSQL advisory lock
+串行化首次迁移，拒绝 managed relation 冲突、不完整 peer 和不精确 history。
+peer history 必须恰好包含当前预期的成功 SQL 版本，另只允许 0 或 1 个成功 V0
+baseline；失败、重复、未知 versioned 或 repeatable 记录均被拒绝。存在 peer
+relation 却没有 peer history 时视为半成品布局并失败关闭。
+一旦双方 history 同时存在，后续每次启动仍会重新校验对端 history 和核心 relation；
+邮件服务也必须持续显式选择 `shared-uniauth`，不能在首次 baseline 后退回默认布局。
+`blacksheep*`、系统库及其他未获准共享 schema 始终拒绝。
+
+命名层面可以直接共存：邮件 migration 只创建 `email_queue`、`email_logs`、对应
+`BIGSERIAL` 序列、邮件索引/约束和 `email_service_flyway_schema_history`，与
+UniAuth V1-V5 的 relation 名称没有交集，也没有指向 UniAuth 业务表的外键。不能只凭
+“表名不冲突”关闭保护，因为第二套 Flyway 首次进入非空 `public` schema 时仍缺少
+自己的 history。兼容实现保留 `baseline-on-migrate=false`，只在确认对端完整、
+本侧 managed relation 不存在且对端 history 无失败 migration 后显式创建 baseline
+V0；ApplicationContext 测试和真实双进程 E2E 覆盖两个启动顺序。
 
 ### PostgreSQL 备份与恢复演练
 
-`scripts/backup-postgres.sh` 对目标 PostgreSQL 只执行版本查询和 `pg_dump -Fc`。
+`scripts/backup-postgres.sh` 对目标 PostgreSQL 只执行 schema/history 预检、版本查询
+和 `pg_dump -Fc`。
 它不隐式读取本目录 `.env`；必须显式提供 `SPRING_PROFILES_ACTIVE`、
 `EMAIL_POSTGRES_*` 和绝对路径 `EMAIL_BACKUP_DIR`，或显式设置 owner-only、
 非符号链接的 `EMAIL_SERVICE_ENV_FILE`。示例：
@@ -293,8 +314,14 @@ EMAIL_BACKUP_DIR=/secure/email-service-backups \
 scripts/backup-postgres.sh
 ```
 
-脚本拒绝 UniAuth/Blacksheep/系统库和不符合邮件服务命名规则的数据库，拒绝相对路径、
-符号链接或 group/other 可访问的备份目录。`pg_dump` 与用于 archive 校验的
+脚本支持 `dedicated` 和显式 `shared-uniauth`。两种布局都要求邮件 V1-V3 relation
+和成功 history 精确匹配当前 migration 链；共享布局另允许至多一个 V0 baseline，
+失败、重复、缺失或未知/额外 migration 都会失败关闭。脚本固定只导出
+`email_queue`、`email_logs`、对应序列和
+`email_service_flyway_schema_history`；即使源数据库与 UniAuth 共享，也不会把
+`users` 或其他认证表带入组件 archive。脚本拒绝未知布局、未显式选择共享布局的
+UniAuth 数据库、Blacksheep/系统库、相对路径、符号链接或 group/other 可访问的
+备份目录。`pg_dump` 与用于 archive 校验的
 `pg_restore` major 必须和源 PostgreSQL major 精确一致；机器安装多套客户端时使用
 `EMAIL_PG_DUMP_BIN`、`EMAIL_PG_RESTORE_BIN` 指向正确版本。备份先写进 owner-only
 临时文件，只有非空 custom archive 通过 `pg_restore --list` 和 SHA-256 计算后才发布
@@ -313,11 +340,13 @@ cd reference/email-service
 scripts/test-backup-restore-rehearsal.sh
 ```
 
-该脚本不读取 `.env`，使用 PostgreSQL 16 容器内同 major 客户端，验证共享库拒绝、
-客户端版本拒绝、连接失败无残留、符号链接目录拒绝、owner-only 原子备份、空库
+该脚本不读取 `.env`，使用 PostgreSQL 16 容器内同 major 客户端，验证共享库缺少
+显式 layout 时拒绝、客户端版本拒绝、连接失败无残留、符号链接目录拒绝、
+owner-only 原子选择性备份、archive 不含 UniAuth `users`、空库
 `pg_restore --exit-on-error --single-transaction`、队列/日志数据与 Flyway V1-V3
 history/约束一致、恢复后真实 Spring HTTP 写入和重启。仓库不提供覆盖任意现有库的
-自动 restore 命令；真实恢复必须在隔离空库中执行同类步骤并经过独立授权。
+自动 restore 命令；真实恢复必须在隔离空库中执行同类步骤并经过独立授权。该组件
+archive 也不能替代 shared-uniauth 数据库的整库灾备。
 
 ## 构建和测试
 
@@ -382,17 +411,16 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 
 2026-08-08 当前组合基线：
 
-- 本组件 Maven：138 tests，0 failures/errors/skips；其中 22 个
-  PostgreSQL/GreenMail ApplicationContext E2E、27 个 Java runtime guard tests、
-  1 个 PostgreSQL-only Spring Context 启动 guard test，以及 5 个 PostgreSQL
-  repository constraint tests。
-- 本组件 Shell runtime 39/39、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
+- 本组件 Maven：148 tests，0 failures/errors/skips；其中 22 个
+  PostgreSQL/GreenMail ApplicationContext E2E、1 个 shared-schema
+  ApplicationContext test、6 个 shared-schema bootstrap tests、30 个 Java
+  runtime guard tests、1 个 PostgreSQL-only Spring Context 启动 guard test，
+  以及 5 个 PostgreSQL repository constraint tests。
+- 本组件 Shell runtime 43/43、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
 - PostgreSQL backup/restore rehearsal 10/10。
-- UniAuth 根项目：Java 131 tests、HTTP 15/15、Flyway 13/13、
+- UniAuth 根项目：Java 140 tests、shared-schema process E2E 4/4、HTTP 15/15、Flyway 13/13、
   Mock Playwright 21/21、Python 资源服务器 16/16、邮件 REST stub contract 8/8；
-  本轮统一门禁的全部功能阶段已通过，但验证期间源码发生并发变化，最终源码快照
-  检查失败关闭；必须在稳定工作区重跑完整根统一门禁，连续三轮无修改检查仍是
-  提交前门槛。
+  本轮稳定源码快照的完整根统一门禁已通过；连续三轮无修改检查仍是提交前门槛。
 - 根 Shell HTTP E2E 的正常邮箱路径使用本参考服务真实 JAR、真实 HTTP 和独立
   PostgreSQL，直接断言模板进入 `email_queue`；脚本随后只为 `503/429` 失败映射
   切换到受控 loopback REST stub，仍通过真实 UniAuth
@@ -413,13 +441,25 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 
 2026-08-08 PostgreSQL backup/restore 运维加固增量：
 
-- 新增只读 `scripts/backup-postgres.sh`，固定独立数据库、绝对 owner-only 目录、
-  同 major `pg_dump`/`pg_restore`、custom archive 校验、SHA-256 和失败清理。
-- 新增 disposable PostgreSQL 16 restore rehearsal，覆盖共享库、客户端版本、连接失败、
-  符号链接目录、数据/schema/Flyway history、序列继续写入和恢复后 Spring HTTP 重启。
+- 新增只读 `scripts/backup-postgres.sh`，固定邮件组件 relation 选择集、绝对
+  owner-only 目录、同 major `pg_dump`/`pg_restore`、custom archive 校验、SHA-256
+  和失败清理；显式 shared-uniauth 也不会导出 UniAuth 表。
+- 新增 disposable PostgreSQL 16 restore rehearsal，覆盖共享布局显式 opt-in、
+  客户端版本、连接失败、符号链接目录、排除 `users`、邮件数据/schema/Flyway
+  history、序列继续写入和恢复后 Spring HTTP 重启。
 - 完整邮件组件门禁已通过：Maven 138/138、Shell runtime 39/39、HTTP 11/11、
   Flyway guard 15/15、backup/restore rehearsal 10/10；完整根统一门禁也已在本批
   组合工作树通过。
+
+2026-08-08 shared-schema 共存加固增量：
+
+- 默认 `dedicated` 保持不变；`shared-uniauth` 仅在显式选择、完整 peer schema、
+  独立 history 和同一 advisory lock 条件下允许。
+- Java bootstrap/ApplicationContext 与真实双进程 E2E 覆盖 UniAuth-first 和
+  email-first 两种启动顺序、baseline V0、重启幂等、精确 peer history、缺失 peer
+  history 的半成品布局拒绝和业务 relation 共存。
+- 当前组合门禁通过：UniAuth Java 140/140；邮件 Maven 148/148、Shell runtime
+  43/43、HTTP 11/11、Flyway 15/15、backup/restore 10/10；shared-schema E2E 4/4。
 
 2026-08-08 Flyway schema-owner 覆盖保护增量：
 
@@ -572,10 +612,14 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 
 ## 安全启动
 
-不要复用 UniAuth 数据库，也不要连接共享开发库。先创建独立、明确可丢弃的数据库，
-再补齐未提交的 `.env`。如果来源 `.env` 已存在，不要用示例文件覆盖其中的凭据；
+默认不要复用 UniAuth 数据库，也不要连接未获准共享开发库。先创建独立、明确可丢弃
+的数据库，再补齐未提交的 `.env`。只有明确需要同库部署且已有整库备份/恢复责任边界
+时，才设置 `EMAIL_DATABASE_LAYOUT=shared-uniauth`。组件备份脚本可在该布局下抽取
+邮件表，但它不包含 UniAuth 数据，不能替代共享数据库的整库备份。
+如果来源 `.env` 已存在，不要用示例文件覆盖其中的凭据；
 只合并缺失的变量。`start.sh` 要求 env 文件是普通文件且 group/other 无权限，
-`dev` 数据库名必须包含 `email`/`mail` 和 `dev`/`test`/`demo`/`local` 标记。
+`dev` 数据库名必须包含 `dev`/`test`/`demo`/`local` 标记；`dedicated` 布局还必须
+包含 `email`/`mail`，`shared-uniauth` 则允许使用获准的 UniAuth 数据库名。
 生产启动还会拒绝 SMTP 明文、可降级 STARTTLS、TLS 模式冲突和关闭 server identity
 verification；所有 profile 都会拒绝非法 SMTP host/port：
 
@@ -642,7 +686,7 @@ V3 后数据库同时约束状态元数据：
 - 限流计数保存在单进程内存中，多实例之间不共享。
 - 定时恢复每次最多处理 50 条，没有容量或积压恢复证明。
 - 已有 disposable PostgreSQL backup/restore rehearsal，但尚未完成生产发布、加密备份、
-  外部存储、保留/销毁、跨主机或灾难恢复演练。
+  外部存储、保留/销毁、跨主机或共享数据库整库灾难恢复演练。
 - GreenMail E2E 证明本地 SMTP 协议链，不证明供应商鉴权、TLS 策略、退信处理或
   外部真实收件。
 - 邮件队列和发送日志会保存完整 HTML；验证码清理和数据保留策略尚未实现。

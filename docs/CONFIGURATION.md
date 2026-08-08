@@ -120,10 +120,24 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 
 仓库参考实现默认监听 `127.0.0.1:8095`，并有自己的配置和数据库边界：
 
-- 必须使用独立的 `EMAIL_POSTGRES_*` PostgreSQL 数据库，不能复用 UniAuth 或共享
-  数据库；`dev`、`test`、`prod` 均拒绝 H2 和其他非 PostgreSQL datasource。
+- `EMAIL_DATABASE_LAYOUT` 默认 `dedicated`，要求 `EMAIL_POSTGRES_*` 指向邮件专用
+  PostgreSQL 16 数据库。只有显式设置 `shared-uniauth` 时才允许复用获准的 UniAuth
+  `public` schema；该路径要求完整 UniAuth V1-V5、独立 Flyway history table 和
+  advisory-lock 串行化。`blacksheep*`、系统库、未知 layout、H2 和其他非 PostgreSQL
+  datasource 均在 Flyway 前拒绝。
+- 邮件侧业务 relation 是 `email_queue`、`email_logs` 及其序列/索引/约束，与
+  UniAuth V1-V5 的表、序列和索引名称没有冲突。不能据此直接移除迁移保护：后启动
+  Flyway 仍会遇到“schema 非空但缺少自身 history”的启动冲突。
 - Flyway location 是 `classpath:db/migration/postgresql`，history table 是
   `email_service_flyway_schema_history`，当前 migration 为 V1 + V2 + V3。
+- UniAuth history 是 `uniauth_flyway_schema_history`。共享布局中，后启动一侧只有在
+  对端核心 relation 和 history 精确匹配、本侧 managed relation 不存在时，才在双方
+  共用的 PostgreSQL advisory lock 内创建 baseline V0 并继续 migrate。peer history
+  必须恰好包含当前预期的成功 SQL 版本，另只允许 0 或 1 个成功 V0 baseline；
+  失败、重复、未知 versioned 或 repeatable 记录均被拒绝。存在 peer relation 却
+  没有 peer history 时视为半成品布局并失败关闭。`baseline-on-migrate=false`、
+  `baseline-version=0` 均为不可覆盖的运行契约，不允许对任意非空 schema 自动
+  baseline。
 - V3 规范化历史队列元数据并约束状态行形状：终态必须有 `processed_time`，只有
   `PENDING` 可以保留 `next_retry_time`，只有 `FAILED` 可以保留
   `error_message`。该要求是参考实现的数据库契约，不是外部 REST 协议的表结构要求。
@@ -136,6 +150,9 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
   命名校验覆盖，并拒绝 migration location/history/schema、SQL init 和 Hibernate
   schema-generation 覆盖；Java guard 还会在 Flyway 前拒绝非 PostgreSQL JDBC URL。
   兼容实现也必须保持 Flyway 为唯一 schema owner。
+- UniAuth 根应用同样把 `spring.flyway.enabled=true` 作为不可覆盖契约；自定义
+  migration strategy 和 `scripts/runtime-guard.sh` 都会拒绝关闭 Flyway，避免绕过
+  migration、peer 校验和 Hibernate `validate` 前置条件。
 - loopback 监听时 API key 可选；任何非 loopback 监听都必须设置
   `EMAIL_SERVICE_API_KEY`。设置后所有 `/api/email/**` 端点都要求该 header；参考
   服务同样在启动阶段拒绝超过 1024 字符或包含 CR/LF 的值，并在请求阶段拒绝
@@ -147,6 +164,12 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - 参考实现的 `scripts/backup-postgres.sh` 不隐式读取 `.env`；它要求显式 profile、
   `EMAIL_POSTGRES_*` 和绝对 `EMAIL_BACKUP_DIR`，或显式 owner-only env 文件。
   输出目录不得是符号链接或向 group/other 开放，archive/checksum 为 `0600`。
+- `backup-postgres.sh` 支持 `dedicated` 和显式 `shared-uniauth`，但固定只导出
+  `email_queue`、`email_logs`、对应序列和
+  `email_service_flyway_schema_history`。共享库中的 UniAuth 用户/认证表不会进入
+  组件 archive；history 必须精确匹配当前 V1-V3 链，共享布局另允许至多一个 V0
+  baseline，未知或额外 migration 会失败关闭。共享数据库的整库备份与恢复仍必须
+  由仓库外、经授权的运维流程负责。
 - `pg_dump` 和 `pg_restore` major 必须与源 PostgreSQL major 一致；可通过
   `EMAIL_PG_DUMP_BIN`、`EMAIL_PG_RESTORE_BIN` 选择正确客户端。默认 restore
   自动化只在 disposable 空库中执行，不覆盖现有数据库。
@@ -161,10 +184,10 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - `prod` 拒绝明文 SMTP、可降级的 optional STARTTLS 和
   `SMTP_SSL_CHECK_SERVER_IDENTITY=false`。`dev/test` 仅为 loopback GreenMail 等
   隔离夹具允许显式明文配置；证书或主机名错误不能通过关闭身份校验绕过。
-- `reference/email-service/start.sh` 会拒绝非邮件专用数据库名、非 disposable 的
-  dev 数据库、权限过宽或符号链接形式的 env 文件、未受保护的非 loopback 暴露和
-  非法 SMTP endpoint/transport 组合。直接运行 JAR 时 Java guard 会执行同一组
-  核心校验。
+- `reference/email-service/start.sh` 会按 `EMAIL_DATABASE_LAYOUT` 拒绝不匹配的
+  数据库目标，并拒绝非 disposable 的 dev 数据库、权限过宽或符号链接形式的 env
+  文件、未受保护的非 loopback 暴露和非法 SMTP endpoint/transport 组合。直接运行
+  JAR 时 Java guard 会执行同一组核心校验。
 - `EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES` 有效范围为 `1..10080`；恢复任务只有在
   `app.mail.enabled`、`app.mail.queue.enabled` 和 `app.mail.recovery.enabled`
   同时为 true 时才会处理 pending/stuck 队列。
@@ -241,13 +264,21 @@ base 配置固定 `JSESSIONID`、`HttpOnly=true`、`Path=/`、`SameSite=Lax`；
 - history table：`uniauth_flyway_schema_history`
 - 当前版本：V5（V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS +
   V4 实体约束与索引对齐 + V5 Web3/SIWE challenge message 绑定）
+- `fail-on-missing-locations=true`
 - `baseline-on-migrate=false`
+- `baseline-version=0`
 - `clean-disabled=true`
+- `validate-migration-naming=true`
+- `validate-on-migrate=true`
+- `out-of-order=false`
 - SQL init：`never`
 - Hibernate：`validate`
 - Spring Session JDBC init：`never`
 
 Spring Session 两张表已进入 V1，不再由框架或部署脚本旁路创建。
+UniAuth 的 migration strategy 会在执行 migration 前拒绝上述关键 Flyway 配置被
+高优先级配置覆盖。共享 schema 中一旦存在邮件服务 history，后续启动会重新核对其
+V1-V3 history 和核心 relation。
 
 ### 演示数据
 

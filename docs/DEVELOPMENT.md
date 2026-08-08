@@ -142,10 +142,11 @@ entity 或 schema 变更至少核对：
 - `scripts/export-schema-pg.sh`
 - `scripts/flyway-baseline-existing.sh`
 - `scripts/test-flyway-baseline-guard.sh`
+- `scripts/test-email-shared-schema-e2e.sh`
 - Flyway fresh/baseline 集成测试
 - schema fingerprint
 
-Flyway 是唯一 schema owner。已发布 migration 不得改写；新增结构修复必须使用 V5+。
+Flyway 是唯一 schema owner。已发布 migration 不得改写；新增结构修复必须使用 V6+。
 
 ## 外部集成
 
@@ -182,7 +183,8 @@ schema-generation 的外部覆盖；任何这类配置变化都必须重新运�
    [邮件服务契约](CONFIGURATION.md#邮件服务依赖)的独立服务。
 2. 为该服务配置模板、队列和 SMTP/邮件供应商凭据；生产 SMTP 使用强制 STARTTLS
    或 implicit SSL，并启用证书/主机身份校验。其他供应商协议应提供等价保护。
-3. 通过参考组件的 `start.sh` 或等价受保护入口启动，确认使用独立邮件数据库；
+3. 通过参考组件的 `start.sh` 或等价受保护入口启动，默认使用独立邮件数据库；
+   如显式采用 `shared-uniauth`，先确认同 schema 前置条件和整库灾备责任边界。
    `SMTP_HOST` 填写裸 host/IP 而不是 URL，`SMTP_PORT` 使用 `1..65535`；不得通过
    关闭 `SMTP_SSL_CHECK_SERVER_IDENTITY` 绕过证书错误。
 4. 设置 `EMAIL_SERVICE_URL` 和 `EMAIL_SERVICE_TIMEOUT_MS`；URL 必须是带 host、

@@ -65,6 +65,7 @@ class EmailServiceRuntimeGuardTest {
             "spring.flyway.table", "flyway_schema_history",
             "spring.flyway.default-schema", "email",
             "spring.flyway.schemas", "email",
+            "spring.flyway.baseline-version", "1",
             "spring.flyway.validate-migration-naming", "false",
             "spring.sql.init.mode", "always",
             "spring.jpa.hibernate.ddl-auto", "create-drop"
@@ -83,14 +84,66 @@ class EmailServiceRuntimeGuardTest {
     void rejectsSharedDatabaseBeforeFlywayCanRun() {
         EmailServiceRuntimeGuard guard = guard(
             "dev",
-            "jdbc:postgresql://127.0.0.1:5432/blacksheep_email_test",
+            "jdbc:postgresql://127.0.0.1:5432/uniauth_test",
             "127.0.0.1",
             ""
         );
 
         assertThatThrownBy(guard::validateRuntime)
             .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("shared-uniauth");
+    }
+
+    @Test
+    void acceptsExplicitSharedUniAuthDatabaseLayout() {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:postgresql://127.0.0.1:5432/uniauth_test",
+            "127.0.0.1",
+            "",
+            environment -> environment.setProperty(
+                "app.email.database-layout",
+                "shared-uniauth"
+            )
+        );
+
+        assertThatCode(guard::validateRuntime).doesNotThrowAnyException();
+    }
+
+    @Test
+    void rejectsReservedDatabaseEvenInSharedLayout() {
+        EmailServiceRuntimeGuard guard = guard(
+            "dev",
+            "jdbc:postgresql://127.0.0.1:5432/blacksheep_email_test",
+            "127.0.0.1",
+            "",
+            environment -> environment.setProperty(
+                "app.email.database-layout",
+                "shared-uniauth"
+            )
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("shared or reserved");
+    }
+
+    @Test
+    void rejectsUnknownDatabaseLayout() {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_test",
+            "127.0.0.1",
+            "",
+            environment -> environment.setProperty(
+                "app.email.database-layout",
+                "automatic"
+            )
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("EMAIL_DATABASE_LAYOUT");
     }
 
     @Test
@@ -583,6 +636,7 @@ class EmailServiceRuntimeGuardTest {
         environment.setProperty("spring.flyway.enabled", "true");
         environment.setProperty("spring.flyway.fail-on-missing-locations", "true");
         environment.setProperty("spring.flyway.baseline-on-migrate", "false");
+        environment.setProperty("spring.flyway.baseline-version", "0");
         environment.setProperty("spring.flyway.clean-disabled", "true");
         environment.setProperty("spring.flyway.validate-migration-naming", "true");
         environment.setProperty("spring.flyway.validate-on-migrate", "true");

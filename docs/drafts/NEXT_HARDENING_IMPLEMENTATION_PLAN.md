@@ -8,7 +8,7 @@
 > 下一轮待重新探索并冻结
 > 事实基线：2026-08-07；邮件 SMTP、持久化投递和限流异常路径增量：2026-08-08
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
-> 前置成果：PostgreSQL-only、Flyway V1 baseline + V2 + V3 + V4 + V5、Testcontainers、
+> 前置成果：PostgreSQL 16-only、Flyway V1 baseline + V2 + V3 + V4 + V5、Testcontainers、
 > Java/Shell/Playwright/Python 与邮件参考服务基础门禁
 
 ## 1. 目标
@@ -30,13 +30,14 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 
 | 项目 | 当前事实 |
 |------|----------|
-| 数据库 | `dev`、`test`、`prod` 只支持显式 PostgreSQL |
+| 数据库 | `dev`、`test`、`prod` 只支持显式 PostgreSQL 16 |
 | Schema owner | Flyway，runtime location 为 `db/migration/postgresql` |
 | 当前 migration | V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束/索引对齐 + V5 Web3/SIWE message 绑定 |
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
-| Java | `mvn clean compile test-compile` 和 131 tests 已通过 |
-| 邮件参考服务 | Flyway V1/V2/V3；138 tests；22 个完整 ApplicationContext E2E；5 个 PostgreSQL repository constraint tests；Java runtime guard 27 tests；1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 39/39、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10 |
+| Java | `mvn clean compile test-compile` 和 140 tests 已通过 |
+| 邮件参考服务 | Flyway V1/V2/V3；148 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E；1 个 shared-schema ApplicationContext test；6 个 shared-schema bootstrap tests；5 个 PostgreSQL repository constraint tests；Java runtime guard 30 tests；1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 43/43、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10 |
+| Shared-schema E2E | `scripts/test-email-shared-schema-e2e.sh` 4/4 已通过，覆盖 UniAuth/email 两种启动顺序、独立 history 和 baseline V0 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 15/15 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 13/13 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、21 个 Mock Playwright tests 已通过 |
@@ -51,6 +52,14 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 - rehearsal 只读源库，所有恢复、baseline 和 fresh migration 写入均发生在一次性容器。
 - 未经用户显式授权，不创建开发库 history table，不运行 apply。
 - 不调用真实 Google/GitHub/X、真实邮件服务或任何高成本外部模型。
+
+当前 shared-schema/备份收敛还固定以下重启与运维不变量：双方 history 同时存在后，
+每次启动都重新校验 peer history 和核心 relation；邮件服务必须持续显式选择
+`shared-uniauth`。双方 bootstrap 只接受精确的预期成功 SQL 版本和可选单个成功 V0
+baseline；失败、重复、未知 versioned/repeatable 记录，以及存在 peer relation 却
+缺少 peer history 的半成品布局均失败关闭。根应用和邮件服务都不允许关闭 Flyway。
+组件备份只接受 SQL V1-V3，shared layout 另允许 0 或 1 个 V0 baseline；未知
+versioned/repeatable migration 均失败关闭。
 
 ## 3. 当前覆盖与缺口
 
@@ -1200,6 +1209,26 @@ while counter < 3:
 - 提交中不含 `.env`、`.local/`、数据库导出、私钥、`target/`、静态构建产物或测试报告。
 
 ## 8. 持续加固循环
+
+### 8.1 五轮收敛预算
+
+2026-08-08 从总体约 `88%` 开始，剩余工作按约五轮中等规模批次收敛。每轮目标推进
+约 `2%` 到 `3%`；百分比是基于剩余风险、自动化证据和可运维性的诚实粗略评估，
+不能通过拆分零碎测试或文档条目虚增。
+
+| 轮次 | 目标区间 | 收敛主题 |
+|------|----------|----------|
+| 第 1 轮 | `88%` -> `90%-91%` | PostgreSQL 16 shared-schema/Flyway 共存、邮件 database layout、选择性备份和跨进程 E2E |
+| 第 2 轮 | `90%-91%` -> `92%-94%` | 核心鉴权与 PostgreSQL 数据一致性，优先关闭登录方式集合并发不变量 |
+| 第 3 轮 | `92%-94%` -> `95%-96%` | token 生命周期、refresh replay、logout/blacklist 与 HTTP transport 边界 |
+| 第 4 轮 | `95%-96%` -> `97%-98%` | email/password challenge 一致性、canonical email、并发创建和失败状态 |
+| 第 5 轮 | `97%-98%` -> `100%` | 跨组件非 Mock 验证、运维/恢复边界、剩余高风险缺口和最终证据收口 |
+
+每轮开始时仍需重新充分探索并形成固定实施范围；上表是收敛预算，不允许跳过代码
+核验后直接照表实施。若发现新的实质风险，进度可以诚实回退，但必须重排剩余轮次并
+保持每轮有明显的风险收敛，不把加固阶段变成无限的小批次循环。
+
+### 8.2 每轮固定流程
 
 单个 batch 的完成不是停止条件。每轮固定执行：
 

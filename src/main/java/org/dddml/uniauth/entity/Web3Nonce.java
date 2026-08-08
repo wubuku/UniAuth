@@ -26,6 +26,9 @@ public class Web3Nonce {
     @Column(name = "nonce", nullable = false, length = 100)
     private String nonce;
 
+    @Column(name = "message", nullable = false, columnDefinition = "text")
+    private String message;
+
     @Column(name = "expires_at", nullable = false)
     private Instant expiresAt;
 

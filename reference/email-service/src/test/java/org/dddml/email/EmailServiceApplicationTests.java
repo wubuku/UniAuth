@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
     "spring.flyway.default-schema=public",
     "spring.flyway.schemas=public",
     "spring.flyway.baseline-on-migrate=false",
+    "spring.flyway.baseline-version=0",
     "spring.flyway.clean-disabled=true",
     "spring.flyway.validate-migration-naming=true",
     "spring.flyway.validate-on-migrate=true",

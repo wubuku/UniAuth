@@ -60,7 +60,10 @@ public class EmailServiceRuntimeGuard {
     FlywayMigrationStrategy guardedFlywayMigrationStrategy() {
         return flyway -> {
             validateDatabaseTarget();
-            flyway.migrate();
+            EmailSharedSchemaFlywayBootstrap.migrate(
+                flyway,
+                "shared-uniauth".equals(databaseLayout())
+            );
         };
     }
 
@@ -77,19 +80,28 @@ public class EmailServiceRuntimeGuard {
 
     private void validateDatabaseTarget() {
         String profile = validateProfile();
+        String databaseLayout = databaseLayout();
         String jdbcUrl = dataSourceProperties.getUrl();
         String databaseName = databaseName(jdbcUrl);
         String normalized = databaseName.toLowerCase(Locale.ROOT);
 
-        if (!normalized.contains("email") && !normalized.contains("mail")) {
-            throw new IllegalStateException(
-                "Email service database name must contain email or mail"
-            );
-        }
-        if (isReservedDatabase(normalized)) {
+        if (isAlwaysReservedDatabase(normalized)) {
             throw new IllegalStateException(
                 "Refusing a shared or reserved PostgreSQL database"
             );
+        }
+        if ("dedicated".equals(databaseLayout)) {
+            if (isUniAuthDatabase(normalized)) {
+                throw new IllegalStateException(
+                    "EMAIL_DATABASE_LAYOUT=shared-uniauth is required "
+                        + "for a UniAuth database"
+                );
+            }
+            if (!normalized.contains("email") && !normalized.contains("mail")) {
+                throw new IllegalStateException(
+                    "Email service database name must contain email or mail"
+                );
+            }
         }
         if ("dev".equals(profile)
                 && !containsAny(normalized, "dev", "test", "demo", "local")) {
@@ -102,6 +114,19 @@ public class EmailServiceRuntimeGuard {
                 "Email service test profile requires a disposable test/demo database"
             );
         }
+    }
+
+    private String databaseLayout() {
+        String layout = environment.getProperty(
+            "app.email.database-layout",
+            "dedicated"
+        );
+        if (!"dedicated".equals(layout) && !"shared-uniauth".equals(layout)) {
+            throw new IllegalStateException(
+                "EMAIL_DATABASE_LAYOUT must be exactly dedicated or shared-uniauth"
+            );
+        }
+        return layout;
     }
 
     private String databaseName(String jdbcUrl) {
@@ -144,6 +169,11 @@ public class EmailServiceRuntimeGuard {
             "spring.flyway.baseline-on-migrate",
             false,
             "SPRING_FLYWAY_BASELINE_ON_MIGRATE"
+        );
+        requireExactProperty(
+            "spring.flyway.baseline-version",
+            "0",
+            "SPRING_FLYWAY_BASELINE_VERSION"
         );
         requireStrictBooleanProperty(
             "spring.flyway.clean-disabled",
@@ -441,14 +471,17 @@ public class EmailServiceRuntimeGuard {
         return timeout;
     }
 
-    private boolean isReservedDatabase(String databaseName) {
+    private boolean isAlwaysReservedDatabase(String databaseName) {
         return databaseName.equals("blacksheep")
             || databaseName.startsWith("blacksheep_")
             || databaseName.startsWith("blacksheep-")
             || databaseName.equals("postgres")
             || databaseName.equals("template0")
-            || databaseName.equals("template1")
-            || databaseName.equals("uniauth")
+            || databaseName.equals("template1");
+    }
+
+    private boolean isUniAuthDatabase(String databaseName) {
+        return databaseName.equals("uniauth")
             || databaseName.equals("uniauth_dev")
             || databaseName.equals("uniauth_test");
     }

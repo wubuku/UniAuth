@@ -19,30 +19,25 @@ public class Web3NonceService {
     private final Web3NonceRepository web3NonceRepository;
 
     @Transactional
-    public void saveNonce(String walletAddress, String nonce, long expirationSeconds) {
+    public void saveNonce(
+            String walletAddress,
+            String nonce,
+            String message,
+            Instant expiresAt
+    ) {
         String normalizedAddress = walletAddress.toLowerCase();
-        Instant expiresAt = Instant.now().plusSeconds(expirationSeconds);
 
-        Optional<Web3Nonce> existingNonce = web3NonceRepository.findByWalletAddress(normalizedAddress);
-
-        if (existingNonce.isPresent()) {
-            Web3Nonce web3Nonce = existingNonce.get();
-            web3Nonce.setNonce(nonce);
-            web3Nonce.setExpiresAt(expiresAt);
-            web3NonceRepository.save(web3Nonce);
-        } else {
-            Web3Nonce web3Nonce = Web3Nonce.builder()
-                    .id(UUID.randomUUID().toString())
-                    .walletAddress(normalizedAddress)
-                    .nonce(nonce)
-                    .expiresAt(expiresAt)
-                    .build();
-            web3NonceRepository.save(web3Nonce);
-        }
+        web3NonceRepository.upsertNonce(
+                UUID.randomUUID().toString(),
+                normalizedAddress,
+                nonce,
+                message,
+                expiresAt
+        );
         log.debug("Web3 nonce persisted");
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public String getNonce(String walletAddress) {
         String normalizedAddress = walletAddress.toLowerCase();
         Optional<Web3Nonce> existingNonce = web3NonceRepository.findByWalletAddress(normalizedAddress);
@@ -57,7 +52,10 @@ public class Web3NonceService {
 
         if (web3Nonce.getExpiresAt().isBefore(now)) {
             log.debug("Web3 nonce expired");
-            web3NonceRepository.delete(web3Nonce);
+            web3NonceRepository.deleteByWalletAddressAndExpiresAtLessThanEqual(
+                    normalizedAddress,
+                    now
+            );
             return null;
         }
 
@@ -65,9 +63,24 @@ public class Web3NonceService {
     }
 
     @Transactional
-    public void deleteNonce(String walletAddress) {
+    public boolean consumeNonce(String walletAddress, String nonce, String message) {
         String normalizedAddress = walletAddress.toLowerCase();
-        web3NonceRepository.deleteByWalletAddress(normalizedAddress);
-        log.debug("Web3 nonce deleted");
+        Instant now = Instant.now();
+        int consumed = web3NonceRepository.consumeNonce(
+                normalizedAddress,
+                nonce,
+                message,
+                now
+        );
+        if (consumed == 0) {
+            web3NonceRepository.deleteByWalletAddressAndExpiresAtLessThanEqual(
+                    normalizedAddress,
+                    now
+            );
+        }
+        if (consumed == 1) {
+            log.debug("Web3 nonce consumed");
+        }
+        return consumed == 1;
     }
 }

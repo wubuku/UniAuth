@@ -44,16 +44,22 @@ scripts/verify.sh
 组件级集成测试必须依赖完整 Spring ApplicationContext 和真实业务 Bean，并尽可能从
 真实 HTTP 入口覆盖 Flyway/PostgreSQL、Thymeleaf、队列、异步事件、JavaMailSender
 和 SMTP 结果。PostgreSQL 使用 Testcontainers，SMTP 使用进程内 GreenMail；默认门禁
-不得读取 `.env`、连接真实供应商或发送真实邮件。所有 profile 都只接受独立
-PostgreSQL datasource；H2 仅作为 runtime guard 的负向输入，不是测试数据库。统一
-入口还必须执行：
+不得读取 `.env`、连接真实供应商或发送真实邮件。默认数据库布局是独立 PostgreSQL；
+shared-uniauth 只在 disposable PostgreSQL 中验证两种启动顺序、独立 history 和
+不完整 peer 失败关闭；bootstrap 测试还必须拒绝 peer relation 缺少 history，以及
+失败、重复、未知 versioned/repeatable peer history。根门禁还必须运行真实
+UniAuth/邮件服务双进程 shared-schema E2E，并证明表/序列/索引无命名冲突。H2 仅
+作为 runtime guard 的负向输入，不是测试数据库。统一入口还必须执行：
 
-- `scripts/test-runtime-guard.sh`：profile、独立数据库、env 权限、暴露鉴权以及
+- `scripts/test-runtime-guard.sh`：profile、数据库 layout、env 权限、暴露鉴权以及
   STARTTLS/implicit SSL/server identity 配置矩阵。
 - `scripts/test-http-e2e.sh`：真实 JAR、真实 HTTP、Flyway/PostgreSQL、API key、
   重复鉴权 header 拒绝、模板渲染、边界拒绝和重启持久化。
 - `scripts/test-flyway-baseline-guard.sh`：dirty schema 拒绝、V2 坏数据失败关闭和
   forward-fix；在 V1 migrated 应用启用 API key 后仍拒绝重复同名凭据。
+- `scripts/test-backup-restore-rehearsal.sh`：显式 shared-uniauth 选择性备份、排除
+  UniAuth 表、精确 V1-V3 history（含未知 versioned/repeatable 拒绝）、owner-only
+  archive、空库恢复和恢复后真实应用继续写入。
 
 ### 前端
 
@@ -151,11 +157,12 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 当前工作树完整测试数量以 Surefire 汇总为准，0 failures/errors/skips；Web3 V5 增加完整 SIWE 字段和并发覆盖 |
+| `mvn test` | 通过 | 140/140，0 failures/errors/skips；Web3 V5、Flyway disable 拒绝和 shared-schema bootstrap/ApplicationContext 覆盖通过 |
 | `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、独立 PostgreSQL、参考邮件服务跨进程模板入队、失败映射 stub、重启、JWT、Web3 字段篡改/并发 replay、email、登录方式 |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 13/13；exact schema、V2/V4 初始及 apply 前数据预检、V5 history/message 列、非法 email verification state、post-baseline 失败恢复与其他拒绝/清理路径 |
 | Flyway integration | 通过 | fresh V1→V5、existing baseline V1→V5、V3→V5、Hibernate validate、Session、checksum/failure recovery |
-| 邮件参考服务 | 通过 | 138 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、5 个 PostgreSQL repository constraint tests、27 个 Java runtime guard tests、1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 39/39、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；Flyway schema-owner、migration discovery/naming、队列生命周期行形状和非 PostgreSQL datasource 拒绝矩阵通过 |
+| Shared-schema process E2E | 通过 | 4/4；UniAuth-first 与 email-first 两种启动顺序、独立 history、受控 baseline V0、重启与业务表共存 |
+| 邮件参考服务 | 通过 | 148 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、1 个 shared-schema ApplicationContext test、6 个 shared-schema bootstrap tests、5 个 PostgreSQL repository constraint tests、30 个 Java runtime guard tests、1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 43/43、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；Flyway schema-owner、migration discovery/naming、精确 peer history、半成品 peer、队列生命周期行形状、database layout 和非 PostgreSQL datasource 拒绝矩阵通过 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
@@ -262,8 +269,9 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
 - 独立 Shell 进程门禁验证无 SMTP 副作用的 HTTP/数据库契约、启动保护和 Flyway
   dirty-schema/V2 坏数据失败关闭，以及 V3 历史元数据规范化。
 - backup/restore rehearsal 使用 disposable PostgreSQL 16 和同 major 容器客户端，
-  验证共享库/版本/目录失败关闭、owner-only 原子 archive、空库恢复、队列/日志与
-  Flyway history/约束一致，以及恢复后真实 Spring HTTP 写入和重启。
+  验证共享库必须显式选择 layout、版本/目录失败关闭、owner-only 原子 archive、
+  archive 排除 UniAuth `users`、空库恢复、队列/日志与 Flyway history/约束一致，
+  以及恢复后真实 Spring HTTP 写入和重启。
 - 参考服务邮件 API 的真实 HTTP 响应在成功、API key 拒绝、参数拒绝、MVC 路由错误
   和内部失败下均设置 `Cache-Control: no-store`、`Pragma: no-cache` 和
   `X-Content-Type-Options: nosniff`；Shell 和 Python stub contract 均有对应断言。

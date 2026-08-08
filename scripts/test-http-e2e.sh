@@ -419,6 +419,32 @@ NODE
     )
 }
 
+resign_web3_challenge() {
+    local wallet_json="$1"
+    local message="$2"
+    local nonce="$3"
+    local private_key
+
+    private_key="$(jq -er '.privateKey' <<<"$wallet_json")"
+    (
+        cd "$PROJECT_DIR/frontend"
+        PRIVATE_KEY="$private_key" SIWE_MESSAGE="$message" SIWE_NONCE="$nonce" \
+            node --input-type=module <<'NODE'
+import { Wallet } from 'ethers';
+
+const wallet = new Wallet(process.env.PRIVATE_KEY);
+const signature = await wallet.signMessage(process.env.SIWE_MESSAGE);
+process.stdout.write(JSON.stringify({
+  walletAddress: wallet.address.toLowerCase(),
+  message: process.env.SIWE_MESSAGE,
+  signature,
+  nonce: process.env.SIWE_NONCE,
+  chainId: 1
+}));
+NODE
+    )
+}
+
 echo "HTTP E2E: starting disposable PostgreSQL"
 docker run -d --rm \
     --name "$CONTAINER_NAME" \
@@ -481,6 +507,11 @@ echo "1/15 Verify Flyway-owned PostgreSQL startup"
 ")" = "1" ] || fail "Flyway V4 was not recorded as a successful SQL migration"
 [ "$(db_value "
     SELECT count(*)
+    FROM uniauth_flyway_schema_history
+    WHERE version = '5' AND type = 'SQL' AND success = true;
+")" = "1" ] || fail "Flyway V5 was not recorded as a successful SQL migration"
+[ "$(db_value "
+    SELECT count(*)
     FROM information_schema.tables
     WHERE table_schema = 'public'
       AND table_name = ANY (ARRAY[
@@ -507,6 +538,13 @@ echo "1/15 Verify Flyway-owned PostgreSQL startup"
 [ "$(db_value "SELECT to_regclass('public.uk_login_methods_one_primary');")" \
     = "uk_login_methods_one_primary" ] \
     || fail "Flyway V2 did not create the primary login-method unique index"
+[ "$(db_value "
+    SELECT data_type || ':' || is_nullable
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'web3_nonces'
+      AND column_name = 'message';
+")" = "text:NO" ] || fail "Flyway V5 did not require the Web3 SIWE message"
 [ "$(db_value "
     SELECT data_type || ':' || is_nullable || ':' || column_default
     FROM information_schema.columns
@@ -795,6 +833,32 @@ tampered_web3_status="$(
 )"
 [ "$tampered_web3_status" = "401" ] \
     || fail "a Web3 challenge with a tampered message was accepted"
+tampered_domain_message="$(
+    jq -er '.message | sub("^[^ ]+"; "attacker.example")' <<<"$web3_challenge"
+)"
+tampered_domain_challenge="$(
+    resign_web3_challenge \
+        "$web3_wallet" \
+        "$tampered_domain_message" \
+        "$(jq -er '.nonce' <<<"$web3_challenge")"
+)"
+tampered_domain_status="$(
+    curl -sS -o "$TEMP_DIR/web3-domain-tampered.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/web3/verify" \
+        -H "Content-Type: application/json" \
+        --data "$tampered_domain_challenge"
+)"
+[ "$tampered_domain_status" = "401" ] \
+    || fail "a Web3 challenge with a tampered domain was accepted"
+wrong_chain_challenge="$(jq -c '.chainId = 5' <<<"$web3_challenge")"
+wrong_chain_status="$(
+    curl -sS -o "$TEMP_DIR/web3-chain-tampered.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/web3/verify" \
+        -H "Content-Type: application/json" \
+        --data "$wrong_chain_challenge"
+)"
+[ "$wrong_chain_status" = "401" ] \
+    || fail "a Web3 challenge with a mismatched request chain ID was accepted"
 web3_headers="$TEMP_DIR/web3-headers.txt"
 web3_login="$(
     curl -sS -D "$web3_headers" \
@@ -821,6 +885,34 @@ replay_status="$(
 wallet_status="$(curl -sS "${BASE_URL}/api/auth/web3/status/${web3_address}")"
 [ "$(jq -er '.isBound' <<<"$wallet_status")" = "true" ] \
     || fail "Web3 wallet status was not persisted"
+
+concurrent_web3_challenge="$(signed_challenge "$web3_wallet")"
+concurrent_status_one="$TEMP_DIR/web3-concurrent-one.status"
+concurrent_status_two="$TEMP_DIR/web3-concurrent-two.status"
+(
+    curl -sS -o /dev/null -w '%{http_code}\n' \
+        -X POST "${BASE_URL}/api/auth/web3/verify" \
+        -H "Content-Type: application/json" \
+        --data "$concurrent_web3_challenge" >"$concurrent_status_one"
+) &
+concurrent_pid_one=$!
+(
+    curl -sS -o /dev/null -w '%{http_code}\n' \
+        -X POST "${BASE_URL}/api/auth/web3/verify" \
+        -H "Content-Type: application/json" \
+        --data "$concurrent_web3_challenge" >"$concurrent_status_two"
+) &
+concurrent_pid_two=$!
+wait "$concurrent_pid_one"
+wait "$concurrent_pid_two"
+concurrent_successes="$(
+    grep -hFx "200" "$concurrent_status_one" "$concurrent_status_two" | wc -l | tr -d ' '
+)"
+concurrent_rejections="$(
+    grep -hFx "401" "$concurrent_status_one" "$concurrent_status_two" | wc -l | tr -d ' '
+)"
+[ "$concurrent_successes" = "1" ] && [ "$concurrent_rejections" = "1" ] \
+    || fail "concurrent Web3 challenge submissions did not resolve as 200/401"
 
 repeat_web3_challenge="$(signed_challenge "$web3_wallet")"
 repeat_web3_login="$(post_json /api/auth/web3/verify "$repeat_web3_challenge")"
@@ -1247,7 +1339,7 @@ assert_auth_cookie_headers "$logout_headers" 0 0
 echo "15/15 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
     || fail "the E2E harness connected to an unexpected database"
-[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "4" ] \
+[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "5" ] \
     || fail "Flyway history contained unexpected rows after two application starts"
 [ "$(db_value "SELECT count(*) FROM web3_nonces;")" = "0" ] \
     || fail "consumed Web3 nonces remained in the database"

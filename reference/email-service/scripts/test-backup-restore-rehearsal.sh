@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Disposable PostgreSQL backup/restore rehearsal. This script never targets a
-# shared database and never reads the component .env file.
+# Disposable PostgreSQL backup/restore rehearsal. It covers an explicitly
+# shared UniAuth database without reading the component .env file.
 
 set -euo pipefail
 
@@ -11,7 +11,7 @@ APPLICATION_JAR="${EMAIL_SERVICE_JAR_PATH:-$PROJECT_DIR/target/email-service-1.0
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/email-backup-restore.XXXXXX")"
 RUN_ID="$(date +%s)-$$"
 CONTAINER_NAME="email-backup-restore-${RUN_ID}"
-SOURCE_DATABASE="email_service_backup_source_test"
+SOURCE_DATABASE="uniauth_test"
 RESTORE_DATABASE="email_service_backup_restore_test"
 DATABASE_USER="email_backup_test"
 DATABASE_PASSWORD="email-backup-${RUN_ID}"
@@ -164,6 +164,7 @@ database_fingerprint() {
 
 start_application() {
     local database="$1"
+    local database_layout="${2:-dedicated}"
     APP_LOG="$TEMP_DIR/${database}.log"
     SERVER_PORT="$(free_port)"
     (
@@ -176,6 +177,7 @@ start_application() {
         export EMAIL_POSTGRES_DATABASE="$database"
         export EMAIL_POSTGRES_USER="$DATABASE_USER"
         export EMAIL_POSTGRES_PASSWORD="$DATABASE_PASSWORD"
+        export EMAIL_DATABASE_LAYOUT="$database_layout"
         export SMTP_HOST=127.0.0.1
         export SMTP_PORT=1
         export SMTP_AUTH=false
@@ -223,6 +225,7 @@ run_backup() {
     local output_dir="$3"
     local pg_dump_bin="${4:-$PG_DUMP_WRAPPER}"
     local pg_restore_bin="${5:-$PG_RESTORE_WRAPPER}"
+    local database_layout="${6:-dedicated}"
     SPRING_PROFILES_ACTIVE=dev \
     EMAIL_SERVICE_ENV_FILE= \
     EMAIL_POSTGRES_HOST=127.0.0.1 \
@@ -230,6 +233,7 @@ run_backup() {
     EMAIL_POSTGRES_DATABASE="$database" \
     EMAIL_POSTGRES_USER="$DATABASE_USER" \
     EMAIL_POSTGRES_PASSWORD="$DATABASE_PASSWORD" \
+    EMAIL_DATABASE_LAYOUT="$database_layout" \
     EMAIL_BACKUP_DIR="$output_dir" \
     EMAIL_BACKUP_CONNECT_TIMEOUT_SECONDS=1 \
     EMAIL_PG_DUMP_BIN="$pg_dump_bin" \
@@ -247,6 +251,7 @@ run_backup_without_output_dir() {
         EMAIL_POSTGRES_DATABASE="$SOURCE_DATABASE" \
         EMAIL_POSTGRES_USER="$DATABASE_USER" \
         EMAIL_POSTGRES_PASSWORD="$DATABASE_PASSWORD" \
+        EMAIL_DATABASE_LAYOUT=shared-uniauth \
         EMAIL_BACKUP_CONNECT_TIMEOUT_SECONDS=1 \
         EMAIL_PG_DUMP_BIN="$PG_DUMP_WRAPPER" \
         EMAIL_PG_RESTORE_BIN="$PG_RESTORE_WRAPPER" \
@@ -398,7 +403,7 @@ chmod 700 \
 create_database "$SOURCE_DATABASE"
 
 echo "1/10 Create a Flyway-owned source database with all queue lifecycle states"
-start_application "$SOURCE_DATABASE"
+start_application "$SOURCE_DATABASE" shared-uniauth
 wait_for_application
 [ "$(db_value "$SOURCE_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "3" ] \
@@ -464,6 +469,19 @@ db_command "$SOURCE_DATABASE" -c "
     || fail "source queue fixture was not created"
 [ "$(db_value "$SOURCE_DATABASE" "SELECT count(*) FROM email_logs;")" = "2" ] \
     || fail "source log fixture was not created"
+db_command "$SOURCE_DATABASE" -c "
+    CREATE TABLE users (
+        id character varying(36) PRIMARY KEY,
+        username character varying(255) NOT NULL,
+        email character varying(255) NOT NULL
+    );
+    INSERT INTO users (id, username, email)
+    VALUES (
+        'shared-backup-user',
+        'shared-backup-user',
+        'shared-backup-user@example.test'
+    );
+" >/dev/null
 SOURCE_FINGERPRINT="$(database_fingerprint "$SOURCE_DATABASE")"
 
 echo "2/10 Require an explicit backup directory"
@@ -476,21 +494,145 @@ grep -Fq "required environment variable EMAIL_BACKUP_DIR is not set" \
     "$TEMP_DIR/missing-directory.err" \
     || fail "missing output directory did not report the explicit configuration guard"
 
-echo "3/10 Reject a shared database before invoking pg_dump"
+echo "3/10 Reject an unsafe shared database or incomplete Flyway history"
 shared_dir="$TEMP_DIR/shared"
 mkdir -m 700 "$shared_dir"
-if run_backup blacksheep_email "$DATABASE_PORT" "$shared_dir" \
+if run_backup "$SOURCE_DATABASE" "$DATABASE_PORT" "$shared_dir" \
         >"$TEMP_DIR/shared.out" 2>"$TEMP_DIR/shared.err"; then
-    fail "backup accepted a shared UniAuth database"
+    fail "backup accepted a shared UniAuth database without explicit layout"
 fi
-grep -Fq "refusing a shared or reserved PostgreSQL database" "$TEMP_DIR/shared.err" \
+grep -Fq "EMAIL_DATABASE_LAYOUT=shared-uniauth is required" "$TEMP_DIR/shared.err" \
     || fail "shared-database rejection did not report the safety guard"
 assert_no_backup_artifacts "$shared_dir"
+
+history_dir="$TEMP_DIR/incomplete-history"
+mkdir -m 700 "$history_dir"
+db_command "$SOURCE_DATABASE" -c "
+    UPDATE email_service_flyway_schema_history
+    SET version = '2'
+    WHERE version = '3';
+" >/dev/null
+if run_backup \
+        "$SOURCE_DATABASE" \
+        "$DATABASE_PORT" \
+        "$history_dir" \
+        "$PG_DUMP_WRAPPER" \
+        "$PG_RESTORE_WRAPPER" \
+        shared-uniauth \
+        >"$TEMP_DIR/history.out" 2>"$TEMP_DIR/history.err"; then
+    fail "backup accepted duplicate V2 history with missing V3"
+fi
+grep -Fq "email service Flyway history must match the expected V1 through V3 chain" \
+    "$TEMP_DIR/history.err" \
+    || fail "incomplete history rejection did not report the Flyway guard"
+assert_no_backup_artifacts "$history_dir"
+db_command "$SOURCE_DATABASE" -c "
+    UPDATE email_service_flyway_schema_history
+    SET version = '3'
+    WHERE version = '2'
+      AND description = 'enforce queue lifecycle state';
+" >/dev/null
+
+db_command "$SOURCE_DATABASE" -c "
+    INSERT INTO email_service_flyway_schema_history (
+        installed_rank,
+        version,
+        description,
+        type,
+        script,
+        checksum,
+        installed_by,
+        execution_time,
+        success
+    )
+    SELECT
+        max(installed_rank) + 1,
+        '4',
+        'unexpected future migration',
+        'SQL',
+        'V4__unexpected_future_migration.sql',
+        0,
+        current_user,
+        0,
+        true
+    FROM email_service_flyway_schema_history;
+" >/dev/null
+if run_backup \
+        "$SOURCE_DATABASE" \
+        "$DATABASE_PORT" \
+        "$history_dir" \
+        "$PG_DUMP_WRAPPER" \
+        "$PG_RESTORE_WRAPPER" \
+        shared-uniauth \
+        >"$TEMP_DIR/unexpected-history.out" \
+        2>"$TEMP_DIR/unexpected-history.err"; then
+    fail "backup accepted an unknown future Flyway migration"
+fi
+grep -Fq "email service Flyway history must match the expected V1 through V3 chain" \
+    "$TEMP_DIR/unexpected-history.err" \
+    || fail "unexpected history rejection did not report the Flyway guard"
+assert_no_backup_artifacts "$history_dir"
+db_command "$SOURCE_DATABASE" -c "
+    DELETE FROM email_service_flyway_schema_history
+    WHERE version = '4'
+      AND description = 'unexpected future migration';
+" >/dev/null
+
+db_command "$SOURCE_DATABASE" -c "
+    INSERT INTO email_service_flyway_schema_history (
+        installed_rank,
+        version,
+        description,
+        type,
+        script,
+        checksum,
+        installed_by,
+        execution_time,
+        success
+    )
+    SELECT
+        max(installed_rank) + 1,
+        NULL,
+        'unexpected repeatable migration',
+        'SQL',
+        'R__unexpected_repeatable_migration.sql',
+        0,
+        current_user,
+        0,
+        true
+    FROM email_service_flyway_schema_history;
+" >/dev/null
+if run_backup \
+        "$SOURCE_DATABASE" \
+        "$DATABASE_PORT" \
+        "$history_dir" \
+        "$PG_DUMP_WRAPPER" \
+        "$PG_RESTORE_WRAPPER" \
+        shared-uniauth \
+        >"$TEMP_DIR/repeatable-history.out" \
+        2>"$TEMP_DIR/repeatable-history.err"; then
+    fail "backup accepted an unknown repeatable Flyway migration"
+fi
+grep -Fq "email service Flyway history must match the expected V1 through V3 chain" \
+    "$TEMP_DIR/repeatable-history.err" \
+    || fail "repeatable history rejection did not report the Flyway guard"
+assert_no_backup_artifacts "$history_dir"
+db_command "$SOURCE_DATABASE" -c "
+    DELETE FROM email_service_flyway_schema_history
+    WHERE version IS NULL
+      AND description = 'unexpected repeatable migration';
+" >/dev/null
 
 echo "4/10 Reject a pg_dump major that differs from the source server"
 version_dir="$TEMP_DIR/version-mismatch"
 mkdir -m 700 "$version_dir"
-if run_backup "$SOURCE_DATABASE" "$DATABASE_PORT" "$version_dir" "$WRONG_PG_DUMP" \
+if run_backup \
+        "$SOURCE_DATABASE" \
+        "$DATABASE_PORT" \
+        "$version_dir" \
+        "$WRONG_PG_DUMP" \
+        "$PG_RESTORE_WRAPPER" \
+        shared-uniauth \
         >"$TEMP_DIR/version.out" 2>"$TEMP_DIR/version.err"; then
     fail "backup accepted a mismatched pg_dump major version"
 fi
@@ -504,6 +646,7 @@ if run_backup \
         "$version_dir" \
         "$PG_DUMP_WRAPPER" \
         "$WRONG_PG_RESTORE" \
+        shared-uniauth \
         >"$TEMP_DIR/restore-version.out" 2>"$TEMP_DIR/restore-version.err"; then
     fail "backup accepted a mismatched pg_restore major version"
 fi
@@ -515,7 +658,13 @@ assert_no_backup_artifacts "$version_dir"
 echo "5/10 Remove temporary files when pg_dump cannot connect"
 failure_dir="$TEMP_DIR/failure"
 mkdir -m 700 "$failure_dir"
-if run_backup "$SOURCE_DATABASE" 1 "$failure_dir" \
+if run_backup \
+        "$SOURCE_DATABASE" \
+        1 \
+        "$failure_dir" \
+        "$PG_DUMP_WRAPPER" \
+        "$PG_RESTORE_WRAPPER" \
+        shared-uniauth \
         >"$TEMP_DIR/failure.out" 2>"$TEMP_DIR/failure.err"; then
     fail "backup unexpectedly succeeded against an unavailable PostgreSQL port"
 fi
@@ -526,7 +675,13 @@ real_dir="$TEMP_DIR/real-backups"
 linked_dir="$TEMP_DIR/linked-backups"
 mkdir -m 700 "$real_dir"
 ln -s "$real_dir" "$linked_dir"
-if run_backup "$SOURCE_DATABASE" "$DATABASE_PORT" "$linked_dir" \
+if run_backup \
+        "$SOURCE_DATABASE" \
+        "$DATABASE_PORT" \
+        "$linked_dir" \
+        "$PG_DUMP_WRAPPER" \
+        "$PG_RESTORE_WRAPPER" \
+        shared-uniauth \
         >"$TEMP_DIR/symlink.out" 2>"$TEMP_DIR/symlink.err"; then
     fail "backup accepted a symbolic-link output directory"
 fi
@@ -537,7 +692,15 @@ assert_no_backup_artifacts "$real_dir"
 echo "7/10 Create an atomic owner-only PostgreSQL custom-format backup"
 backup_dir="$TEMP_DIR/backups"
 mkdir -m 700 "$backup_dir"
-BACKUP_FILE="$(run_backup "$SOURCE_DATABASE" "$DATABASE_PORT" "$backup_dir")"
+BACKUP_FILE="$(
+    run_backup \
+        "$SOURCE_DATABASE" \
+        "$DATABASE_PORT" \
+        "$backup_dir" \
+        "$PG_DUMP_WRAPPER" \
+        "$PG_RESTORE_WRAPPER" \
+        shared-uniauth
+)"
 [ -f "$BACKUP_FILE" ] || fail "backup command did not create the reported archive"
 [ -f "${BACKUP_FILE}.sha256" ] || fail "backup command did not create a checksum"
 [ "$(file_mode "$BACKUP_FILE")" = "600" ] \
@@ -554,6 +717,10 @@ BACKUP_FILE="$(run_backup "$SOURCE_DATABASE" "$DATABASE_PORT" "$backup_dir")"
 "$PG_RESTORE_WRAPPER" --list "$BACKUP_FILE" \
     | grep -Fq "TABLE public email_logs" \
     || fail "backup archive does not contain email_logs"
+if "$PG_RESTORE_WRAPPER" --list "$BACKUP_FILE" \
+        | grep -Eq "TABLE public users|TABLE DATA public users"; then
+    fail "component backup unexpectedly contains UniAuth users"
+fi
 
 echo "8/10 Restore into an empty database and compare schema and data"
 create_database "$RESTORE_DATABASE"
@@ -577,10 +744,13 @@ PGPASSWORD="$DATABASE_PASSWORD" "$PG_RESTORE_WRAPPER" \
     FROM pg_constraint
     WHERE conname = 'chk_email_queue_lifecycle_state';
 ")" = "1" ] || fail "restored lifecycle constraint is missing"
+[ "$(db_value "$RESTORE_DATABASE" \
+    "SELECT to_regclass('public.users') IS NULL;")" = "t" ] \
+    || fail "component restore unexpectedly created UniAuth users"
 
 echo "9/10 Start the real application on the restore and append through HTTP"
 stop_application
-start_application "$RESTORE_DATABASE"
+start_application "$RESTORE_DATABASE" dedicated
 wait_for_application
 max_queue_id="$(db_value "$RESTORE_DATABASE" "SELECT max(id) FROM email_queue;")"
 payload="$(
@@ -615,7 +785,7 @@ new_queue_id="$(jq -er '.queueId' <<<"$response")"
 
 echo "10/10 Restart without replaying migrations or losing restored data"
 stop_application
-start_application "$RESTORE_DATABASE"
+start_application "$RESTORE_DATABASE" dedicated
 wait_for_application
 [ "$(db_value "$RESTORE_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "3" ] \

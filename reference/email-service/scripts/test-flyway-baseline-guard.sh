@@ -278,7 +278,8 @@ create_database "$CONFIG_DATABASE"
 echo "1/15 Reject a shared database before Flyway can create schema objects"
 shared_log="$TEMP_DIR/shared-database.log"
 expect_startup_failure "$SHARED_DATABASE" "$shared_log"
-grep -Fq "Email service database name must contain email or mail" "$shared_log" \
+grep -Fq "EMAIL_DATABASE_LAYOUT=shared-uniauth is required for a UniAuth database" \
+    "$shared_log" \
     || fail "shared-database failure did not report the runtime database guard"
 [ "$(db_value "$SHARED_DATABASE" \
     "SELECT to_regclass('public.email_service_flyway_schema_history') IS NULL;")" = "t" ] \
@@ -292,7 +293,8 @@ db_command "$DIRTY_DATABASE" \
     -c "CREATE TABLE unexpected_table (id bigint PRIMARY KEY);" >/dev/null
 dirty_log="$TEMP_DIR/dirty-schema.log"
 expect_startup_failure "$DIRTY_DATABASE" "$dirty_log"
-grep -Fq "non-empty schema" "$dirty_log" \
+grep -Fq "Non-empty public schema requires EMAIL_DATABASE_LAYOUT=shared-uniauth" \
+    "$dirty_log" \
     || fail "dirty-schema failure did not report the Flyway baseline guard"
 [ "$(db_value "$DIRTY_DATABASE" \
     "SELECT to_regclass('public.email_service_flyway_schema_history') IS NULL;")" = "t" ] \

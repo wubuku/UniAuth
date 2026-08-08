@@ -93,7 +93,8 @@ public class Web3AuthController {
                     normalizedAddress,
                     request.getMessage(),
                     request.getSignature(),
-                    request.getNonce()
+                    request.getNonce(),
+                    request.getChainId()
             );
 
             if (!isValid) {
@@ -178,7 +179,8 @@ public class Web3AuthController {
                     normalizedAddress,
                     request.getMessage(),
                     request.getSignature(),
-                    request.getNonce()
+                    request.getNonce(),
+                    request.getChainId()
             );
 
             if (!isValid) {

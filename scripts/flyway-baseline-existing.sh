@@ -506,6 +506,61 @@ if [ "$RESTORED_V4_HISTORY_TYPE" != "SQL" ] || [ "$FRESH_V4_HISTORY_TYPE" != "SQ
     exit 1
 fi
 
+RESTORED_V5_HISTORY_TYPE="$(
+    psql_value \
+        127.0.0.1 \
+        "$REHEARSAL_PORT" \
+        "$REHEARSAL_DATABASE" \
+        "$REHEARSAL_USER" \
+        "$REHEARSAL_PASSWORD" \
+        "SELECT type FROM uniauth_flyway_schema_history WHERE version = '5';"
+)"
+FRESH_V5_HISTORY_TYPE="$(
+    psql_value \
+        127.0.0.1 \
+        "$REHEARSAL_PORT" \
+        "$FRESH_DATABASE" \
+        "$REHEARSAL_USER" \
+        "$REHEARSAL_PASSWORD" \
+        "SELECT type FROM uniauth_flyway_schema_history WHERE version = '5';"
+)"
+if [ "$RESTORED_V5_HISTORY_TYPE" != "SQL" ] || [ "$FRESH_V5_HISTORY_TYPE" != "SQL" ]; then
+    echo "ERROR: Flyway V5 was not applied in both rehearsal paths" >&2
+    exit 1
+fi
+
+RESTORED_WEB3_MESSAGE_COLUMN="$(
+    psql_value \
+        127.0.0.1 \
+        "$REHEARSAL_PORT" \
+        "$REHEARSAL_DATABASE" \
+        "$REHEARSAL_USER" \
+        "$REHEARSAL_PASSWORD" \
+        "SELECT data_type || ':' || is_nullable
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'web3_nonces'
+           AND column_name = 'message';"
+)"
+FRESH_WEB3_MESSAGE_COLUMN="$(
+    psql_value \
+        127.0.0.1 \
+        "$REHEARSAL_PORT" \
+        "$FRESH_DATABASE" \
+        "$REHEARSAL_USER" \
+        "$REHEARSAL_PASSWORD" \
+        "SELECT data_type || ':' || is_nullable
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'web3_nonces'
+           AND column_name = 'message';"
+)"
+if [ "$RESTORED_WEB3_MESSAGE_COLUMN" != "text:NO" ] \
+    || [ "$FRESH_WEB3_MESSAGE_COLUMN" != "text:NO" ]; then
+    echo "ERROR: Flyway V5 did not bind web3_nonces to a required message column" >&2
+    exit 1
+fi
+
 REPORT_FILE="$ARTIFACT_DIR/rehearsal-result.txt"
 {
     echo "timestamp=$RUN_TIMESTAMP"
@@ -522,6 +577,10 @@ REPORT_FILE="$ARTIFACT_DIR/rehearsal-result.txt"
     echo "fresh_v3_history_type=$FRESH_V3_HISTORY_TYPE"
     echo "restored_v4_history_type=$RESTORED_V4_HISTORY_TYPE"
     echo "fresh_v4_history_type=$FRESH_V4_HISTORY_TYPE"
+    echo "restored_v5_history_type=$RESTORED_V5_HISTORY_TYPE"
+    echo "fresh_v5_history_type=$FRESH_V5_HISTORY_TYPE"
+    echo "restored_web3_message_column=$RESTORED_WEB3_MESSAGE_COLUMN"
+    echo "fresh_web3_message_column=$FRESH_WEB3_MESSAGE_COLUMN"
     echo "source_dump=$SOURCE_DUMP"
 } > "$REPORT_FILE"
 

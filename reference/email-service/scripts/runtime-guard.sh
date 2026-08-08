@@ -74,6 +74,7 @@ email_service_validate_schema_ownership_configuration() {
     local flyway_table="${SPRING_FLYWAY_TABLE:-email_service_flyway_schema_history}"
     local flyway_default_schema="${SPRING_FLYWAY_DEFAULT_SCHEMA:-public}"
     local flyway_schemas="${SPRING_FLYWAY_SCHEMAS:-public}"
+    local baseline_version="${SPRING_FLYWAY_BASELINE_VERSION:-0}"
     local sql_init_mode="${SPRING_SQL_INIT_MODE:-never}"
     local hibernate_ddl_auto="${SPRING_JPA_HIBERNATE_DDL_AUTO:-validate}"
 
@@ -104,6 +105,8 @@ email_service_validate_schema_ownership_configuration() {
         "$fail_on_missing_locations" true || return 1
     email_service_require_exact_value \
         SPRING_FLYWAY_BASELINE_ON_MIGRATE "$baseline_on_migrate" false || return 1
+    email_service_require_exact_value \
+        SPRING_FLYWAY_BASELINE_VERSION "$baseline_version" 0 || return 1
     email_service_require_exact_value \
         SPRING_FLYWAY_CLEAN_DISABLED "$clean_disabled" true || return 1
     email_service_require_exact_value \
@@ -157,32 +160,50 @@ email_service_is_loopback() {
     esac
 }
 
-email_service_require_dedicated_database() {
+email_service_require_database_target() {
     local profile="$1"
     local database_name="$2"
+    local database_layout="$3"
 
-    case "$database_name" in
-        *email*|*mail*)
+    case "$database_layout" in
+        dedicated|shared-uniauth)
             ;;
         *)
-            echo "Error: email service database name must contain email or mail" >&2
+            echo "Error: EMAIL_DATABASE_LAYOUT must be exactly dedicated or shared-uniauth" >&2
             return 1
             ;;
     esac
 
     case "$database_name" in
-        blacksheep|blacksheep_*|blacksheep-*|postgres|template0|template1|uniauth|uniauth_dev|uniauth_test)
+        blacksheep|blacksheep_*|blacksheep-*|postgres|template0|template1)
             echo "Error: refusing a shared or reserved PostgreSQL database" >&2
             return 1
             ;;
     esac
+
+    if [ "$database_layout" = "dedicated" ]; then
+        case "$database_name" in
+            uniauth|uniauth_dev|uniauth_test)
+                echo "Error: EMAIL_DATABASE_LAYOUT=shared-uniauth is required for a UniAuth database" >&2
+                return 1
+                ;;
+        esac
+        case "$database_name" in
+            *email*|*mail*)
+                ;;
+            *)
+                echo "Error: email service database name must contain email or mail" >&2
+                return 1
+                ;;
+        esac
+    fi
 
     if [ "$profile" = "dev" ]; then
         case "$database_name" in
             *dev*|*test*|*demo*|*local*)
                 ;;
             *)
-                echo "Error: dev profile requires an email database named dev/test/demo/local" >&2
+                echo "Error: dev profile requires a database named dev/test/demo/local" >&2
                 return 1
                 ;;
         esac
@@ -232,6 +253,7 @@ email_service_prepare_runtime() {
     local recovery_scan_interval="${EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES:-5}"
     local stuck_timeout_minutes="${EMAIL_STUCK_TIMEOUT_MINUTES:-10}"
     local api_key="${EMAIL_SERVICE_API_KEY:-}"
+    local database_layout="${EMAIL_DATABASE_LAYOUT:-dedicated}"
 
     case "$profile" in
         dev|prod)
@@ -249,9 +271,10 @@ email_service_prepare_runtime() {
     email_service_require_env EMAIL_POSTGRES_DATABASE || return 1
     email_service_require_env EMAIL_POSTGRES_USER || return 1
     email_service_require_env EMAIL_POSTGRES_PASSWORD || return 1
-    email_service_require_dedicated_database \
+    email_service_require_database_target \
         "$profile" \
-        "$EMAIL_POSTGRES_DATABASE" || return 1
+        "$EMAIL_POSTGRES_DATABASE" \
+        "$database_layout" || return 1
 
     email_service_require_env SMTP_HOST || return 1
     email_service_require_env SMTP_PORT || return 1
@@ -348,5 +371,5 @@ email_service_prepare_runtime() {
     fi
 
     echo "Email service runtime profile: ${profile}"
-    echo "Email service database target passed dedicated-name checks"
+    echo "Email service database target passed ${database_layout} checks"
 }

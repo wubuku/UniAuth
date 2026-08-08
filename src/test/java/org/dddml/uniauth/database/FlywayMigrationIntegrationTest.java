@@ -45,9 +45,9 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Test
-    void freshDatabaseMigratesToVersionFourAndHibernateValidates() {
+    void freshDatabaseMigratesToVersionFiveAndHibernateValidates() {
         assertThat(flyway.info().current()).isNotNull();
-        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("4");
+        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("5");
         assertThat(flyway.migrate().migrationsExecuted).isZero();
 
         List<String> tables = jdbcTemplate.queryForList(
@@ -214,6 +214,8 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
                 .isEqualTo("timestamp without time zone:NO:CURRENT_TIMESTAMP");
         assertThat(columnDescriptor("web3_nonces", "created_at"))
                 .isEqualTo("timestamp with time zone:NO:CURRENT_TIMESTAMP");
+        assertThat(columnDescriptor("web3_nonces", "message"))
+                .isEqualTo("text:NO:");
         assertThat(columnDescriptor("email_verification_codes", "is_used"))
                 .isEqualTo("boolean:NO:false");
         assertThat(columnDescriptor("email_verification_codes", "retry_count"))
@@ -297,12 +299,13 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
             jdbcTemplate.update(
                     """
                     INSERT INTO web3_nonces (
-                        id, wallet_address, nonce, expires_at
-                    ) VALUES (?, ?, ?, CURRENT_TIMESTAMP + INTERVAL '5 minutes')
+                        id, wallet_address, nonce, message, expires_at
+                    ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP + INTERVAL '5 minutes')
                     """,
                     nonceId,
                     "0x" + nonceId.replace("-", "") + "00000000",
-                    "schema-nonce-" + nonceId
+                    "schema-nonce-" + nonceId,
+                    "schema-siwe-message-" + nonceId
             );
             assertThat(jdbcTemplate.queryForObject(
                     "SELECT created_at IS NOT NULL FROM web3_nonces WHERE id = ?",

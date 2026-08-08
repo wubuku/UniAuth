@@ -22,7 +22,7 @@
 - 默认不激活 Spring profile，后端端口是 `8081`。
 - 演示数据默认关闭且不再全表清理；显式启用仍只允许 test/demo 命名的 disposable 数据库。
 - Vite 使用 `5173`，Python 资源服务器代码实际使用 `5002`。
-- `dev`、`test`、`prod` 只支持显式 PostgreSQL；SQLite runtime 已退役。
+- `dev`、`test`、`prod` 只支持显式 PostgreSQL 16；SQLite runtime 已退役。
 - Flyway 已接管 schema：V1 来自实际 dev PostgreSQL 的 8 表结构，V2 加固登录方式
   行形状/primary 不变量，V3 增加登录方式集合 revision CAS，V4 对齐其余既有实体
   约束并补齐 email repository 索引，V5 将 Web3 nonce 绑定到服务端完整 SIWE message
@@ -50,7 +50,7 @@
 |------|------|------|
 | [前端 README](../frontend/README.md) | Needs verification | React/Vite 使用说明；以 `vite.config.ts` 为端口和构建事实 |
 | [Python 资源服务器 README](../python-resource-server/README.md) | Needs verification | Flask 示例说明；以 `app.py` 为端口和 JWT claim 事实 |
-| [邮件服务参考实现](../reference/email-service/README.md) | Reference | 独立 Spring Boot REST/SMTP 组件；Flyway V1/V2/V3、SMTP/限流 guard、PostgreSQL/GreenMail、Shell E2E 与 backup/restore rehearsal |
+| [邮件服务参考实现](../reference/email-service/README.md) | Reference | 独立 Spring Boot REST/SMTP 组件；Flyway V1/V2/V3、同 public schema 兼容布局、SMTP/限流 guard、PostgreSQL/GreenMail、Shell E2E 与选择性 backup/restore rehearsal |
 | [异构资源服务器验证记录](../VERIFICATION_CHECKLIST.md) | Historical | 2026-01-25 的历史验证快照，不是当前回归证明 |
 
 ## 契约与集成材料

@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -45,18 +46,28 @@ public class Web3AuthService {
 
         String normalizedAddress = Web3SignatureUtils.normalizeAddress(walletAddress);
         String nonce = UUID.randomUUID().toString().replace("-", "");
-        String message = buildSiweMessage(normalizedAddress, nonce);
+        Instant issuedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        Instant expiresAt = issuedAt.plusSeconds(nonceExpirationSeconds);
+        String message = buildSiweMessage(normalizedAddress, nonce, issuedAt, expiresAt);
         
-        web3NonceService.saveNonce(normalizedAddress, nonce, nonceExpirationSeconds);
+        web3NonceService.saveNonce(
+                normalizedAddress,
+                nonce,
+                message,
+                expiresAt
+        );
 
         log.info("Web3 nonce generated");
 
         return new Web3NonceResponse(nonce, message, nonceExpirationSeconds);
     }
 
-    private String buildSiweMessage(String walletAddress, String nonce) {
-        Instant now = Instant.now();
-        Instant expiry = now.plusSeconds(nonceExpirationSeconds);
+    private String buildSiweMessage(
+            String walletAddress,
+            String nonce,
+            Instant issuedAt,
+            Instant expiresAt
+    ) {
         String uri = "https://" + domain;
 
         // Use configured format or fallback to default if missing (though @Value should enforce it if not optional)
@@ -77,32 +88,35 @@ public class Web3AuthService {
                 walletAddress,
                 uri,
                 nonce,
-                now.toString(),
-                expiry.toString()
+                issuedAt.toString(),
+                expiresAt.toString()
         );
     }
 
     @Transactional
-    public boolean verifySignature(String walletAddress, String message, String signature, String nonce) {
+    public boolean verifySignature(
+            String walletAddress,
+            String message,
+            String signature,
+            String nonce,
+            Integer chainId
+    ) {
         try {
             String normalizedAddress = Web3SignatureUtils.normalizeAddress(walletAddress);
-            String storedNonce = web3NonceService.getNonce(normalizedAddress);
-
-            if (storedNonce == null || !storedNonce.equals(nonce)) {
-                log.warn("Web3 nonce mismatch or expiration");
+            if (chainId != null && chainId != 1) {
+                log.warn("Web3 chain ID mismatch");
                 return false;
             }
 
             boolean isValid = Web3SignatureUtils.verifySignature(message, signature, normalizedAddress);
 
-            if (isValid) {
-                web3NonceService.deleteNonce(normalizedAddress);
+            if (isValid && web3NonceService.consumeNonce(normalizedAddress, nonce, message)) {
                 log.info("Web3 signature verification succeeded");
-            } else {
-                log.warn("Web3 signature verification failed");
+                return true;
             }
 
-            return isValid;
+            log.warn("Web3 signature verification failed or challenge was not current");
+            return false;
         } catch (Exception e) {
             log.warn("Web3 signature verification could not be completed");
             return false;

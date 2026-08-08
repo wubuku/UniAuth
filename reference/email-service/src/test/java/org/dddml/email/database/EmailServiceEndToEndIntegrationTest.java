@@ -73,6 +73,7 @@ import static org.mockito.Mockito.doThrow;
         "spring.flyway.default-schema=public",
         "spring.flyway.schemas=public",
         "spring.flyway.baseline-on-migrate=false",
+        "spring.flyway.baseline-version=0",
         "spring.flyway.clean-disabled=true",
         "spring.flyway.validate-migration-naming=true",
         "spring.flyway.validate-on-migrate=true",
@@ -204,6 +205,8 @@ class EmailServiceEndToEndIntegrationTest {
         ).isTrue();
         assertThat(environment.getProperty("spring.flyway.baseline-on-migrate", Boolean.class))
             .isFalse();
+        assertThat(environment.getProperty("spring.flyway.baseline-version"))
+            .isEqualTo("0");
         assertThat(environment.getProperty("spring.flyway.clean-disabled", Boolean.class))
             .isTrue();
         assertThat(environment.getProperty("spring.flyway.validate-on-migrate", Boolean.class))
