@@ -69,7 +69,7 @@ Authorization Server 协议已经完整接通。
 UniAuth 主应用内的 `RestTemplateEmailServiceImpl` 只是 HTTP 客户端，不直接连接
 SMTP 或邮件供应商。外部服务必须提供 health、模板邮件端点、模板和约定的 JSON 响应；
 仓库提供一个独立的[邮件服务参考实现](../reference/email-service/README.md)，其 schema
-由独立 Flyway V1/V2 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP
+由独立 Flyway V1/V2/V3 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP
 E2E 验证。该参考实现的 `dev`、`test`、`prod` profile 均只接受独立 PostgreSQL，
 非 PostgreSQL datasource 会在 Flyway 前失败。参考服务的所有邮件 API 响应还统一
 禁止缓存和 MIME 嗅探。客户端使用专用
@@ -97,6 +97,10 @@ event 与 recovery 共用单进程限流器；reservation 只在队列 claim 未
 或数据库路径失败、抛异常也会消耗当前窗口配额。reservation 绑定取得额度时的窗口
 generation 并幂等释放，因此旧窗口迟到释放不会误释放新窗口额度；释放也不依赖
 执行时配置开关是否仍为 enabled。
+参考服务 V3 还在数据库层固定队列生命周期：终态必须有处理时间，只有 `PENDING`
+可以保留下次重试时间，只有 `FAILED` 可以保留最终错误；worker claim 和所有状态转换
+会清除对新状态已无意义的元数据。该约束属于参考实现内部持久化模型，不要求其他兼容
+REST 服务采用相同表结构。
 
 ### API 认证
 

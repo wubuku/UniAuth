@@ -113,6 +113,7 @@ class EmailQueueRepositoryTest {
                 .subject("Subject3")
                 .htmlContent("Content3")
                 .status("COMPLETED")
+                .processedTime(LocalDateTime.now())
                 .priority(5)
                 .retryCount(0)
                 .maxRetries(3)
@@ -213,6 +214,7 @@ class EmailQueueRepositoryTest {
                 .subject("Completed")
                 .htmlContent("Content")
                 .status("COMPLETED")
+                .processedTime(LocalDateTime.now())
                 .priority(5)
                 .retryCount(0)
                 .maxRetries(3)
@@ -253,6 +255,13 @@ class EmailQueueRepositoryTest {
                 now.plusMinutes(6)
             )
         );
+        EmailQueue claimed = emailQueueRepository.findById(
+            pendingRetry.getId()
+        ).orElseThrow();
+        assertEquals("PROCESSING", claimed.getStatus());
+        assertNull(claimed.getNextRetryTime());
+        assertNull(claimed.getProcessedTime());
+        assertNull(claimed.getErrorMessage());
     }
 
     @Test
@@ -265,6 +274,62 @@ class EmailQueueRepositoryTest {
                 .priority(5)
                 .retryCount(4)
                 .maxRetries(3)
+                .build();
+
+        assertThrows(
+            ConstraintViolationException.class,
+            () -> entityManager.persistAndFlush(invalidQueue)
+        );
+    }
+
+    @Test
+    void postgresSchemaRejectsTerminalRowsWithoutProcessedTime() {
+        EmailQueue invalidQueue = EmailQueue.builder()
+                .recipient("invalid-terminal@example.com")
+                .subject("Missing processed time")
+                .htmlContent("<p>Invalid terminal state</p>")
+                .status("COMPLETED")
+                .priority(5)
+                .retryCount(0)
+                .maxRetries(3)
+                .build();
+
+        assertThrows(
+            ConstraintViolationException.class,
+            () -> entityManager.persistAndFlush(invalidQueue)
+        );
+    }
+
+    @Test
+    void postgresSchemaRejectsProcessingRowsWithRetrySchedules() {
+        EmailQueue invalidQueue = EmailQueue.builder()
+                .recipient("invalid-processing@example.com")
+                .subject("Stale retry schedule")
+                .htmlContent("<p>Invalid processing state</p>")
+                .status("PROCESSING")
+                .priority(5)
+                .retryCount(1)
+                .maxRetries(3)
+                .nextRetryTime(LocalDateTime.now().plusMinutes(5))
+                .build();
+
+        assertThrows(
+            ConstraintViolationException.class,
+            () -> entityManager.persistAndFlush(invalidQueue)
+        );
+    }
+
+    @Test
+    void postgresSchemaRejectsErrorsOnNonFailedRows() {
+        EmailQueue invalidQueue = EmailQueue.builder()
+                .recipient("invalid-error@example.com")
+                .subject("Stale error")
+                .htmlContent("<p>Invalid pending state</p>")
+                .status("PENDING")
+                .priority(5)
+                .retryCount(0)
+                .maxRetries(3)
+                .errorMessage("stale failure")
                 .build();
 
         assertThrows(

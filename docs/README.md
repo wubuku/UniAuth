@@ -50,7 +50,7 @@
 |------|------|------|
 | [前端 README](../frontend/README.md) | Needs verification | React/Vite 使用说明；以 `vite.config.ts` 为端口和构建事实 |
 | [Python 资源服务器 README](../python-resource-server/README.md) | Needs verification | Flask 示例说明；以 `app.py` 为端口和 JWT claim 事实 |
-| [邮件服务参考实现](../reference/email-service/README.md) | Reference | 独立 Spring Boot REST/SMTP 组件；Flyway V1/V2、SMTP/限流 guard、PostgreSQL/GreenMail 与 Shell E2E |
+| [邮件服务参考实现](../reference/email-service/README.md) | Reference | 独立 Spring Boot REST/SMTP 组件；Flyway V1/V2/V3、SMTP/限流 guard、PostgreSQL/GreenMail 与 Shell E2E |
 | [异构资源服务器验证记录](../VERIFICATION_CHECKLIST.md) | Historical | 2026-01-25 的历史验证快照，不是当前回归证明 |
 
 ## 契约与集成材料

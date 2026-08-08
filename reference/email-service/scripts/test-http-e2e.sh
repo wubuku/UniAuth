@@ -232,11 +232,16 @@ fi
 start_application
 wait_for_application
 
-echo "1/10 Verify Flyway-owned startup"
-[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "2" ] \
-    || fail "Flyway did not record V1 and V2"
+echo "1/11 Verify Flyway-owned startup"
+[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "3" ] \
+    || fail "Flyway did not record V1 through V3"
+[ "$(db_value "
+    SELECT count(*)
+    FROM pg_constraint
+    WHERE conname = 'chk_email_queue_lifecycle_state';
+")" = "1" ] || fail "Flyway did not create the queue lifecycle constraint"
 
-echo "2/10 Verify API-key enforcement"
+echo "2/11 Verify API-key enforcement"
 [ "$(request_status GET /api/email/health)" = "401" ] \
     || fail "health endpoint accepted a missing API key"
 [ "$(request_status GET /api/email/health -H "X-Email-Service-Key: wrong")" = "401" ] \
@@ -255,7 +260,7 @@ echo "2/10 Verify API-key enforcement"
     -H "X-Email-Service-Key: $API_KEY")" = "200" ] \
     || fail "matrix-parameter request did not reach the protected health endpoint"
 
-echo "3/10 Verify security headers across success and rejection paths"
+echo "3/11 Verify security headers across success and rejection paths"
 assert_security_headers 200 GET /api/email/health \
     -H "X-Email-Service-Key: $API_KEY"
 assert_security_headers 401 GET /api/email/health
@@ -269,7 +274,7 @@ assert_security_headers 400 GET '/api/email/logs?size=101' \
 assert_security_headers 200 GET '/api;version=1/email;tenant=test/health' \
     -H "X-Email-Service-Key: $API_KEY"
 
-echo "4/10 Verify health and template discovery contracts"
+echo "4/11 Verify health and template discovery contracts"
 health="$(
     curl -fsS \
         -H "X-Email-Service-Key: $API_KEY" \
@@ -286,7 +291,7 @@ jq -e 'index("email/email-verify") != null and index("email/password-reset") != 
     <<<"$templates" >/dev/null \
     || fail "required UniAuth templates were not advertised"
 
-echo "5/10 Enqueue the UniAuth verification template over real HTTP"
+echo "5/11 Enqueue the UniAuth verification template over real HTTP"
 payload="$(
     jq -cn '{
       to: "shell@example.test",
@@ -316,6 +321,14 @@ queue_id="$(jq -er '.queueId' <<<"$response")"
 echo "6/11 Verify rendered content and configured queue policy in PostgreSQL"
 [ "$(db_value "SELECT status FROM email_queue WHERE id = $queue_id;")" = "PENDING" ] \
     || fail "event-disabled request was not left pending"
+[ "$(db_value "
+    SELECT count(*)
+    FROM email_queue
+    WHERE id = $queue_id
+      AND processed_time IS NULL
+      AND next_retry_time IS NULL
+      AND error_message IS NULL;
+")" = "1" ] || fail "new pending queue row violated lifecycle metadata invariants"
 [ "$(db_value "SELECT max_retries FROM email_queue WHERE id = $queue_id;")" = "4" ] \
     || fail "configured retry limit was not persisted"
 [ "$(db_value "SELECT position('246810' in html_content) > 0 FROM email_queue WHERE id = $queue_id;")" = "t" ] \
@@ -427,14 +440,14 @@ echo "9/11 Enforce bounded log pagination"
     || fail "oversized log page was accepted"
 
 echo "10/11 Verify Flyway history remains stable before restart"
-[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "2" ] \
+[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "3" ] \
     || fail "Flyway history changed before restart"
 
 echo "11/11 Restart without replaying migrations or losing the queue"
 stop_application
 start_application
 wait_for_application
-[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "2" ] \
+[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "3" ] \
     || fail "restart changed Flyway history"
 [ "$(db_value "SELECT count(*) FROM email_queue WHERE id = $queue_id;")" = "1" ] \
     || fail "restart lost the queued email"

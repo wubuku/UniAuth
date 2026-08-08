@@ -26,13 +26,15 @@ public interface EmailQueueRepository extends JpaRepository<EmailQueue, Long> {
         Pageable pageable);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("UPDATE EmailQueue e SET e.status = 'PROCESSING', e.updatedTime = :now " +
+    @Query("UPDATE EmailQueue e SET e.status = 'PROCESSING', e.updatedTime = :now, " +
+           "e.nextRetryTime = NULL, e.processedTime = NULL, e.errorMessage = NULL " +
            "WHERE e.id = :id AND e.status = 'PENDING' " +
            "AND (e.nextRetryTime IS NULL OR e.nextRetryTime <= :now)")
     int claimPending(@Param("id") Long id, @Param("now") LocalDateTime now);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("UPDATE EmailQueue e SET e.status = 'PROCESSING', e.updatedTime = :now " +
+    @Query("UPDATE EmailQueue e SET e.status = 'PROCESSING', e.updatedTime = :now, " +
+           "e.nextRetryTime = NULL, e.processedTime = NULL, e.errorMessage = NULL " +
            "WHERE e.id = :id AND (" +
            "(e.status = 'PENDING' AND (e.nextRetryTime IS NULL OR e.nextRetryTime <= :now)) " +
            "OR (e.status = 'PROCESSING' AND e.updatedTime < :stuckTime))")

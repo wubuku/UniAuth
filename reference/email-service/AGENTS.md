@@ -37,6 +37,9 @@
   `out-of-order=false`，location/history/default schema/schemas 必须固定；SQL init
   必须为 `never`，Hibernate 必须为 `validate`。Java ApplicationContext guard 和
   `scripts/runtime-guard.sh` 都要拒绝环境变量、JVM 属性或部署平台注入的覆盖。
+- Flyway V3 固定队列生命周期行形状：终态必须有 `processed_time`，只有 `PENDING`
+  可以保留 `next_retry_time`，只有 `FAILED` 可以保留 `error_message`。claim、retry、
+  完成和永久失败转换必须同步维护这些字段；不得改写已发布的 V1/V2/V3。
 - `dev`、`test`、`prod` 的 datasource URL 都必须是 `jdbc:postgresql:`，且数据库
   必须独立、符合 profile 命名规则；H2 只允许作为负向 guard 输入，不是测试后端。
   Java guard 必须在 Flyway 前拒绝任何非 PostgreSQL URL，并保留 Spring Context
@@ -84,7 +87,7 @@ Surefire XML 和非伪造的退出状态；artifact 写入失败必须令验证�
 
 Flyway 是 PostgreSQL schema owner，history table 是
 `email_service_flyway_schema_history`；所有 profile 的 Hibernate 都使用 `validate`。
-已发布 migration 不得改写；新增 schema 变更使用 V3+。Java/Shell guard 必须在迁移
+已发布 migration 不得改写；新增 schema 变更使用 V4+。Java/Shell guard 必须在迁移
 前拒绝 schema-owner 配置覆盖；checksum drift 测试必须
 证明失败启动不会自动改写 history，只有显式恢复后才能重新通过验证。E2E 必须经过
 真实 HTTP、Flyway/PostgreSQL、真实 Spring Beans、Thymeleaf、异步事件和

@@ -123,7 +123,10 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - 必须使用独立的 `EMAIL_POSTGRES_*` PostgreSQL 数据库，不能复用 UniAuth 或共享
   数据库；`dev`、`test`、`prod` 均拒绝 H2 和其他非 PostgreSQL datasource。
 - Flyway location 是 `classpath:db/migration/postgresql`，history table 是
-  `email_service_flyway_schema_history`，当前 migration 为 V1 + V2。
+  `email_service_flyway_schema_history`，当前 migration 为 V1 + V2 + V3。
+- V3 规范化历史队列元数据并约束状态行形状：终态必须有 `processed_time`，只有
+  `PENDING` 可以保留 `next_retry_time`，只有 `FAILED` 可以保留
+  `error_message`。该要求是参考实现的数据库契约，不是外部 REST 协议的表结构要求。
 - Flyway 缺失 location 和非法 migration 文件命名都必须使启动失败：
   `fail-on-missing-locations=true`、`validate-migration-naming=true`。
 - 所有 profile 使用 Hibernate `validate`，SQL init 关闭。

@@ -80,20 +80,28 @@ public class EmailQueue {
         this.retryCount++;
         this.nextRetryTime = LocalDateTime.now().plusMinutes(delayMinutes);
         this.status = "PENDING";
+        this.errorMessage = null;
+        this.processedTime = null;
     }
 
     public void markAsFailed(String error) {
         this.status = "FAILED";
         this.errorMessage = error;
+        this.nextRetryTime = null;
         this.processedTime = LocalDateTime.now();
     }
 
     public void markAsCompleted() {
         this.status = "COMPLETED";
+        this.errorMessage = null;
+        this.nextRetryTime = null;
         this.processedTime = LocalDateTime.now();
     }
 
     public void markAsProcessing() {
         this.status = "PROCESSING";
+        this.errorMessage = null;
+        this.nextRetryTime = null;
+        this.processedTime = null;
     }
 }

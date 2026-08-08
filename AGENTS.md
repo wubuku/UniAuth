@@ -200,7 +200,7 @@ delivery 失败也不会自动撤销 challenge。Java 测试使用完整 Applica
   的默认 E2E 通过真实 HTTP、Flyway/PostgreSQL、Spring Beans、Thymeleaf、异步队列和
   GreenMail 验证兼容实现。
 
-参考邮件服务的 schema 由其自己的 Flyway V1/V2 管理，history table 是
+参考邮件服务的 schema 由其自己的 Flyway V1/V2/V3 管理，history table 是
 `email_service_flyway_schema_history`；所有 profile 使用 Hibernate `validate`，
 SQL init 关闭。所有 profile 都必须连接独立 PostgreSQL；H2 或其他 datasource 即使
 在 `test` profile 也会在 Flyway 前失败。它不得连接 UniAuth 或共享数据库。修改该组件时：
@@ -217,6 +217,9 @@ opt in。恢复任务只有在邮件总开关、队列和 recovery 都启用时�
 实体、事件和请求 DTO 不得通过自动 `toString()` 泄露 API key、收件人、验证码或
 HTML。最终 SMTP 投递不得只信任 HTTP 入队校验；从 PostgreSQL 读取的 recipient、
 subject、HTML 和自定义 header token 必须在构造 MIME 前重新校验。
+Flyway V3 约束队列生命周期行形状：终态必须有 `processed_time`，只有 `PENDING`
+可以保留 `next_retry_time`，只有 `FAILED` 可以保留 `error_message`；claim、retry、
+完成和永久失败转换必须维护同一规则。
 非法队列载荷的失败审计只保留 queue id、通用错误和安全占位字段，不复制恶意
 recipient、subject、HTML 或 header token；非法 `sendMethod` 必须降级为
 `UNKNOWN`，不能让 `email_logs` 写入失败并回滚 retry。
@@ -353,8 +356,13 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 2026-08-08 邮件参考服务 PostgreSQL-only runtime guard 收敛增量：所有 profile
   在 Flyway 前拒绝 H2 和其他非 PostgreSQL JDBC URL；27 个直接 Java guard tests
   与 1 个真实 Spring ApplicationContext 启动失败测试共同固定该要求。邮件服务
-  Maven 基线更新为 135/135；Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14
-  仍须随本批完整门禁复验。
+  Maven 135/135、Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14 已随本批
+  完整统一门禁通过。
+- 2026-08-08 邮件参考服务队列生命周期状态加固增量：Flyway V3 规范化历史
+  `processed_time`、`next_retry_time` 和 `error_message`，并增加 PostgreSQL
+  `chk_email_queue_lifecycle_state`；claim/retry/完成/永久失败维护同一行形状，不改变
+  REST、SMTP 或最大重试语义。邮件服务 Maven 138/138、Shell runtime 39/39、
+  HTTP 11/11、Flyway guard 15/15。
 - Shell HTTP E2E：15/15；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
 - Flyway baseline guard：13/13。
 - Mock Playwright：21 tests。

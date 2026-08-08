@@ -155,7 +155,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、独立 PostgreSQL、参考邮件服务跨进程模板入队、失败映射 stub、重启、JWT、Web3 字段篡改/并发 replay、email、登录方式 |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 13/13；exact schema、V2/V4 初始及 apply 前数据预检、V5 history/message 列、非法 email verification state、post-baseline 失败恢复与其他拒绝/清理路径 |
 | Flyway integration | 通过 | fresh V1→V5、existing baseline V1→V5、V3→V5、Hibernate validate、Session、checksum/failure recovery |
-| 邮件参考服务 | 通过 | 135 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、2 个 PostgreSQL repository constraint tests、27 个 Java runtime guard tests、1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14；Flyway schema-owner、migration discovery/naming 和非 PostgreSQL datasource 拒绝矩阵通过 |
+| 邮件参考服务 | 通过 | 138 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、5 个 PostgreSQL repository constraint tests、27 个 Java runtime guard tests、1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 39/39、HTTP 11/11、Flyway guard 15/15；Flyway schema-owner、migration discovery/naming、队列生命周期行形状和非 PostgreSQL datasource 拒绝矩阵通过 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
@@ -222,7 +222,7 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
 独立参考实现补充了默认无外部副作用的组件级 E2E：
 
 - 完整 Spring ApplicationContext 和随机真实 HTTP 端口。
-- Flyway V1/V2、独立 history table、PostgreSQL 16 和 Hibernate `validate`。
+- Flyway V1/V2/V3、独立 history table、PostgreSQL 16 和 Hibernate `validate`。
 - 两个必需模板经过真实 service/repository/event Bean、Thymeleaf、队列和 GreenMail 收件。
 - API key、输入和分页边界、未知模板拒绝、SMTP 连接失败后的失败日志和可重试状态。
 - 配置 API key 时，真实 Tomcat HTTP 入口只接受恰好一个精确匹配的
@@ -236,7 +236,8 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
   进入真实 `JavaMailSender` Bean。
 - `EmailQueueRepositoryTest` 和 `EmailLogRepositoryTest` 使用 disposable PostgreSQL
   + Flyway + Hibernate `validate`，直接验证 retry bound check constraint 和
-  `email_logs.queue_id` 外键拒绝 orphan row；repository 测试不再依赖 H2 `create-drop`。
+  `email_logs.queue_id` 外键拒绝 orphan row，以及队列终态处理时间、claim 后重试调度
+  清理和非失败状态错误文本约束；repository 测试不再依赖 H2 `create-drop`。
 - `EmailServiceRuntimeGuardTest` 对所有 profile 固定 PostgreSQL-only JDBC URL 约束；
   独立 `ApplicationContextRunner` 测试装配真实 configuration properties 和 guard
   Bean，证明 `test` profile 注入 H2 URL 时 Context 在 Flyway 前失败。
@@ -247,6 +248,8 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
   请求契约。
 - simple 请求 HTML 与模板渲染后的最终 HTML 都限制为最多 1,000,000 字符。
 - 原子队列 claim、stuck `PROCESSING` 恢复和配置化最大重试次数。
+- Flyway V3 对 V1/V2 历史队列行做生命周期元数据规范化，并由 PostgreSQL check
+  constraint、真实 delivery/recovery Bean 和 Shell Flyway guard 固定四种合法状态。
 - 恢复候选按优先级处理；邮件总开关或队列关闭时，存量 pending/stuck 邮件不投递。
 - event 与 recovery 并发竞争同一 PostgreSQL 队列记录时，只有一个投递者成功，
   最终只产生一条成功日志和一封 SMTP 邮件。
@@ -257,7 +260,7 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
 - API key 配置、实体、事件和 HTTP 请求 DTO 的对象字符串不会包含 API key、
   收件人、验证码或 HTML。
 - 独立 Shell 进程门禁验证无 SMTP 副作用的 HTTP/数据库契约、启动保护和 Flyway
-  dirty-schema/V2 坏数据失败关闭。
+  dirty-schema/V2 坏数据失败关闭，以及 V3 历史元数据规范化。
 - 参考服务邮件 API 的真实 HTTP 响应在成功、API key 拒绝、参数拒绝、MVC 路由错误
   和内部失败下均设置 `Cache-Control: no-store`、`Pragma: no-cache` 和
   `X-Content-Type-Options: nosniff`；Shell 和 Python stub contract 均有对应断言。

@@ -28,7 +28,7 @@ class EmailServiceFlywayMigrationIntegrationTest {
             .withPassword("email_migration_test");
 
     @Test
-    void freshMigrationCreatesV2ConstraintsIndexesAndHistory() throws Exception {
+    void freshMigrationCreatesV3ConstraintsIndexesAndHistory() throws Exception {
         String schema = newSchema();
 
         flyway(schema, null).migrate();
@@ -39,17 +39,18 @@ class EmailServiceFlywayMigrationIntegrationTest {
                 SELECT COUNT(*)
                 FROM email_service_flyway_schema_history
                 WHERE success = TRUE
-                  AND version IN ('1', '2')
-                """)).isEqualTo(2);
+                  AND version IN ('1', '2', '3')
+                """)).isEqualTo(3);
             assertThat(queryInt(statement, """
                 SELECT COUNT(*)
                 FROM pg_constraint
                 WHERE conname IN (
                     'chk_email_queue_retry_bounds',
+                    'chk_email_queue_lifecycle_state',
                     'fk_email_logs_queue'
                 )
                   AND connamespace = current_schema()::regnamespace
-                """)).isEqualTo(2);
+                """)).isEqualTo(3);
             assertThat(queryInt(statement, """
                 SELECT COUNT(*)
                 FROM pg_indexes
@@ -63,7 +64,7 @@ class EmailServiceFlywayMigrationIntegrationTest {
     }
 
     @Test
-    void v1ToV2UpgradePreservesRowsAndNullsLogReferenceWhenQueueIsDeleted() throws Exception {
+    void v1ToV3UpgradeNormalizesLifecycleMetadataAndPreservesRows() throws Exception {
         String schema = newSchema();
         flyway(schema, MigrationVersion.fromVersion("1")).migrate();
 
@@ -75,8 +76,16 @@ class EmailServiceFlywayMigrationIntegrationTest {
                     retry_count, max_retries, created_time, updated_time
                 ) VALUES (
                     'upgrade@example.test', 'Upgrade', '<p>upgrade</p>', 'TEST',
-                    'COMPLETED', 5, 0, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    'COMPLETED', 5, 0, 3,
+                    CURRENT_TIMESTAMP - INTERVAL '2 minutes',
+                    CURRENT_TIMESTAMP - INTERVAL '1 minute'
                 )
+                """);
+            statement.executeUpdate("""
+                UPDATE email_queue
+                SET next_retry_time = CURRENT_TIMESTAMP + INTERVAL '5 minutes',
+                    error_message = 'stale failure'
+                WHERE id = 1
                 """);
             statement.executeUpdate("""
                 INSERT INTO email_logs (
@@ -94,6 +103,21 @@ class EmailServiceFlywayMigrationIntegrationTest {
              Statement statement = connection.createStatement()) {
             assertThat(queryInt(statement, "SELECT COUNT(*) FROM email_queue")).isEqualTo(1);
             assertThat(queryInt(statement, "SELECT COUNT(*) FROM email_logs")).isEqualTo(1);
+            assertThat(queryInt(statement, """
+                SELECT COUNT(*)
+                FROM email_queue
+                WHERE id = 1
+                  AND status = 'COMPLETED'
+                  AND processed_time = updated_time
+                  AND next_retry_time IS NULL
+                  AND error_message IS NULL
+                """)).isEqualTo(1);
+            assertThat(queryInt(statement, """
+                SELECT COUNT(*)
+                FROM email_service_flyway_schema_history
+                WHERE success = TRUE
+                  AND version IN ('1', '2', '3')
+                """)).isEqualTo(3);
             statement.executeUpdate("DELETE FROM email_queue WHERE id = 1");
             assertThat(queryInt(statement,
                 "SELECT COUNT(*) FROM email_logs WHERE queue_id IS NULL")).isEqualTo(1);

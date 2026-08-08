@@ -245,7 +245,7 @@ Flyway 是本组件唯一的 schema owner：
 - datasource：所有 profile 只接受独立的 `jdbc:postgresql:` URL；H2 不受支持
 - location：`classpath:db/migration/postgresql`
 - history table：`email_service_flyway_schema_history`
-- 当前 migration：V1 建表 + V2 队列完整性、日志外键和恢复查询索引
+- 当前 migration：V1 建表 + V2 队列/日志完整性 + V3 队列生命周期行形状
 - `fail-on-missing-locations=true`
 - `baseline-on-migrate=false`
 - `clean-disabled=true`
@@ -270,8 +270,12 @@ repository、migration 或 ApplicationContext E2E 后端职责。
 
 V1 创建 `email_queue`、`email_logs`、基础检查约束和查询索引。V2 增加
 `retry_count <= max_retries`、日志到队列的 `ON DELETE SET NULL` 外键，以及恢复和
-状态分页索引。已发布 migration 不得改写；后续 schema 变更必须新增 V3+。邮件服务
-必须使用独立数据库，不得把该 migration
+状态分页索引。V3 先规范化历史生命周期元数据，再用
+`chk_email_queue_lifecycle_state` 固定四种状态的合法行形状：只有 `PENDING`
+可以保留 `next_retry_time`，只有 `FAILED` 可以保留 `error_message`，终态必须有
+`processed_time`，非终态不得有 `processed_time`。缺少终态处理时间的历史行使用
+`updated_time`、`created_time` 或迁移时间依次补齐。已发布 migration 不得改写；
+后续 schema 变更必须新增 V4+。邮件服务必须使用独立数据库，不得把该 migration
 指向 UniAuth、`blacksheep_dev` 或其他共享 schema。
 
 ## 构建和测试
@@ -292,7 +296,7 @@ scripts/verify.sh
 - clean compile/test-compile 和完整 Maven 测试。
 - runtime guard 配置拒绝矩阵。
 - 真实 JAR + HTTP + disposable PostgreSQL Shell E2E。
-- dirty schema、V2 坏数据和 forward-fix Flyway guard。
+- dirty schema、V2 坏数据、V3 生命周期规范化和 forward-fix Flyway guard。
 - 先把所有非忽略源码复制到进程专属临时目录，所有构建和 E2E 都在该快照内执行；
   并行运行不会共享 `target/`，原源码在验证期间变化则失败关闭并要求重跑。
 - 根统一门槛通过仓库外的 `EMAIL_SERVICE_VERIFICATION_ARTIFACTS_DIR` 收集本快照的
@@ -301,7 +305,8 @@ scripts/verify.sh
 
 ApplicationContext/PostgreSQL/SMTP 覆盖：
 
-- fresh V1→V2、V1→V2 数据保留、独立 history table 和 Hibernate `validate`。
+- fresh V1→V3、V1→V3 数据保留/生命周期规范化、独立 history table 和
+  Hibernate `validate`。
 - `GET /api/email/health` 与必需模板列表的真实 HTTP 契约。
 - API key 配置后的单值精确匹配：缺失、错误、重复正确值和正确/错误混合 header
   均返回 `401`，单个正确 header 继续通过。
@@ -311,6 +316,8 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - API key、输入/header injection、batch 和数据库分页边界。
 - 未知模板拒绝且不创建队列/日志。
 - SMTP 连接失败、配置化重试、原子 claim 和 stuck `PROCESSING` 恢复。
+- PostgreSQL 约束拒绝缺少处理时间的终态、带重试调度的 `PROCESSING` 和在非失败
+  状态残留错误文本；claim、retry、完成和永久失败都维护同一行形状。
 - Java/Shell runtime guard 的 STARTTLS、implicit SSL、生产加密和 server identity
   拒绝矩阵；真实 `JavaMailSender` Bean 保留身份校验属性。
 - Java/Shell runtime guard 的 SMTP host/port 拒绝矩阵；PostgreSQL
@@ -326,19 +333,21 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   最终只有一条成功日志和一封 SMTP 邮件。
 - API key 配置、实体、事件和请求 DTO 的对象字符串不包含 API key、收件人、
   验证码或 HTML。
-- V2 不兼容数据拒绝、外键删除行为和非空 schema 不自动 baseline。
+- V2 不兼容数据拒绝、V3 历史元数据规范化、外键删除行为和非空 schema 不自动
+  baseline。
 - migration checksum 失配时失败关闭，并保留已有 migration history 和业务数据。
 
 2026-08-08 当前组合基线：
 
-- 本组件 Maven：135 tests，0 failures/errors/skips；其中 22 个
+- 本组件 Maven：138 tests，0 failures/errors/skips；其中 22 个
   PostgreSQL/GreenMail ApplicationContext E2E、27 个 Java runtime guard tests、
-  1 个 PostgreSQL-only Spring Context 启动 guard test，以及 2 个 PostgreSQL
+  1 个 PostgreSQL-only Spring Context 启动 guard test，以及 5 个 PostgreSQL
   repository constraint tests。
-- 本组件 Shell runtime 39/39、HTTP/PostgreSQL E2E 11/11、Flyway guard 14/14。
+- 本组件 Shell runtime 39/39、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
 - UniAuth 根项目：Java 131 tests、HTTP 15/15、Flyway 13/13、
   Mock Playwright 21/21、Python 资源服务器 16/16、邮件 REST stub contract 8/8；
-  本轮功能性门禁已通过；完整根统一门禁的源码快照检查和连续三轮无修改检查仍是
+  本轮统一门禁的全部功能阶段已通过，但验证期间源码发生并发变化，最终源码快照
+  检查失败关闭；必须在稳定工作区重跑完整根统一门禁，连续三轮无修改检查仍是
   提交前门槛。
 - 根 Shell HTTP E2E 的正常邮箱路径使用本参考服务真实 JAR、真实 HTTP 和独立
   PostgreSQL，直接断言模板进入 `email_queue`；脚本随后只为 `503/429` 失败映射
@@ -346,6 +355,17 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   `RestTemplateEmailServiceImpl` 验证失败不保存 challenge。
 - 默认门禁仍不连接真实 SMTP/供应商，也不证明最终收件、退信、外部 TLS 或
   “外部已接受后 UniAuth 本地事务失败”窗口。
+
+2026-08-08 队列生命周期状态加固增量：
+
+- Flyway V3 规范化历史 `processed_time`、`next_retry_time` 和 `error_message`，
+  并增加 `chk_email_queue_lifecycle_state`；V1/V2 checksum 保持不变。
+- 原子 claim 会清除已消费的重试调度，retry/完成/永久失败转换会清除不适用于新状态
+  的元数据，不改变配置化最大重试次数或 REST/SMTP 语义。
+- PostgreSQL repository、migration、完整 ApplicationContext/GreenMail、Shell HTTP
+  和 Flyway guard 共同覆盖 fresh migrate、历史升级、非法行拒绝和真实投递路径。
+- 完整邮件服务门禁通过：Maven 138 tests、Shell runtime 39/39、
+  HTTP/PostgreSQL E2E 11/11、Flyway baseline guard 15/15。
 
 2026-08-08 Flyway schema-owner 覆盖保护增量：
 
@@ -543,6 +563,14 @@ EMAIL_SERVICE_API_KEY=
 - `COMPLETED`: SMTP 调用返回成功。
 - `FAILED`: 达到最大重试次数。
 
+V3 后数据库同时约束状态元数据：
+
+- `PENDING`: `processed_time`/`error_message` 为空；`next_retry_time` 可为空或表示
+  下一次可领取时间。
+- `PROCESSING`: `processed_time`、`next_retry_time`、`error_message` 均为空。
+- `COMPLETED`: `processed_time` 非空；`next_retry_time`/`error_message` 为空。
+- `FAILED`: `processed_time` 非空且 `next_retry_time` 为空；允许保存最终错误。
+
 `email_logs` 会保存收件人、主题、HTML 内容、供应商、错误和耗时。它包含个人信息和
 可能敏感的验证码内容，必须限制数据库和日志访问，并定义保留/清理策略。
 
@@ -559,7 +587,7 @@ EMAIL_SERVICE_API_KEY=
   stuck 记录被 recovery worker 重新领取，可能再次发送同一 `X-Queue-ID` 邮件。
 - 限流计数保存在单进程内存中，多实例之间不共享。
 - 定时恢复每次最多处理 50 条，没有容量或积压恢复证明。
-- Flyway V1/V2 和失败关闭测试已存在，但没有生产发布、备份或灾难恢复演练。
+- Flyway V1/V2/V3 和失败关闭测试已存在，但没有生产发布、备份或灾难恢复演练。
 - GreenMail E2E 证明本地 SMTP 协议链，不证明供应商鉴权、TLS 策略、退信处理或
   外部真实收件。
 - 邮件队列和发送日志会保存完整 HTML；验证码清理和数据保留策略尚未实现。
@@ -571,7 +599,8 @@ EMAIL_SERVICE_API_KEY=
 
 - 使用显式环境变量和显式 profile。
 - 默认只监听 loopback。
-- 启用 Flyway V1/V2 作为唯一 schema owner，并让所有 profile 使用 Hibernate `validate`。
+- 启用 Flyway V1/V2/V3 作为唯一 schema owner，并让所有 profile 使用
+  Hibernate `validate`。
 - 增加 PostgreSQL/Flyway/HTTP/GreenMail 的完整 ApplicationContext E2E。
 - 增加可选 API key、运行保护、真实进程 HTTP E2E 和 Flyway fail-closed guard。
 - 增加输入、header injection、batch、分页和错误信息边界。

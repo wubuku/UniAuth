@@ -581,6 +581,8 @@ class EmailServiceEndToEndIntegrationTest {
                 assertThat(queue.getStatus()).isEqualTo("PENDING");
                 assertThat(queue.getRetryCount()).isEqualTo(1);
                 assertThat(queue.getNextRetryTime()).isNotNull();
+                assertThat(queue.getProcessedTime()).isNull();
+                assertThat(queue.getErrorMessage()).isNull();
                 assertThat(logs).singleElement().satisfies(log -> {
                     assertThat(log.getStatus()).isEqualTo("FAILED");
                     assertThat(log.getSendMethod()).isEqualTo("EVENT");
@@ -738,6 +740,9 @@ class EmailServiceEndToEndIntegrationTest {
 
             EmailQueue persisted = emailQueueRepository.findById(queue.getId()).orElseThrow();
             assertThat(persisted.getStatus()).isEqualTo("COMPLETED");
+            assertThat(persisted.getProcessedTime()).isNotNull();
+            assertThat(persisted.getNextRetryTime()).isNull();
+            assertThat(persisted.getErrorMessage()).isNull();
             assertThat(emailLogRepository.findByQueueId(queue.getId()))
                 .singleElement()
                 .satisfies(log -> {
@@ -880,6 +885,9 @@ class EmailServiceEndToEndIntegrationTest {
         await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
             EmailQueue recovered = emailQueueRepository.findById(stuck.getId()).orElseThrow();
             assertThat(recovered.getStatus()).isEqualTo("COMPLETED");
+            assertThat(recovered.getProcessedTime()).isNotNull();
+            assertThat(recovered.getNextRetryTime()).isNull();
+            assertThat(recovered.getErrorMessage()).isNull();
             assertThat(emailLogRepository.findByQueueId(stuck.getId()))
                 .singleElement()
                 .satisfies(log -> {
@@ -1217,6 +1225,8 @@ class EmailServiceEndToEndIntegrationTest {
 
         assertThat(queue.getStatus()).isEqualTo("COMPLETED");
         assertThat(queue.getProcessedTime()).isNotNull();
+        assertThat(queue.getNextRetryTime()).isNull();
+        assertThat(queue.getErrorMessage()).isNull();
         assertThat(logs).singleElement().satisfies(log -> {
             assertThat(log.getStatus()).isEqualTo("SUCCESS");
             assertThat(log.getSendMethod()).isEqualTo("EVENT");

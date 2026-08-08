@@ -11,6 +11,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,12 +54,17 @@ class EmailDeliveryServiceTest {
 
     @Test
     void successfulDeliveryMarksTheQueueCompleted() {
+        queue.setNextRetryTime(LocalDateTime.now().plusMinutes(10));
+        queue.setErrorMessage("stale failure");
         when(emailService.sendEmailDirectly(queue, "EVENT"))
             .thenReturn(EmailLog.builder().status("SUCCESS").build());
 
         assertThat(deliveryService.deliver(1L, "EVENT"))
             .isEqualTo(EmailDeliveryService.DeliveryOutcome.SUCCESS);
         assertThat(queue.getStatus()).isEqualTo("COMPLETED");
+        assertThat(queue.getProcessedTime()).isNotNull();
+        assertThat(queue.getNextRetryTime()).isNull();
+        assertThat(queue.getErrorMessage()).isNull();
         verify(emailQueueRepository).save(queue);
     }
 
@@ -74,11 +80,14 @@ class EmailDeliveryServiceTest {
         assertThat(queue.getStatus()).isEqualTo("PENDING");
         assertThat(queue.getRetryCount()).isEqualTo(1);
         assertThat(queue.getNextRetryTime()).isNotNull();
+        assertThat(queue.getProcessedTime()).isNull();
+        assertThat(queue.getErrorMessage()).isNull();
     }
 
     @Test
     void exhaustedDeliveryMarksTheQueueFailed() {
         queue.setRetryCount(3);
+        queue.setNextRetryTime(LocalDateTime.now().plusMinutes(10));
         when(emailService.sendEmailDirectly(queue, "SCHEDULED"))
             .thenReturn(EmailLog.builder().status("FAILED").errorMessage("SMTP failed").build());
 
@@ -86,5 +95,7 @@ class EmailDeliveryServiceTest {
             .isEqualTo(EmailDeliveryService.DeliveryOutcome.FAILED);
         assertThat(queue.getStatus()).isEqualTo("FAILED");
         assertThat(queue.getErrorMessage()).isEqualTo("SMTP failed");
+        assertThat(queue.getProcessedTime()).isNotNull();
+        assertThat(queue.getNextRetryTime()).isNull();
     }
 }
