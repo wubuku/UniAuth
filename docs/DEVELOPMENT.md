@@ -173,6 +173,8 @@ SMTP 或发送真实邮件。参考服务的真实进程 HTTP E2E 验证其自�
 参考服务的 Flyway schema-owner 配置是硬约束，不是部署建议：Java
 ApplicationContext guard 和 Shell guard 都拒绝 Flyway、SQL init 或 Hibernate
 schema-generation 的外部覆盖；任何这类配置变化都必须重新运行完整参考服务门禁。
+其中缺失 migration location 和非法 migration 文件命名也必须 fail closed；对应的
+`fail-on-missing-locations` 与 `validate-migration-naming` 覆盖同样会在迁移前被拒绝。
 
 启用邮箱注册验证或密码重置前：
 

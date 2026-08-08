@@ -27,12 +27,14 @@ spring:
 
   flyway:
     enabled: true
+    fail-on-missing-locations: true
     locations: classpath:db/migration/postgresql
     table: email_service_flyway_schema_history
     default-schema: public
     schemas: public
     baseline-on-migrate: false
     clean-disabled: true
+    validate-migration-naming: true
     validate-on-migrate: true
     out-of-order: false
 

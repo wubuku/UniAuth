@@ -2,8 +2,9 @@
 
 > 状态：Batch A、Batch B1、Batch B2a、Batch B2b、邮件服务边界、邮箱 challenge
 > 投递接受/原子消费、邮件 API 敏感响应、API key 单值鉴权、邮件 Flyway
-> schema-owner 覆盖保护、Batch C 认证 Cookie/浏览器 refresh 存储预备切片和
-> Web3/SIWE challenge 加固切片已完成；下一轮待重新探索并冻结
+> schema-owner 覆盖保护、Flyway migration discovery/naming fail-closed、Batch C
+> 认证 Cookie/浏览器 refresh 存储预备切片和 Web3/SIWE challenge 加固切片已完成；
+> 下一轮待重新探索并冻结
 > 事实基线：2026-08-07；邮件 SMTP、持久化投递和限流异常路径增量：2026-08-08
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
 > 前置成果：PostgreSQL-only、Flyway V1 baseline + V2 + V3 + V4 + V5、Testcontainers、
@@ -34,7 +35,7 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
 | Java | `mvn clean compile test-compile` 和 131 tests 已通过 |
-| 邮件参考服务 | 131 tests；22 个完整 ApplicationContext E2E；Java runtime guard 26 tests；Shell runtime 37/37、HTTP 11/11、Flyway guard 12/12 |
+| 邮件参考服务 | 131 tests；22 个完整 ApplicationContext E2E；Java runtime guard 26 tests；Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 15/15 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 13/13 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、21 个 Mock Playwright tests 已通过 |

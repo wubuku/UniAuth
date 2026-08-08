@@ -67,12 +67,14 @@ import static org.mockito.Mockito.doThrow;
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = {
         "spring.flyway.enabled=true",
+        "spring.flyway.fail-on-missing-locations=true",
         "spring.flyway.locations=classpath:db/migration/postgresql",
         "spring.flyway.table=email_service_flyway_schema_history",
         "spring.flyway.default-schema=public",
         "spring.flyway.schemas=public",
         "spring.flyway.baseline-on-migrate=false",
         "spring.flyway.clean-disabled=true",
+        "spring.flyway.validate-migration-naming=true",
         "spring.flyway.validate-on-migrate=true",
         "spring.flyway.out-of-order=false",
         "spring.sql.init.mode=never",
@@ -197,6 +199,9 @@ class EmailServiceEndToEndIntegrationTest {
         assertThat(migrationCount).isEqualTo(2);
         assertThat(environment.getProperty("spring.flyway.enabled", Boolean.class))
             .isTrue();
+        assertThat(
+            environment.getProperty("spring.flyway.fail-on-missing-locations", Boolean.class)
+        ).isTrue();
         assertThat(environment.getProperty("spring.flyway.baseline-on-migrate", Boolean.class))
             .isFalse();
         assertThat(environment.getProperty("spring.flyway.clean-disabled", Boolean.class))
@@ -205,6 +210,9 @@ class EmailServiceEndToEndIntegrationTest {
             .isTrue();
         assertThat(environment.getProperty("spring.flyway.out-of-order", Boolean.class))
             .isFalse();
+        assertThat(
+            environment.getProperty("spring.flyway.validate-migration-naming", Boolean.class)
+        ).isTrue();
         assertThat(environment.getProperty("spring.sql.init.mode"))
             .isEqualTo("never");
         assertThat(environment.getProperty("spring.jpa.hibernate.ddl-auto"))

@@ -123,12 +123,14 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - 必须使用独立的 `EMAIL_POSTGRES_*` 数据库，不能复用 UniAuth 或共享数据库。
 - Flyway location 是 `classpath:db/migration/postgresql`，history table 是
   `email_service_flyway_schema_history`，当前 migration 为 V1 + V2。
+- Flyway 缺失 location 和非法 migration 文件命名都必须使启动失败：
+  `fail-on-missing-locations=true`、`validate-migration-naming=true`。
 - 所有 profile 使用 Hibernate `validate`，SQL init 关闭。
 - 这些不是可被部署平台随意覆盖的建议默认值：参考实现的 Java
   `EmailServiceRuntimeGuard` 和 Shell `runtime-guard.sh` 会拒绝 Flyway disable、
-  自动 baseline、clean、validation 或 out-of-order 覆盖，并拒绝 migration
-  location/history/schema、SQL init 和 Hibernate schema-generation 覆盖。兼容实现
-  也必须保持 Flyway 为唯一 schema owner。
+  自动 baseline、clean、validation、out-of-order、缺失 location 策略或 migration
+  命名校验覆盖，并拒绝 migration location/history/schema、SQL init 和 Hibernate
+  schema-generation 覆盖。兼容实现也必须保持 Flyway 为唯一 schema owner。
 - loopback 监听时 API key 可选；任何非 loopback 监听都必须设置
   `EMAIL_SERVICE_API_KEY`。设置后所有 `/api/email/**` 端点都要求该 header；参考
   服务同样在启动阶段拒绝超过 1024 字符或包含 CR/LF 的值，并在请求阶段拒绝

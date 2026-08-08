@@ -275,7 +275,7 @@ create_database "$ORPHAN_DATABASE"
 create_database "$CHECKSUM_DATABASE"
 create_database "$CONFIG_DATABASE"
 
-echo "1/12 Reject a shared database before Flyway can create schema objects"
+echo "1/14 Reject a shared database before Flyway can create schema objects"
 shared_log="$TEMP_DIR/shared-database.log"
 expect_startup_failure "$SHARED_DATABASE" "$shared_log"
 grep -Fq "Email service database name must contain email or mail" "$shared_log" \
@@ -287,7 +287,7 @@ grep -Fq "Email service database name must contain email or mail" "$shared_log" 
     "SELECT to_regclass('public.email_queue') IS NULL;")" = "t" ] \
     || fail "shared-database startup created email schema objects"
 
-echo "2/12 Reject a non-empty schema without Flyway history"
+echo "2/14 Reject a non-empty schema without Flyway history"
 db_command "$DIRTY_DATABASE" \
     -c "CREATE TABLE unexpected_table (id bigint PRIMARY KEY);" >/dev/null
 dirty_log="$TEMP_DIR/dirty-schema.log"
@@ -298,18 +298,18 @@ grep -Fq "non-empty schema" "$dirty_log" \
     "SELECT to_regclass('public.email_service_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "dirty-schema startup created Flyway history"
 
-echo "3/12 Apply only V1 to a disposable database"
+echo "3/14 Apply only V1 to a disposable database"
 v1_log="$TEMP_DIR/v1.log"
 start_application "$V2_DATABASE" "$v1_log" 1
 wait_for_application "$v1_log"
-echo "4/12 Verify migrated application response security headers"
+echo "4/14 Verify migrated application response security headers"
 assert_security_headers
 stop_application
 APPLICATION_API_KEY="email-flyway-key-${RUN_ID}"
 credential_log="$TEMP_DIR/v1-credential.log"
 start_application "$V2_DATABASE" "$credential_log" 1
 wait_for_application "$credential_log"
-echo "5/12 Reject repeated API-key headers after migration"
+echo "5/14 Reject repeated API-key headers after migration"
 assert_repeated_api_key_rejected
 stop_application
 APPLICATION_API_KEY=""
@@ -320,7 +320,7 @@ APPLICATION_API_KEY=""
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '2';")" = "0" ] \
     || fail "V1-only startup unexpectedly applied V2"
 
-echo "6/12 Reject V1 data that violates the V2 retry bound"
+echo "6/14 Reject V1 data that violates the V2 retry bound"
 db_command "$V2_DATABASE" -c "
     INSERT INTO email_queue (
         recipient,
@@ -351,7 +351,7 @@ expect_startup_failure "$V2_DATABASE" "$v2_failure_log"
 grep -Fq "chk_email_queue_retry_bounds" "$v2_failure_log" \
     || fail "V2 failure did not identify the retry-bound constraint"
 
-echo "7/12 Preserve V1 history and source data after failed V2"
+echo "7/14 Preserve V1 history and source data after failed V2"
 [ "$(db_value "$V2_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '1' AND success;")" = "1" ] \
     || fail "failed V2 damaged V1 history"
@@ -362,7 +362,7 @@ echo "7/12 Preserve V1 history and source data after failed V2"
     "SELECT count(*) FROM email_queue WHERE retry_count = 2 AND max_retries = 1;")" = "1" ] \
     || fail "failed V2 changed source data"
 
-echo "8/12 Forward-fix retry data, apply V2, and exercise the UniAuth template contract"
+echo "8/14 Forward-fix retry data, apply V2, and exercise the UniAuth template contract"
 db_command "$V2_DATABASE" \
     -c "UPDATE email_queue SET retry_count = max_retries WHERE retry_count > max_retries;" \
     >/dev/null
@@ -410,7 +410,7 @@ stop_application
     WHERE conname = 'chk_email_queue_retry_bounds';
 ")" = "1" ] || fail "V2 retry-bound constraint is missing"
 
-echo "9/12 Reject V1 logs that reference a missing queue row"
+echo "9/14 Reject V1 logs that reference a missing queue row"
 orphan_v1_log="$TEMP_DIR/orphan-v1.log"
 start_application "$ORPHAN_DATABASE" "$orphan_v1_log" 1
 wait_for_application "$orphan_v1_log"
@@ -443,7 +443,7 @@ grep -Fq "fk_email_logs_queue" "$orphan_failure_log" \
     "SELECT count(*) FROM email_logs WHERE queue_id = 999;")" = "1" ] \
     || fail "orphan-log failure changed source data"
 
-echo "10/12 Forward-fix the orphan reference and apply V2 successfully"
+echo "10/14 Forward-fix the orphan reference and apply V2 successfully"
 db_command "$ORPHAN_DATABASE" \
     -c "UPDATE email_logs SET queue_id = NULL WHERE queue_id = 999;" \
     >/dev/null
@@ -458,7 +458,7 @@ stop_application
     "SELECT count(*) FROM email_logs WHERE queue_id IS NULL;")" = "1" ] \
     || fail "forward-fixed orphan log was not preserved"
 
-echo "11/12 Reject checksum drift without changing data, then recover"
+echo "11/14 Reject checksum drift without changing data, then recover"
 checksum_initial_log="$TEMP_DIR/checksum-initial.log"
 start_application "$CHECKSUM_DATABASE" "$checksum_initial_log"
 wait_for_application "$checksum_initial_log"
@@ -534,7 +534,7 @@ stop_application
 ")" = "$original_checksum" ] \
     || fail "checksum recovery did not preserve the explicitly restored checksum"
 
-echo "12/12 Reject an unsafe schema-owner override before migration"
+echo "12/14 Reject a schema-owner override that weakens Flyway cleanup protection"
 config_failure_log="$TEMP_DIR/config-failure.log"
 expect_startup_failure \
     "$CONFIG_DATABASE" \
@@ -549,5 +549,35 @@ grep -Fq "SPRING_FLYWAY_CLEAN_DISABLED must be exactly true" "$config_failure_lo
 [ "$(db_value "$CONFIG_DATABASE" \
     "SELECT to_regclass('public.email_queue') IS NULL;")" = "t" ] \
     || fail "unsafe Flyway override created email tables"
+
+echo "13/14 Reject a schema-owner override that ignores missing locations"
+missing_location_failure_log="$TEMP_DIR/missing-location-failure.log"
+expect_startup_failure \
+    "$CONFIG_DATABASE" \
+    "$missing_location_failure_log" \
+    "" \
+    "SPRING_FLYWAY_FAIL_ON_MISSING_LOCATIONS=false"
+grep -Fq \
+    "SPRING_FLYWAY_FAIL_ON_MISSING_LOCATIONS must be exactly true" \
+    "$missing_location_failure_log" \
+    || fail "missing-location policy override did not fail in the runtime guard"
+[ "$(db_value "$CONFIG_DATABASE" \
+    "SELECT to_regclass('public.email_service_flyway_schema_history') IS NULL;")" = "t" ] \
+    || fail "missing-location policy override created migration history"
+
+echo "14/14 Reject a schema-owner override that disables migration naming validation"
+naming_failure_log="$TEMP_DIR/migration-naming-failure.log"
+expect_startup_failure \
+    "$CONFIG_DATABASE" \
+    "$naming_failure_log" \
+    "" \
+    "SPRING_FLYWAY_VALIDATE_MIGRATION_NAMING=false"
+grep -Fq \
+    "SPRING_FLYWAY_VALIDATE_MIGRATION_NAMING must be exactly true" \
+    "$naming_failure_log" \
+    || fail "migration naming override did not fail in the runtime guard"
+[ "$(db_value "$CONFIG_DATABASE" \
+    "SELECT to_regclass('public.email_service_flyway_schema_history') IS NULL;")" = "t" ] \
+    || fail "migration naming override created migration history"
 
 echo "PASS: email service Flyway baseline guard"

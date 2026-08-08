@@ -245,20 +245,23 @@ Flyway 是本组件唯一的 schema owner：
 - location：`classpath:db/migration/postgresql`
 - history table：`email_service_flyway_schema_history`
 - 当前 migration：V1 建表 + V2 队列完整性、日志外键和恢复查询索引
+- `fail-on-missing-locations=true`
 - `baseline-on-migrate=false`
 - `clean-disabled=true`
+- `validate-migration-naming=true`
 - `validate-on-migrate=true`
 - SQL init：`never`
 - Hibernate：所有 profile 均为 `ddl-auto=validate`
 
 这些值不是“推荐默认值”，而是运行契约。Spring `ApplicationContext` 中的
 `EmailServiceRuntimeGuard` 和 `scripts/runtime-guard.sh` 都会拒绝外部配置覆盖：
-Flyway 必须启用、禁止自动 baseline、禁止 clean、启用 migrate validation、禁止
-out-of-order，并固定 migration location、history table、schema；SQL init 必须为
-`never`，Hibernate schema generation 必须为 `validate`。因此，环境变量、JVM
-系统属性或部署平台注入的同名覆盖不能把 schema owner 切换给 Hibernate、SQL init
-或另一套 Flyway 配置。该拒绝矩阵由 Java guard 测试、Shell runtime guard、
-ApplicationContext PostgreSQL 测试、HTTP E2E 和 Flyway baseline guard 共同覆盖。
+Flyway 必须启用、缺失 migration location 必须失败、migration 命名必须校验、禁止
+自动 baseline、禁止 clean、启用 migrate validation、禁止 out-of-order，并固定
+migration location、history table、schema；SQL init 必须为 `never`，Hibernate schema
+generation 必须为 `validate`。因此，环境变量、JVM 系统属性或部署平台注入的同名
+覆盖不能把 schema owner 切换给 Hibernate、SQL init 或另一套 Flyway 配置。该拒绝
+矩阵由 Java guard 测试、Shell runtime guard、ApplicationContext PostgreSQL 测试、
+HTTP E2E 和 Flyway baseline guard 共同覆盖。
 
 V1 创建 `email_queue`、`email_logs`、基础检查约束和查询索引。V2 增加
 `retry_count <= max_retries`、日志到队列的 `ON DELETE SET NULL` 外键，以及恢复和
@@ -323,7 +326,7 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 
 - 本组件 Maven：131 tests，0 failures/errors/skips；其中 22 个
   PostgreSQL/GreenMail ApplicationContext E2E、26 个 Java runtime guard tests。
-- 本组件 Shell runtime 37/37、HTTP/PostgreSQL E2E 11/11、Flyway guard 12/12。
+- 本组件 Shell runtime 39/39、HTTP/PostgreSQL E2E 11/11、Flyway guard 14/14。
 - UniAuth 根项目：Java 131 tests、HTTP 15/15、Flyway 13/13、
   Mock Playwright 21/21、Python 资源服务器 16/16、邮件 REST stub contract 8/8；
   本轮功能性门禁已通过；完整根统一门禁的源码快照检查和连续三轮无修改检查仍是
@@ -343,7 +346,17 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   clean、校验或 out-of-order，拒绝 migration location/history/schema、SQL init 和
   Hibernate schema generation 覆盖。
 - 完整邮件服务门禁通过：Maven 131 tests、Java runtime guard 26/26、
-  Shell runtime 37/37、HTTP/PostgreSQL E2E 11/11、Flyway baseline guard 12/12。
+  Shell runtime 39/39、HTTP/PostgreSQL E2E 11/11、Flyway baseline guard 14/14。
+
+2026-08-08 Flyway migration discovery/naming fail-closed 增量：
+
+- 固定 `spring.flyway.fail-on-missing-locations=true` 和
+  `spring.flyway.validate-migration-naming=true`；Java/Shell guard 拒绝将任一值
+  外部覆盖为 `false`。
+- 真实 ApplicationContext 断言两项安全值；Flyway baseline guard 在迁移前验证两种
+  危险覆盖均失败关闭，且不创建 history/table。
+- 完整邮件服务门禁通过：Maven 131 tests、Java runtime guard 26/26、
+  Shell runtime 39/39、HTTP/PostgreSQL E2E 11/11、Flyway baseline guard 14/14。
 
 2026-08-07 初始纳入基线：
 

@@ -89,6 +89,7 @@
 | P1 | 说明邮件服务 API key header 的单值精确匹配要求和重复凭据拒绝证据 | 已完成 |
 | P1 | 说明根 HTTP E2E 使用真实参考邮件服务完成正常跨进程闭环，并仅用 stub 覆盖 503/429 失败映射 | 已完成 |
 | P1 | 说明参考服务 Flyway schema-owner 配置不可被外部覆盖，并记录 Java/Shell/ApplicationContext/Flyway guard 证据 | 已完成 |
+| P1 | 说明参考服务缺失 migration location 与非法 migration 命名必须 fail closed，并记录覆盖拒绝证据 | 已完成 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -144,7 +145,8 @@
   当前分别为 10/10 和 11/11，覆盖 queue detail 披露边界、响应安全 header、重复
   鉴权 header，以及 checksum drift 失败关闭、原样保持与显式恢复。
 - 参考服务当前组合门禁为 Maven 131 tests、Java runtime guard 26/26、Shell
-  runtime 37/37、HTTP 11/11、Flyway guard 12/12；Flyway 唯一 schema owner 的
+  runtime 39/39、HTTP 11/11、Flyway guard 14/14；Flyway 唯一 schema owner、缺失
+  location 和 migration 命名校验的
   固定配置和外部覆盖拒绝已由 Java/Shell/ApplicationContext/Flyway 层共同验证。
 - 根 `scripts/test-http-e2e.sh` 的正常邮箱注册/重置路径已使用真实
   `reference/email-service` JAR、独立 PostgreSQL 和真实 HTTP；仅失败/限流映射路径

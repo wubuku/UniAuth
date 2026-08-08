@@ -28,6 +28,7 @@ class EmailServiceRuntimeGuardTest {
     void rejectsFlywaySchemaMutationOverrides() {
         Map<String, String> unsafeOverrides = Map.of(
             "spring.flyway.enabled", "false",
+            "spring.flyway.fail-on-missing-locations", "false",
             "spring.flyway.baseline-on-migrate", "true",
             "spring.flyway.clean-disabled", "false",
             "spring.flyway.validate-on-migrate", "false",
@@ -50,6 +51,7 @@ class EmailServiceRuntimeGuardTest {
             "spring.flyway.table", "flyway_schema_history",
             "spring.flyway.default-schema", "email",
             "spring.flyway.schemas", "email",
+            "spring.flyway.validate-migration-naming", "false",
             "spring.sql.init.mode", "always",
             "spring.jpa.hibernate.ddl-auto", "create-drop"
         );
@@ -565,8 +567,10 @@ class EmailServiceRuntimeGuardTest {
         MockEnvironment environment = new MockEnvironment();
         environment.setActiveProfiles(profiles);
         environment.setProperty("spring.flyway.enabled", "true");
+        environment.setProperty("spring.flyway.fail-on-missing-locations", "true");
         environment.setProperty("spring.flyway.baseline-on-migrate", "false");
         environment.setProperty("spring.flyway.clean-disabled", "true");
+        environment.setProperty("spring.flyway.validate-migration-naming", "true");
         environment.setProperty("spring.flyway.validate-on-migrate", "true");
         environment.setProperty("spring.flyway.out-of-order", "false");
         environment.setProperty(

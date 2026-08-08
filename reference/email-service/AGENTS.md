@@ -32,6 +32,7 @@
 - 配置、实体、事件和请求 DTO 不得通过自动 `toString()` 暴露 API key、收件人、
   验证码或 HTML。
 - Flyway 是唯一 schema owner：`spring.flyway.enabled=true`、
+  `fail-on-missing-locations=true`、`validate-migration-naming=true`、
   `baseline-on-migrate=false`、`clean-disabled=true`、`validate-on-migrate=true`、
   `out-of-order=false`，location/history/default schema/schemas 必须固定；SQL init
   必须为 `never`，Hibernate 必须为 `validate`。Java ApplicationContext guard 和

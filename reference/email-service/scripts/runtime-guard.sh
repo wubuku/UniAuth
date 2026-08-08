@@ -64,8 +64,10 @@ email_service_require_exact_value() {
 
 email_service_validate_schema_ownership_configuration() {
     local flyway_enabled="${SPRING_FLYWAY_ENABLED:-true}"
+    local fail_on_missing_locations="${SPRING_FLYWAY_FAIL_ON_MISSING_LOCATIONS:-true}"
     local baseline_on_migrate="${SPRING_FLYWAY_BASELINE_ON_MIGRATE:-false}"
     local clean_disabled="${SPRING_FLYWAY_CLEAN_DISABLED:-true}"
+    local validate_migration_naming="${SPRING_FLYWAY_VALIDATE_MIGRATION_NAMING:-true}"
     local validate_on_migrate="${SPRING_FLYWAY_VALIDATE_ON_MIGRATE:-true}"
     local out_of_order="${SPRING_FLYWAY_OUT_OF_ORDER:-false}"
     local flyway_locations="${SPRING_FLYWAY_LOCATIONS:-classpath:db/migration/postgresql}"
@@ -77,11 +79,17 @@ email_service_validate_schema_ownership_configuration() {
 
     email_service_require_boolean SPRING_FLYWAY_ENABLED "$flyway_enabled" || return 1
     email_service_require_boolean \
+        SPRING_FLYWAY_FAIL_ON_MISSING_LOCATIONS \
+        "$fail_on_missing_locations" || return 1
+    email_service_require_boolean \
         SPRING_FLYWAY_BASELINE_ON_MIGRATE \
         "$baseline_on_migrate" || return 1
     email_service_require_boolean \
         SPRING_FLYWAY_CLEAN_DISABLED \
         "$clean_disabled" || return 1
+    email_service_require_boolean \
+        SPRING_FLYWAY_VALIDATE_MIGRATION_NAMING \
+        "$validate_migration_naming" || return 1
     email_service_require_boolean \
         SPRING_FLYWAY_VALIDATE_ON_MIGRATE \
         "$validate_on_migrate" || return 1
@@ -92,9 +100,15 @@ email_service_validate_schema_ownership_configuration() {
     email_service_require_exact_value \
         SPRING_FLYWAY_ENABLED "$flyway_enabled" true || return 1
     email_service_require_exact_value \
+        SPRING_FLYWAY_FAIL_ON_MISSING_LOCATIONS \
+        "$fail_on_missing_locations" true || return 1
+    email_service_require_exact_value \
         SPRING_FLYWAY_BASELINE_ON_MIGRATE "$baseline_on_migrate" false || return 1
     email_service_require_exact_value \
         SPRING_FLYWAY_CLEAN_DISABLED "$clean_disabled" true || return 1
+    email_service_require_exact_value \
+        SPRING_FLYWAY_VALIDATE_MIGRATION_NAMING \
+        "$validate_migration_naming" true || return 1
     email_service_require_exact_value \
         SPRING_FLYWAY_VALIDATE_ON_MIGRATE "$validate_on_migrate" true || return 1
     email_service_require_exact_value \

@@ -142,6 +142,11 @@ public class EmailServiceRuntimeGuard {
             "SPRING_FLYWAY_ENABLED"
         );
         requireStrictBooleanProperty(
+            "spring.flyway.fail-on-missing-locations",
+            true,
+            "SPRING_FLYWAY_FAIL_ON_MISSING_LOCATIONS"
+        );
+        requireStrictBooleanProperty(
             "spring.flyway.baseline-on-migrate",
             false,
             "SPRING_FLYWAY_BASELINE_ON_MIGRATE"
@@ -180,6 +185,11 @@ public class EmailServiceRuntimeGuard {
             "spring.flyway.schemas",
             "public",
             "SPRING_FLYWAY_SCHEMAS"
+        );
+        requireStrictBooleanProperty(
+            "spring.flyway.validate-migration-naming",
+            true,
+            "SPRING_FLYWAY_VALIDATE_MIGRATION_NAMING"
         );
         requireExactProperty(
             "spring.sql.init.mode",

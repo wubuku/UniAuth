@@ -337,6 +337,11 @@ PYTHON_BIN=python3 scripts/verify.sh
   真实 disposable PostgreSQL + Flyway + Hibernate `validate`；Java/Shell guard
   均拒绝 Flyway disable/baseline/clean/validation/out-of-order、location/history/
   schema、SQL init 和 Hibernate schema-generation 覆盖。
+- 2026-08-08 邮件参考服务 Flyway discovery/naming fail-closed 增量：固定
+  `fail-on-missing-locations=true` 和 `validate-migration-naming=true`；Java/Shell
+  guard、真实 ApplicationContext 与 Flyway baseline guard 均拒绝将其覆盖为
+  `false`。邮件服务完整门禁为 Maven 131/131、Shell runtime 39/39、HTTP 11/11、
+  Flyway guard 14/14。
 - Shell HTTP E2E：15/15；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
 - Flyway baseline guard：13/13。
 - Mock Playwright：21 tests。
