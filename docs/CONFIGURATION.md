@@ -137,6 +137,12 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - `EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES` 有效范围为 `1..10080`；恢复任务只有在
   `app.mail.enabled`、`app.mail.queue.enabled` 和 `app.mail.recovery.enabled`
   同时为 true 时才会处理 pending/stuck 队列。
+- 参考实现把 PostgreSQL 队列视为不受信任的持久化边界：最终 SMTP 投递前会重新
+  校验 recipient、subject、HTML 上限和自定义 header token。历史数据、手工 SQL
+  或异常写入不能绕过 HTTP 入队校验直接进入 MIME header。
+- 拒绝非法队列载荷时，`email_logs` 只保留 queue id、通用错误和安全占位字段；
+  合法内部 `sendMethod` 可用于定位来源，非法值统一记录为 `UNKNOWN`。这保证失败
+  审计本身不会因字段长度或 header injection 值而回滚现有 retry 状态机。
 - API key 配置对象、持久化实体、队列事件和 HTTP 请求 DTO 不生成包含 API key、
   收件人、验证码或 HTML 的自动 `toString()`；日志和异常仍需遵守同一脱敏边界。
 

@@ -98,6 +98,20 @@ run_guard() {
         "$BASELINE_SCRIPT" "$mode"
 }
 
+expect_guard_success() {
+    local database="$1"
+    local mode="$2"
+    local artifact_name="$3"
+    shift 3
+    local output_file="$TEMP_DIR/${artifact_name}.log"
+
+    if ! run_guard "$database" "$mode" "$artifact_name" "$@" \
+        >"$output_file" 2>&1; then
+        cat "$output_file" >&2
+        fail "$artifact_name did not complete successfully"
+    fi
+}
+
 expect_guard_failure() {
     local database="$1"
     local mode="$2"
@@ -111,8 +125,10 @@ expect_guard_failure() {
         fail "$artifact_name unexpectedly passed"
     fi
     if [ -n "$expected_message" ]; then
-        grep -Fq "$expected_message" "$output_file" \
-            || fail "$artifact_name did not report the expected guard failure"
+        if ! grep -Fq "$expected_message" "$output_file"; then
+            cat "$output_file" >&2
+            fail "$artifact_name did not report the expected guard failure"
+        fi
     fi
 }
 
@@ -143,11 +159,43 @@ done
 
 echo "1/12 Accept an exact approved schema in rehearsal mode"
 valid_output="$TEMP_DIR/valid.log"
-run_guard baseline_valid_test rehearse valid >"$valid_output" 2>&1
+config_capture_bin="$TEMP_DIR/config-capture-bin"
+config_capture_file="$TEMP_DIR/flyway-config-paths.txt"
+real_mvn="$(command -v mvn)"
+mkdir -p "$config_capture_bin"
+cat >"$config_capture_bin/mvn" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+for argument in "$@"; do
+    case "$argument" in
+        -Dflyway.configFiles=*)
+            printf '%s\n' "${argument#*=}" >> "$UNIAUTH_CONFIG_CAPTURE"
+            ;;
+    esac
+done
+exec "$UNIAUTH_REAL_MVN" "$@"
+EOF
+chmod 700 "$config_capture_bin/mvn"
+expect_guard_success \
+    baseline_valid_test \
+    rehearse \
+    valid \
+    PATH="$config_capture_bin:$PATH" \
+    UNIAUTH_CONFIG_CAPTURE="$config_capture_file" \
+    UNIAUTH_REAL_MVN="$real_mvn"
 grep -Fq "Flyway baseline rehearsal passed." "$valid_output" \
     || fail "exact approved schema did not complete rehearsal"
 grep -Fq "Apply confirmation token: baseline:baseline_valid_test:" "$valid_output" \
     || fail "rehearsal did not emit a database-bound confirmation token"
+[ "$(wc -l < "$config_capture_file" | tr -d ' ')" -eq 5 ] \
+    || fail "rehearsal did not execute the expected five Flyway commands"
+[ "$(LC_ALL=C sort -u "$config_capture_file" | wc -l | tr -d ' ')" -eq 5 ] \
+    || fail "Flyway commands reused a temporary configuration file"
+while IFS= read -r config_path; do
+    [ ! -e "$config_path" ] \
+        || fail "temporary Flyway configuration remained after a successful command"
+done < "$config_capture_file"
 grep -Fq "restored_v2_history_type=SQL" \
     "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
     || fail "existing-schema rehearsal did not apply Flyway V2"
@@ -302,7 +350,6 @@ expect_guard_failure \
 echo "9/12 Recheck login-method data immediately before apply"
 race_bin="$TEMP_DIR/race-bin"
 race_counter="$TEMP_DIR/race-mvn-count.txt"
-real_mvn="$(command -v mvn)"
 real_psql="$(command -v psql)"
 mkdir -p "$race_bin"
 cat >"$race_bin/mvn" <<'EOF'

@@ -202,7 +202,8 @@ run_flyway() {
     local config_file
     local exit_code=0
 
-    config_file="$(mktemp "${TMPDIR:-/tmp}/uniauth-flyway.XXXXXX.conf")"
+    # BSD mktemp only replaces a trailing XXXXXX template.
+    config_file="$(mktemp "${TMPDIR:-/tmp}/uniauth-flyway.XXXXXX")"
     FLYWAY_CONFIG_FILE="$config_file"
     chmod 600 "$config_file"
     {

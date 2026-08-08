@@ -255,6 +255,10 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   拒绝矩阵；真实 `JavaMailSender` Bean 保留身份校验属性。
 - Java/Shell runtime guard 的 SMTP host/port 拒绝矩阵；H2 和 PostgreSQL
   ApplicationContext 都确认真实 `JavaMailSender` 使用预期 host/port。
+- 最终投递把 PostgreSQL 队列行作为不受信任输入，重新校验 recipient、subject、
+  HTML 上限以及 `X-Email-Type`、`X-Send-Method` token；异常行不进入 SMTP。
+- 异常行的投递日志只保留 queue id、通用错误和安全占位字段；合法内部
+  `sendMethod` 可保留，非法值记录为 `UNKNOWN`，不会因审计字段约束回滚 retry。
 - 恢复候选按 priority 降序处理；关闭邮件总开关或队列后不投递存量队列。
 - event 与 recovery 并发 claim 同一 PostgreSQL 队列记录时只允许一个投递者成功，
   最终只有一条成功日志和一封 SMTP 邮件。
@@ -279,6 +283,20 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - 其中 14 个完整 ApplicationContext E2E、24 个 Java runtime guard tests。
 - H2 与 PostgreSQL/GreenMail ApplicationContext 均确认有效 host/port 进入真实
   `JavaMailSender` Bean。
+- Shell runtime guard：27/27。
+- Shell HTTP/PostgreSQL E2E：8/8。
+- Shell Flyway guard：8/8。
+
+2026-08-08 持久化队列投递边界加固增量：
+
+- Maven：110 tests，0 failures/errors/skips。
+- 其中 16 个 PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime
+  guard tests。
+- CR/LF subject、超过 1,000,000 字符的 HTML、CR/LF `emailType` 和超长注入型
+  `sendMethod` 都在 SMTP 前失败关闭，并沿用现有 retry 状态机。
+- `NULL` 或 blank 的历史 `emailType` 均按 `GENERAL` 成功投递。
+- 拒绝记录不会复制恶意载荷；非法 `sendMethod` 安全降级为 `UNKNOWN`。
+- Shell HTTP E2E 同步覆盖 `emailType` header injection 拒绝。
 - Shell runtime guard：27/27。
 - Shell HTTP/PostgreSQL E2E：8/8。
 - Shell Flyway guard：8/8。

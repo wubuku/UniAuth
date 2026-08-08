@@ -649,6 +649,69 @@ Shell runtime 27/27、HTTP/PostgreSQL 8/8、Flyway guard 8/8。根统一门禁�
 Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19/19、Python 14/14，
 前端 lint/type/build 通过。
 
+### 邮件服务持久化队列投递边界加固切片
+
+#### 2026-08-08 固定实施范围
+
+本切片只补齐最终 SMTP 投递对持久化队列载荷的重验证，不改变合法邮件、模板、
+REST 契约、状态机、retry 次数、Flyway schema 或 UniAuth 邮箱业务流程。
+
+纳入范围：
+
+1. 最终投递复用当前 recipient、subject 和 1,000,000 字符 HTML 上限校验。
+2. `emailType` 与内部 `sendMethod` 进入自定义 MIME header 前必须是有界 ASCII token；
+   缺失或空白的历史 `emailType` 继续按 `GENERAL` 处理。
+3. 非法持久化行只记录 queue id、通用失败原因和安全占位字段，不把恶意
+   recipient、subject、HTML 或 header token 复制到失败审计。
+4. PostgreSQL/GreenMail ApplicationContext 直接持久化绕过 HTTP 的异常行，验证
+   无 SMTP 副作用、失败日志和现有 retry 语义。
+5. Shell HTTP E2E 增加 `emailType` header injection 拒绝契约，并同步 live 文档。
+
+明确非目标：
+
+- 不新增或修改 Flyway migration、数据库约束或队列状态。
+- 不改变合法邮件的 MIME/header 内容、发送顺序、重试次数、限流或至少一次语义。
+- 不新增 endpoint、模板、幂等协议或真实 SMTP 验证。
+
+#### 当前状态
+
+保护测试先证明带 CR/LF 的持久化 subject 会被真实 GreenMail 接受并发送，并证明
+超长注入型 `sendMethod` 会让原失败审计违反 `VARCHAR(20)`、回滚 retry；实现修复后，
+定向 PostgreSQL/GreenMail 测试确认 CR/LF subject、过大 HTML、非法 `emailType`
+和非法 `sendMethod` 均在 SMTP 前失败关闭，`NULL`/blank 历史 `emailType` 以
+`GENERAL` 成功投递。完整邮件组件门禁已通过：110 tests、16 个
+PostgreSQL/GreenMail ApplicationContext E2E、Java runtime guard 24 tests、
+Shell runtime 27/27、HTTP/PostgreSQL 8/8、Flyway guard 8/8。当前组合工作树的
+根统一门禁也已通过：Java 98 tests、HTTP 14/14、Flyway 12/12、
+Mock Playwright 19/19、Python 14/14，前端 lint/type/build 通过。
+
+### Flyway baseline guard 并发隔离切片
+
+#### 2026-08-08 固定实施范围
+
+本切片只修复 existing-schema baseline 运维脚本的临时配置文件隔离和失败诊断，
+不改变 migration、schema、数据预检、confirmation token 或 apply 语义。
+
+纳入范围：
+
+1. 使用以 `XXXXXX` 结尾的 portable `mktemp` 模板，兼容 macOS/BSD 和 Linux。
+2. exact-schema guard 断言一次 rehearsal 的 5 个 Maven/Flyway 调用分别使用唯一
+   配置路径，并确认每个文件都已删除。
+3. 预期成功场景失败或预期错误消息不匹配时，在清理临时目录前输出内部日志。
+4. 并行运行两套完整 guard，验证不同进程不会覆盖或删除对方的 Flyway 配置。
+
+明确非目标：
+
+- 不修改 V1-V4 migration 或 Flyway 参数。
+- 不连接共享开发数据库，不执行 baseline apply。
+- 不修改邮件、认证或其他业务实现。
+
+#### 当前状态
+
+旧模板 `uniauth-flyway.XXXXXX.conf` 在 macOS 上产生字面同名路径，并发 guard 会互相
+覆盖或删除配置文件。修复后自动唯一性/清理断言通过，两套完整 root Flyway guard
+并行通过，各 `12/12`；当前组合工作树随后也通过完整根统一门禁。
+
 ### Batch C：JWT、refresh、blacklist 与 HTTP 边界
 
 Batch B 通过后执行，H2.5 与 H3.1/H3.2 作为原子切换批次。

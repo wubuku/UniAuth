@@ -19,6 +19,10 @@
   `SMTP_PORT` 必须是 `1..65535`。Shell 和 Java guard 必须保持一致。
 - `EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES` 和 stuck timeout 必须在 `1..10080`；
   邮件总开关或队列关闭时，恢复任务不得发送存量。
+- PostgreSQL 队列不是可信输入；最终投递必须重新校验 recipient、subject、HTML
+  上限和自定义 MIME header token，不能只依赖 HTTP DTO/service 入队校验。
+- 拒绝非法队列载荷时，投递日志只保留 queue id、通用错误和安全占位字段；非法
+  `sendMethod` 必须记录为 `UNKNOWN`，不得让审计写入失败并回滚 retry。
 - 配置、实体、事件和请求 DTO 不得通过自动 `toString()` 暴露 API key、收件人、
   验证码或 HTML。
 - 默认测试可使用 H2/mock 做快速反馈，并使用 disposable PostgreSQL 和进程内

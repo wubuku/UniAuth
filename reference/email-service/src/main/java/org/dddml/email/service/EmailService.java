@@ -34,6 +34,11 @@ public class EmailService {
         "email/email-verify"
     );
     private static final int MAX_HTML_CONTENT_LENGTH = 1_000_000;
+    private static final String INVALID_QUEUED_EMAIL_MESSAGE =
+        "Invalid queued email data";
+    private static final String UNDISCLOSED_RECIPIENT =
+        "undisclosed@example.invalid";
+    private static final String UNKNOWN_SEND_METHOD = "UNKNOWN";
 
     private final JavaMailSender mailSender;
     private final TemplateEngine templateEngine;
@@ -88,23 +93,18 @@ public class EmailService {
 
     public EmailLog sendEmailDirectly(EmailQueue emailQueue, String sendMethod) {
         long startTime = System.currentTimeMillis();
-
-        EmailLog emailLog = EmailLog.builder()
-                .queueId(emailQueue.getId())
-                .recipient(emailQueue.getRecipient())
-                .subject(emailQueue.getSubject())
-                .emailContent(emailQueue.getHtmlContent())
-                .emailType(emailQueue.getEmailType())
-                .retryCount(emailQueue.getRetryCount())
-                .mailProvider(getMailProvider())
-                .sendMethod(sendMethod)
-                .build();
+        String emailType = normalizedEmailType(emailQueue.getEmailType());
 
         try {
-            if (!isValidEmail(emailQueue.getRecipient())) {
-                throw new IllegalArgumentException("Invalid email address");
-            }
+            validateDeliveryPayload(emailQueue, emailType, sendMethod);
+        } catch (IllegalArgumentException exception) {
+            EmailLog rejectedLog = rejectedDeliveryLog(emailQueue, sendMethod);
+            log.warn("Rejected invalid queued email [ID={}]", emailQueue.getId());
+            return emailLogRepository.save(rejectedLog);
+        }
 
+        EmailLog emailLog = deliveryLog(emailQueue, emailType, sendMethod);
+        try {
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
@@ -118,7 +118,7 @@ public class EmailService {
 
             message.addHeader("X-Mailer", "Spring Boot Email System");
             message.addHeader("X-Environment", activeProfile);
-            message.addHeader("X-Email-Type", emailQueue.getEmailType());
+            message.addHeader("X-Email-Type", emailType);
             message.addHeader("X-Queue-ID", String.valueOf(emailQueue.getId()));
             message.addHeader("X-Send-Method", sendMethod);
 
@@ -155,6 +155,76 @@ public class EmailService {
         }
 
         return emailLogRepository.save(emailLog);
+    }
+
+    private EmailLog deliveryLog(
+            EmailQueue emailQueue,
+            String emailType,
+            String sendMethod) {
+        return EmailLog.builder()
+            .queueId(emailQueue.getId())
+            .recipient(emailQueue.getRecipient())
+            .subject(emailQueue.getSubject())
+            .emailContent(emailQueue.getHtmlContent())
+            .emailType(emailType)
+            .retryCount(emailQueue.getRetryCount())
+            .mailProvider(getMailProvider())
+            .sendMethod(sendMethod)
+            .build();
+    }
+
+    private EmailLog rejectedDeliveryLog(
+            EmailQueue emailQueue,
+            String sendMethod) {
+        return EmailLog.builder()
+            .queueId(emailQueue.getId())
+            .recipient(UNDISCLOSED_RECIPIENT)
+            .subject(INVALID_QUEUED_EMAIL_MESSAGE)
+            .status("FAILED")
+            .errorMessage(INVALID_QUEUED_EMAIL_MESSAGE)
+            .emailType("GENERAL")
+            .retryCount(emailQueue.getRetryCount())
+            .mailProvider(getMailProvider())
+            .sendMethod(
+                isValidHeaderToken(sendMethod, 20)
+                    ? sendMethod
+                    : UNKNOWN_SEND_METHOD
+            )
+            .build();
+    }
+
+    private void validateDeliveryPayload(
+            EmailQueue emailQueue,
+            String emailType,
+            String sendMethod) {
+        validateEnvelope(emailQueue.getRecipient(), emailQueue.getSubject());
+        validateHtmlContent(emailQueue.getHtmlContent());
+        validateHeaderToken(emailType, 50);
+        validateHeaderToken(sendMethod, 20);
+    }
+
+    private String normalizedEmailType(String emailType) {
+        return emailType == null || emailType.isBlank() ? "GENERAL" : emailType;
+    }
+
+    private void validateHeaderToken(String value, int maxLength) {
+        if (!isValidHeaderToken(value, maxLength)) {
+            throw new IllegalArgumentException("Invalid email header token");
+        }
+    }
+
+    private boolean isValidHeaderToken(String value, int maxLength) {
+        return value != null
+            && !value.isBlank()
+            && value.length() <= maxLength
+            && value.codePoints().allMatch(this::isAsciiHeaderTokenCharacter);
+    }
+
+    private boolean isAsciiHeaderTokenCharacter(int character) {
+        return character < 128
+            && (Character.isLetterOrDigit(character)
+                || character == '_'
+                || character == '-');
     }
 
     public boolean isValidEmail(String email) {

@@ -266,6 +266,24 @@ bad_subject="$(
     -H "X-Email-Service-Key: $API_KEY" \
     --data "$bad_subject")" = "400" ] \
     || fail "header-injection subject was accepted"
+bad_email_type="$(
+    jq -cn '{
+      to: "shell@example.test",
+      subject: "Invalid email type",
+      templateName: "email/email-verify",
+      variables: {
+        verificationCode: "000000",
+        username: "shell@example.test",
+        expiryMinutes: 10
+      },
+      emailType: "VERIFICATION\r\nX-Injected: true"
+    }'
+)"
+[ "$(request_status POST /api/email/template \
+    -H "Content-Type: application/json" \
+    -H "X-Email-Service-Key: $API_KEY" \
+    --data "$bad_email_type")" = "400" ] \
+    || fail "header-injection emailType was accepted"
 unknown_template="$(
     jq -cn '{
       to: "shell@example.test",

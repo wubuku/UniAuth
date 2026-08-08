@@ -194,7 +194,11 @@ scripts/verify.sh
 非邮件专用数据库和无 API key 的非 loopback 暴露。真实 SMTP/供应商验证仍须显式
 opt in。恢复任务只有在邮件总开关、队列和 recovery 都启用时才处理存量；配置、
 实体、事件和请求 DTO 不得通过自动 `toString()` 泄露 API key、收件人、验证码或
-HTML。
+HTML。最终 SMTP 投递不得只信任 HTTP 入队校验；从 PostgreSQL 读取的 recipient、
+subject、HTML 和自定义 header token 必须在构造 MIME 前重新校验。
+非法队列载荷的失败审计只保留 queue id、通用错误和安全占位字段，不复制恶意
+recipient、subject、HTML 或 header token；非法 `sendMethod` 必须降级为
+`UNKNOWN`，不能让 `email_logs` 写入失败并回滚 retry。
 
 ## Database Reality
 
@@ -281,6 +285,9 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 2026-08-08 SMTP endpoint 加固增量：邮件参考服务 108 tests，
   Java runtime guard 24 tests，Shell runtime guard 27/27；HTTP 8/8 和 Flyway
   guard 8/8 保持通过。
+- 2026-08-08 持久化队列投递边界加固增量：邮件参考服务 110 tests，
+  16 个 PostgreSQL/GreenMail ApplicationContext E2E；runtime 27/27、HTTP 8/8
+  和 Flyway guard 8/8 保持通过。
 - Shell HTTP E2E：14/14。
 - Flyway baseline guard：12/12。
 - Mock Playwright：19 tests。
@@ -297,6 +304,10 @@ PYTHON_BIN=python3 scripts/verify.sh
   `Navigate` 或 `useNavigate` 的目标 URL，并在可用的无重叠修复版本出现后升级。
 - Flyway：fresh migration、existing-schema baseline integration、checksum/failure recovery、
   guard failure matrix 和 `blacksheep_dev` 只读 rehearsal 已通过。
+- `flyway-baseline-existing.sh` 的临时 Flyway 配置必须使用以 `XXXXXX` 结尾的
+  portable `mktemp` 模板；macOS 不会替换带 `.conf` 后缀的模板。baseline guard
+  会断言一次 rehearsal 的 5 个配置路径互不相同且均被删除，并已通过两套并行
+  `12/12` guard 验证。
 - `scripts/verify.sh` 是本地统一验证入口；`.github/workflows/verification.yml` 在 CI
   中执行同一入口。
 - 邮件参考服务的统一入口会复制当前非忽略源码到进程专属临时目录后执行全部 Maven
@@ -307,10 +318,12 @@ PYTHON_BIN=python3 scripts/verify.sh
 
 当前增量状态（2026-08-08）：
 
-- SMTP endpoint 加固已通过完整邮件组件门禁和根统一门禁：邮件参考服务
-  108 tests、Java runtime guard 24 tests、Shell runtime 27/27、HTTP/Flyway
-  各 8/8；根 Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19/19、
-  Python 14/14，前端 lint/type/build 通过。
+- 持久化队列投递边界加固已通过完整邮件组件门禁：邮件参考服务 110 tests、
+  16 个 PostgreSQL/GreenMail ApplicationContext E2E、Java runtime guard 24 tests、
+  Shell runtime 27/27、HTTP/Flyway 各 8/8；根 Java 98 tests、HTTP 14/14、
+  Flyway 12/12、Mock Playwright 19/19、Python 14/14 和前端 lint/type/build 通过。
+- root Flyway baseline guard 临时配置并发隔离修复已通过两套并行 `12/12` 定向
+  验证，并随当前组合工作树通过完整根统一门禁。
 
 `start.sh` 可读取显式环境变量或指定的 Google client JSON；
 `start-with-frontend.sh` 要求所有 OAuth2 环境变量。两者都经过

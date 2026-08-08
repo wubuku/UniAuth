@@ -195,6 +195,9 @@ UniAuth 主应用的邮件相关门禁只验证内部状态机和 HTTP 边界：
 - Java/Shell 双重 runtime guard 拒绝带 URI 语法/空白的 SMTP host，以及非数字或
   超出 `1..65535` 的 SMTP port；H2 与 PostgreSQL ApplicationContext 都验证实际
   host/port 进入真实 `JavaMailSender` Bean。
+- PostgreSQL/GreenMail ApplicationContext 直接持久化绕过 HTTP 的异常队列行，
+  验证 CR/LF subject、过大 HTML 和非法 `emailType` 在 SMTP 前被拒绝，同时保留
+  现有失败日志和 retry 状态机。
 - UniAuth 客户端 URL/timeout 配置拒绝矩阵，以及 context path、尾斜杠和 API key
   请求契约。
 - simple 请求 HTML 与模板渲染后的最终 HTML 都限制为最多 1,000,000 字符。
@@ -258,6 +261,40 @@ stuck reclaim 仍可能重复发送。真实邮箱能力仍需要隔离账户的
   Mock Playwright 19/19、Python 14/14，前端 lint/type/build 通过。
 - 文档相对链接、Shell 语法和 patch hygiene 检查通过。
 - 不连接真实 SMTP，不验证外部 DNS、网络可达性、TLS 握手或供应商鉴权。
+
+## 2026-08-08 持久化队列投递边界加固增量
+
+> 状态：Verified。完整邮件组件门禁和根统一门禁均于 2026-08-08 通过。
+
+本轮只在最终 SMTP 投递前重新验证当前已存在的入队契约，不改变合法邮件内容、
+模板、REST 响应、队列状态、retry 次数、Flyway schema 或 UniAuth 邮箱业务语义：
+
+- recipient、subject 和 HTML 复用现有校验，防止历史数据、手工 SQL 或异常写入
+  绕过 HTTP DTO/service 边界。
+- `emailType` 和内部 `sendMethod` 在进入 `X-Email-Type`、`X-Send-Method` 前必须是
+  有界 ASCII token；缺失或空白的历史 `emailType` 按既有默认语义使用 `GENERAL`。
+- 非法持久化行生成通用失败日志，不复制恶意 recipient、subject、HTML 或 header
+  token；非法 `sendMethod` 记录为 `UNKNOWN`，并继续使用现有 retry 状态机。
+- PostgreSQL/GreenMail 集成测试覆盖 CR/LF subject、1,000,001 字符 HTML、CR/LF
+  `emailType`、超长注入型 `sendMethod`，以及 `NULL`/blank 历史 `emailType`
+  按 `GENERAL` 成功投递；Shell HTTP E2E 同步覆盖 `emailType` header injection 拒绝。
+
+邮件组件验证结果：
+
+- Maven：110 tests，0 failures/errors/skips；其中 16 个 PostgreSQL/GreenMail
+  ApplicationContext E2E、24 个 Java runtime guard tests。
+- Shell runtime guard 27/27、HTTP/PostgreSQL E2E 8/8、Flyway guard 8/8。
+- 根统一门禁：Java 98 tests、HTTP E2E 14/14、Flyway guard 12/12、
+  Mock Playwright 19/19、Python 14/14，前端 lint/type/build 通过。
+
+root Flyway baseline guard 的临时配置并发隔离也在本批修复：
+
+- macOS/BSD `mktemp` 只替换末尾的 `XXXXXX`；配置模板不再在占位符后追加
+  `.conf`，避免并发 rehearsal 共享并互删同一路径。
+- guard 的 exact-schema 场景断言 5 次 Flyway 调用使用 5 个唯一配置文件，且调用
+  结束后全部删除；内部输出不匹配时会先打印诊断再失败。
+- 两套完整 root Flyway guard 已并行通过，各 `12/12`；随后当前组合工作树的完整
+  根统一门禁也已通过。
 
 Flyway baseline guard 使用 disposable PostgreSQL 16。错误 major 测试通过离线
 `psql` fixture 注入 PostgreSQL 15 版本号，不要求下载或支持 `postgres:15` 镜像。

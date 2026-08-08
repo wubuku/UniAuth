@@ -469,6 +469,162 @@ class EmailServiceEndToEndIntegrationTest {
     }
 
     @Test
+    void rejectsMalformedPersistedPayloadsBeforeSmtpDelivery() {
+        List<EmailQueue> malformedQueues = emailQueueRepository.saveAllAndFlush(
+            List.of(
+                EmailQueue.builder()
+                    .recipient("not-an-email")
+                    .subject("Invalid recipient")
+                    .htmlContent("<p>invalid recipient</p>")
+                    .emailType("GENERAL")
+                    .status("PENDING")
+                    .priority(5)
+                    .retryCount(0)
+                    .maxRetries(4)
+                    .build(),
+                EmailQueue.builder()
+                    .recipient("subject-injection@example.test")
+                    .subject("Allowed\r\nBcc: attacker@example.test")
+                    .htmlContent("<p>subject injection</p>")
+                    .emailType("GENERAL")
+                    .status("PENDING")
+                    .priority(5)
+                    .retryCount(0)
+                    .maxRetries(4)
+                    .build(),
+                EmailQueue.builder()
+                    .recipient("oversized-content@example.test")
+                    .subject("Oversized content")
+                    .htmlContent("x".repeat(1_000_001))
+                    .emailType("GENERAL")
+                    .status("PENDING")
+                    .priority(5)
+                    .retryCount(0)
+                    .maxRetries(4)
+                    .build(),
+                EmailQueue.builder()
+                    .recipient("header-token@example.test")
+                    .subject("Invalid header token")
+                    .htmlContent("<p>invalid header token</p>")
+                    .emailType("GENERAL\r\nX-Injected: true")
+                    .status("PENDING")
+                    .priority(5)
+                    .retryCount(0)
+                    .maxRetries(4)
+                    .build()
+            )
+        );
+        EmailQueue malformedSendMethodQueue = emailQueueRepository.saveAndFlush(
+            EmailQueue.builder()
+                .recipient("send-method-header@example.test")
+                .subject("Invalid send method header")
+                .htmlContent("<p>invalid send method header</p>")
+                .emailType("GENERAL")
+                .status("PENDING")
+                .priority(5)
+                .retryCount(0)
+                .maxRetries(4)
+                .build()
+        );
+
+        for (EmailQueue queue : malformedQueues) {
+            assertThat(emailQueueClaimService.claimPending(
+                queue.getId(),
+                LocalDateTime.now()
+            )).isTrue();
+            assertThat(emailDeliveryService.deliver(queue.getId(), "SCHEDULED"))
+                .isEqualTo(EmailDeliveryService.DeliveryOutcome.FAILED);
+        }
+        assertThat(emailQueueClaimService.claimPending(
+            malformedSendMethodQueue.getId(),
+            LocalDateTime.now()
+        )).isTrue();
+        assertThat(emailDeliveryService.deliver(
+            malformedSendMethodQueue.getId(),
+            "SCHEDULED\r\nX-Injected: true"
+        )).isEqualTo(EmailDeliveryService.DeliveryOutcome.FAILED);
+
+        List<EmailQueue> rejectedQueues = new ArrayList<>(malformedQueues);
+        rejectedQueues.add(malformedSendMethodQueue);
+        for (EmailQueue queue : rejectedQueues) {
+            EmailQueue persisted = emailQueueRepository.findById(queue.getId()).orElseThrow();
+            assertThat(persisted.getStatus()).isEqualTo("PENDING");
+            assertThat(persisted.getRetryCount()).isEqualTo(1);
+            assertThat(emailLogRepository.findByQueueId(queue.getId()))
+                .singleElement()
+                .satisfies(log -> {
+                    assertThat(log.getStatus()).isEqualTo("FAILED");
+                    assertThat(log.getRecipient()).isEqualTo(
+                        "undisclosed@example.invalid"
+                    );
+                    assertThat(log.getSubject()).isEqualTo(
+                        "Invalid queued email data"
+                    );
+                    assertThat(log.getEmailContent()).isNull();
+                    assertThat(log.getEmailType()).isEqualTo("GENERAL");
+                    assertThat(log.getSendMethod()).isEqualTo(
+                        queue.getId().equals(malformedSendMethodQueue.getId())
+                            ? "UNKNOWN"
+                            : "SCHEDULED"
+                    );
+                    assertThat(log.getErrorMessage()).isEqualTo(
+                        "Invalid queued email data"
+                    );
+                });
+        }
+        assertThat(SMTP.getReceivedMessages()).isEmpty();
+    }
+
+    @Test
+    void defaultsMissingPersistedEmailTypeBeforeSmtpDelivery() throws Exception {
+        List<EmailQueue> queues = emailQueueRepository.saveAllAndFlush(
+            List.of(
+                EmailQueue.builder()
+                    .recipient("missing-email-type@example.test")
+                    .subject("Missing email type")
+                    .htmlContent("<p>missing email type</p>")
+                    .emailType(null)
+                    .status("PENDING")
+                    .priority(5)
+                    .retryCount(0)
+                    .maxRetries(4)
+                    .build(),
+                EmailQueue.builder()
+                    .recipient("blank-email-type@example.test")
+                    .subject("Blank email type")
+                    .htmlContent("<p>blank email type</p>")
+                    .emailType("   ")
+                    .status("PENDING")
+                    .priority(5)
+                    .retryCount(0)
+                    .maxRetries(4)
+                    .build()
+            )
+        );
+
+        for (EmailQueue queue : queues) {
+            assertThat(emailQueueClaimService.claimPending(
+                queue.getId(),
+                LocalDateTime.now()
+            )).isTrue();
+            assertThat(emailDeliveryService.deliver(queue.getId(), "SCHEDULED"))
+                .isEqualTo(EmailDeliveryService.DeliveryOutcome.SUCCESS);
+
+            EmailQueue persisted = emailQueueRepository.findById(queue.getId()).orElseThrow();
+            assertThat(persisted.getStatus()).isEqualTo("COMPLETED");
+            assertThat(emailLogRepository.findByQueueId(queue.getId()))
+                .singleElement()
+                .satisfies(log -> {
+                    assertThat(log.getStatus()).isEqualTo("SUCCESS");
+                    assertThat(log.getEmailType()).isEqualTo("GENERAL");
+                    assertThat(log.getSendMethod()).isEqualTo("SCHEDULED");
+                });
+            assertThat(findMessage(queue.getRecipient())
+                .getHeader("X-Email-Type", null)).isEqualTo("GENERAL");
+        }
+    }
+
+    @Test
     void recoverySelectsHigherPriorityCandidatesFirst() {
         LocalDateTime now = LocalDateTime.now();
         EmailQueue lowPriority = emailQueueRepository.saveAndFlush(
