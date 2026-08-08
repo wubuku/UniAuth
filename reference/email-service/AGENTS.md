@@ -29,6 +29,9 @@
   幂等释放；旧窗口迟到释放不得扣减新窗口额度，配置临时关闭不得阻止释放旧额度。
 - 配置、实体、事件和请求 DTO 不得通过自动 `toString()` 暴露 API key、收件人、
   验证码或 HTML。
+- 所有 `/api/email` 及其子路径的响应都必须设置 `Cache-Control: no-store`、
+  `Pragma: no-cache` 和 `X-Content-Type-Options: nosniff`，包括成功、鉴权失败、
+  参数拒绝和路由错误；该策略不改变 JSON body 契约。
 - 默认测试可使用 H2/mock 做快速反馈，并使用 disposable PostgreSQL 和进程内
   GreenMail 做完整 ApplicationContext E2E；不得连接真实 SMTP 或发送真实邮件。
 - 真实 SMTP/供应商测试必须显式 opt in，并使用隔离测试账户。

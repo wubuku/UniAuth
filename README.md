@@ -22,11 +22,11 @@
 | 数据库 | PostgreSQL-only |
 | Migration | Flyway V1 baseline + V2 + V3 + V4，history `uniauth_flyway_schema_history` |
 | Java 验证 | 120 tests |
-| 邮件参考服务 | 124 tests；其中 20 个 PostgreSQL/ApplicationContext E2E；另有 runtime 27/27、HTTP 9/9、Flyway guard 9/9 |
+| 邮件参考服务 | 127 tests；其中 21 个 PostgreSQL/ApplicationContext E2E；另有 runtime 27/27、HTTP 10/10、Flyway guard 10/10 |
 | HTTP E2E | 15/15 |
 | Flyway baseline guard | 13/13 |
 | Playwright | 20 tests |
-| Python | 14 个资源服务器测试 + 6 个邮件 REST stub 契约测试 |
+| Python | 14 个资源服务器测试 + 7 个邮件 REST stub 契约测试 |
 | 前端 lint/type/build | 通过 |
 
 安全启动、测试和 baseline 操作见 [开发指南](docs/DEVELOPMENT.md) 与
@@ -70,7 +70,8 @@ userinfo/query/fragment 的绝对 HTTP/HTTPS 地址。参考实现自身还要�
 强制 STARTTLS 或 implicit SSL，并保持 server identity verification 开启；其他兼容
 实现如果不使用 SMTP，也必须为其下游供应商连接提供等价的防降级和身份校验保护。
 参考实现的 `SMTP_HOST` 只能是无 URI 语法或空白字符的 host/IP token，
-`SMTP_PORT` 必须在 `1..65535`。
+`SMTP_PORT` 必须在 `1..65535`；所有邮件 API 响应统一设置 no-store/no-cache 和
+nosniff 安全 header，避免队列、日志或错误响应被缓存或 MIME 嗅探。
 
 外部服务只有同步接受请求后，UniAuth 才保存验证码 challenge；拒绝、限流、超时和
 网络异常都失败关闭。正确验证码只按已选 challenge id 做一次 PostgreSQL 条件消费；

@@ -134,6 +134,15 @@ ApplicationContext/运行保护阶段被拒绝，避免将无效值传入 HTTP h
 只是最小服务鉴权，部署仍应使用私有网络、TLS、入口访问控制和独立密钥管理，不能
 直接暴露到公网。
 
+所有 `/api/email` 及其子路径的响应（包括 2xx、4xx 和 5xx）都设置：
+
+- `Cache-Control: no-store`，防止队列、日志和验证码相关响应被中间缓存保留。
+- `Pragma: no-cache`，兼容仍检查该旧式缓存控制字段的客户端或代理。
+- `X-Content-Type-Options: nosniff`，避免浏览器对 JSON 响应执行 MIME 嗅探。
+
+这些是参考服务的响应安全基线，不是 UniAuth 当前客户端用来判定成功的 JSON 字段；
+替换实现也不应依赖客户端忽略响应 header 而缓存或暴露邮件运维数据。
+
 请求边界：
 
 - 收件人最长 255 字符并通过邮箱语法检查。
@@ -258,6 +267,8 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 
 - fresh V1→V2、V1→V2 数据保留、独立 history table 和 Hibernate `validate`。
 - `GET /api/email/health` 与必需模板列表的真实 HTTP 契约。
+- 所有邮件 API 响应在成功、API key 拒绝和 MVC 路由错误下的
+  `no-store`/`no-cache`/`nosniff` 安全 header。
 - `email/email-verify` 和 `email/password-reset` 从 HTTP 入队到 SMTP 收件的完整链路。
 - API key、输入/header injection、batch 和数据库分页边界。
 - 未知模板拒绝且不创建队列/日志。
@@ -282,11 +293,11 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 
 2026-08-08 当前组合基线：
 
-- 本组件 Maven：124 tests，0 failures/errors/skips；其中 20 个
+- 本组件 Maven：127 tests，0 failures/errors/skips；其中 21 个
   PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime guard tests。
-- 本组件 Shell runtime 27/27、HTTP/PostgreSQL E2E 9/9、Flyway guard 9/9。
+- 本组件 Shell runtime 27/27、HTTP/PostgreSQL E2E 10/10、Flyway guard 10/10。
 - UniAuth 根项目：Java 120 tests、HTTP 15/15、Flyway 13/13、
-  Mock Playwright 20/20、Python 资源服务器 14/14、邮件 REST stub contract 6/6，
+  Mock Playwright 20/20、Python 资源服务器 14/14、邮件 REST stub contract 7/7，
   前端 lint/type/build 和文档检查通过。
 - 根 Shell HTTP E2E 使用受控 loopback REST stub 走真实 UniAuth
   `RestTemplateEmailServiceImpl`，覆盖接受、拒绝、限流和失败不保存 challenge。
@@ -359,6 +370,18 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - Shell runtime guard：27/27。
 - Shell HTTP/PostgreSQL E2E：9/9。
 - Shell Flyway guard：9/9。
+
+2026-08-08 敏感邮件 API 响应加固增量：
+
+- Maven：127 tests，0 failures/errors/skips。
+- 其中 21 个 PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime
+  guard tests。
+- 成功、API key 拒绝、参数拒绝、路由错误和内部失败的真实 Spring HTTP 响应均固定
+  `Cache-Control: no-store`、`Pragma: no-cache` 与
+  `X-Content-Type-Options: nosniff`；context path 和 matrix 参数路径使用同一 matcher。
+- Shell runtime guard：27/27。
+- Shell HTTP/PostgreSQL E2E：10/10。
+- Shell Flyway guard：10/10。
 
 2026-08-08 SMTP transport 加固增量：
 

@@ -233,6 +233,60 @@ class EmailServiceEndToEndIntegrationTest {
     }
 
     @Test
+    void appliesSecurityHeadersAcrossSuccessfulAndRejectedResponses() {
+        ResponseEntity<Map<String, Object>> success = exchange(
+            "/api/email/health",
+            HttpMethod.GET,
+            null
+        );
+        ResponseEntity<Map<String, Object>> unauthorized = restTemplate.exchange(
+            "/api/email/health",
+            HttpMethod.GET,
+            null,
+            new ParameterizedTypeReference<>() {
+            }
+        );
+        ResponseEntity<Map<String, Object>> notFound = exchange(
+            "/api/email/not-found",
+            HttpMethod.GET,
+            null
+        );
+        ResponseEntity<Map<String, Object>> invalidRequest = exchange(
+            "/api/email/logs?size=101",
+            HttpMethod.GET,
+            null
+        );
+        ResponseEntity<Map<String, Object>> internalFailure;
+        mailProperties.setEnabled(false);
+        try {
+            internalFailure = exchange(
+                "/api/email/simple",
+                HttpMethod.POST,
+                Map.of(
+                    "to", "disabled@example.test",
+                    "subject", "Disabled service",
+                    "htmlContent", "<p>must not be queued</p>"
+                )
+            );
+        } finally {
+            mailProperties.setEnabled(true);
+        }
+
+        assertThat(success.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(unauthorized.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(notFound.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(invalidRequest.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(internalFailure.getStatusCode())
+            .isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        assertSecurityResponseHeaders(success);
+        assertSecurityResponseHeaders(unauthorized);
+        assertSecurityResponseHeaders(notFound);
+        assertSecurityResponseHeaders(invalidRequest);
+        assertSecurityResponseHeaders(internalFailure);
+        assertThat(emailQueueRepository.count()).isZero();
+    }
+
+    @Test
     void sendsRequiredTemplatesFromHttpThroughQueueAndSmtp() throws Exception {
         long verificationQueueId = enqueueTemplate(
             "verify@example.test",
@@ -1069,6 +1123,15 @@ class EmailServiceEndToEndIntegrationTest {
             new ParameterizedTypeReference<>() {
             }
         );
+    }
+
+    private void assertSecurityResponseHeaders(ResponseEntity<?> response) {
+        assertThat(response.getHeaders().getFirst(HttpHeaders.CACHE_CONTROL))
+            .isEqualTo("no-store");
+        assertThat(response.getHeaders().getFirst(HttpHeaders.PRAGMA))
+            .isEqualTo("no-cache");
+        assertThat(response.getHeaders().getFirst("X-Content-Type-Options"))
+            .isEqualTo("nosniff");
     }
 
     private void assertCompletedWithSuccessfulEventLog(long queueId) {

@@ -12,7 +12,6 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
-import org.springframework.web.util.UrlPathHelper;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -20,7 +19,7 @@ import java.security.MessageDigest;
 import java.util.Map;
 
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
+@Order(Ordered.HIGHEST_PRECEDENCE + 1)
 @RequiredArgsConstructor
 public class EmailApiKeyFilter extends OncePerRequestFilter {
 
@@ -29,12 +28,8 @@ public class EmailApiKeyFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        String servletPath = UrlPathHelper.defaultInstance.removeSemicolonContent(
-            request.getServletPath()
-        );
-        boolean emailApi = "/api/email".equals(servletPath)
-            || servletPath.startsWith("/api/email/");
-        return !emailApi || !StringUtils.hasText(securityProperties.getApiKey());
+        return !EmailApiRequestMatcher.matches(request)
+            || !StringUtils.hasText(securityProperties.getApiKey());
     }
 
     @Override

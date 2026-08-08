@@ -40,6 +40,51 @@ class EmailServiceStubContractTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual({"status": "UP"}, body)
 
+    def test_responses_disable_cache_and_content_sniffing(self) -> None:
+        status, body, headers = self.request_with_headers(
+            "GET",
+            "/api/email/health",
+            api_key=self.api_key,
+        )
+        self.assertEqual(200, status)
+        self.assertEqual({"status": "UP"}, body)
+        self.assertEqual("no-store", headers["cache-control"])
+        self.assertEqual("no-cache", headers["pragma"])
+        self.assertEqual("nosniff", headers["x-content-type-options"])
+
+        status, body, headers = self.request_with_headers(
+            "GET",
+            "/api/email/not-found",
+            api_key=self.api_key,
+        )
+        self.assertEqual(404, status)
+        self.assertEqual("NOT_FOUND", body["error"])
+        self.assertEqual("no-store", headers["cache-control"])
+        self.assertEqual("no-cache", headers["pragma"])
+        self.assertEqual("nosniff", headers["x-content-type-options"])
+
+        status, body, headers = self.request_with_headers(
+            "POST",
+            "/api/email/template",
+            {},
+            self.api_key,
+        )
+        self.assertEqual(400, status)
+        self.assertEqual("INVALID_EMAIL", body["error"])
+        self.assertEqual("no-store", headers["cache-control"])
+        self.assertEqual("no-cache", headers["pragma"])
+        self.assertEqual("nosniff", headers["x-content-type-options"])
+
+        status, body, headers = self.request_with_headers(
+            "GET",
+            "/api/email/health",
+        )
+        self.assertEqual(401, status)
+        self.assertEqual("UNAUTHORIZED", body["error"])
+        self.assertEqual("no-store", headers["cache-control"])
+        self.assertEqual("no-cache", headers["pragma"])
+        self.assertEqual("nosniff", headers["x-content-type-options"])
+
     def test_template_request_returns_an_opaque_queue_id(self) -> None:
         status, body = self.request(
             "POST",
@@ -135,6 +180,21 @@ class EmailServiceStubContractTest(unittest.TestCase):
         payload: dict[str, object] | None = None,
         api_key: str | None = None,
     ) -> tuple[int, dict[str, object]]:
+        status, response_body, _ = self.request_with_headers(
+            method,
+            path,
+            payload,
+            api_key,
+        )
+        return status, response_body
+
+    def request_with_headers(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, object] | None = None,
+        api_key: str | None = None,
+    ) -> tuple[int, dict[str, object], dict[str, str]]:
         connection = HTTPConnection(self.host, self.port, timeout=5)
         headers: dict[str, str] = {}
         body = None
@@ -148,7 +208,11 @@ class EmailServiceStubContractTest(unittest.TestCase):
             connection.request(method, path, body=body, headers=headers)
             response = connection.getresponse()
             response_body = json.loads(response.read())
-            return response.status, response_body
+            response_headers = {
+                key.lower(): value
+                for key, value in response.getheaders()
+            }
+            return response.status, response_body, response_headers
         finally:
             connection.close()
 

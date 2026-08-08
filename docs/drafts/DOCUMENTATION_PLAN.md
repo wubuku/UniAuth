@@ -85,6 +85,7 @@
 | P1 | 说明持久化队列到最终 SMTP 投递的二次校验信任边界 | 已完成 |
 | P1 | 说明 event/recovery 限流 reservation 的 claim 异常释放和投递尝试消费语义 | 已完成 |
 | P1 | 说明限流 reservation 的窗口 generation ownership、幂等释放和 E2E 证据 | 已完成 |
+| P1 | 说明参考服务敏感邮件 API 的 no-store/no-cache/nosniff 响应基线和验证证据 | 本轮更新 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -116,7 +117,7 @@
 - Java 已有 PostgreSQL/Testcontainers 集成测试，当前完整门禁为 120 tests。
 - HTTP Shell E2E 当前 15/15，Flyway baseline guard 13/13，
   Mock Playwright 20 tests，Python 资源服务器 14 tests，邮件 REST stub contract
-  6 tests。
+  7 tests。
 - 前端严格 `npm ci`、high/critical 依赖审计、lint、typecheck 和生产构建通过；
   `scripts/verify.sh` 与 GitHub Actions 使用统一验证入口。
 - npm audit 仍有 2 个 React Router moderate advisories；当前客户端路由 pathname
@@ -130,8 +131,11 @@
   server identity verification、host/port 形状和默认门禁不执行真实 TLS 握手的
   边界也已说明；最终投递对持久化 recipient/subject/HTML/header token 的二次校验
   以及 claim 异常不泄漏限流 reservation、旧窗口迟到释放不影响新窗口额度的语义
-  也已纳入 live 配置和验证文档。邮件 Shell HTTP/Flyway guard 已分别扩展为 9/9，
-  覆盖 queue detail 披露边界和 checksum drift 失败关闭、原样保持与显式恢复。
+  也已纳入 live 配置和验证文档。参考服务邮件 API 的 no-store/no-cache/nosniff
+  响应基线也已纳入组件指南、真实 Spring HTTP E2E、Shell HTTP/Flyway guard 和
+  Python stub contract。邮件 Shell HTTP/Flyway guard 已分别扩展为 10/10，覆盖
+  queue detail 披露边界、响应安全 header 和 checksum drift 失败关闭、原样保持与
+  显式恢复。
 - 邮箱验证码发送值已与持久化值一致；同步拒绝/限流/异常不保存 challenge，动态
   有效期/cooldown、按 challenge id 的正确验证码原子消费、禁止 controller 二次
   email/purpose 消费和错误重试 CAS 已有 PostgreSQL、HTTP、Playwright 与 Python

@@ -44,7 +44,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-for command_name in curl docker grep java jq mvn pg_isready psql; do
+for command_name in awk curl docker grep java jq mvn pg_isready psql; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         fail "required command is unavailable: $command_name"
     fi
@@ -85,6 +85,55 @@ request_status() {
         -X "$method" \
         "$@" \
         "http://127.0.0.1:${SERVER_PORT}${path}"
+}
+
+header_value() {
+    local headers_file="$1"
+    local header_name="$2"
+    awk -v wanted="$header_name" '
+        {
+            line = $0
+            sub(/\r$/, "", line)
+            separator = index(line, ":")
+            if (separator == 0) {
+                next
+            }
+            name = substr(line, 1, separator - 1)
+            if (tolower(name) == tolower(wanted)) {
+                value = substr(line, separator + 1)
+                sub(/^[[:space:]]+/, "", value)
+                print value
+                exit
+            }
+        }
+    ' "$headers_file"
+}
+
+assert_security_headers() {
+    local expected_status="$1"
+    local method="$2"
+    local path="$3"
+    local headers_file
+    local status
+    shift 3
+    headers_file="$(mktemp "$TEMP_DIR/response-headers.XXXXXX")"
+    status="$(
+        curl -sS \
+            -D "$headers_file" \
+            -o /dev/null \
+            -w '%{http_code}' \
+            -X "$method" \
+            "$@" \
+            "http://127.0.0.1:${SERVER_PORT}${path}"
+    )"
+    [ "$status" = "$expected_status" ] \
+        || fail "$path returned $status instead of $expected_status"
+    [ "$(header_value "$headers_file" "Cache-Control")" = "no-store" ] \
+        || fail "$path did not return Cache-Control: no-store"
+    [ "$(header_value "$headers_file" "Pragma")" = "no-cache" ] \
+        || fail "$path did not return Pragma: no-cache"
+    [ "$(header_value "$headers_file" "X-Content-Type-Options")" = "nosniff" ] \
+        || fail "$path did not return X-Content-Type-Options: nosniff"
 }
 
 start_application() {
@@ -183,11 +232,11 @@ fi
 start_application
 wait_for_application
 
-echo "1/9 Verify Flyway-owned startup"
+echo "1/10 Verify Flyway-owned startup"
 [ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "2" ] \
     || fail "Flyway did not record V1 and V2"
 
-echo "2/9 Verify API-key enforcement"
+echo "2/10 Verify API-key enforcement"
 [ "$(request_status GET /api/email/health)" = "401" ] \
     || fail "health endpoint accepted a missing API key"
 [ "$(request_status GET /api/email/health -H "X-Email-Service-Key: wrong")" = "401" ] \
@@ -198,7 +247,18 @@ echo "2/9 Verify API-key enforcement"
     -H "X-Email-Service-Key: $API_KEY")" = "200" ] \
     || fail "matrix-parameter request did not reach the protected health endpoint"
 
-echo "3/9 Verify health and template discovery contracts"
+echo "3/10 Verify security headers across success and rejection paths"
+assert_security_headers 200 GET /api/email/health \
+    -H "X-Email-Service-Key: $API_KEY"
+assert_security_headers 401 GET /api/email/health
+assert_security_headers 404 GET /api/email/not-found \
+    -H "X-Email-Service-Key: $API_KEY"
+assert_security_headers 400 GET '/api/email/logs?size=101' \
+    -H "X-Email-Service-Key: $API_KEY"
+assert_security_headers 200 GET '/api;version=1/email;tenant=test/health' \
+    -H "X-Email-Service-Key: $API_KEY"
+
+echo "4/10 Verify health and template discovery contracts"
 health="$(
     curl -fsS \
         -H "X-Email-Service-Key: $API_KEY" \
@@ -215,7 +275,7 @@ jq -e 'index("email/email-verify") != null and index("email/password-reset") != 
     <<<"$templates" >/dev/null \
     || fail "required UniAuth templates were not advertised"
 
-echo "4/9 Enqueue the UniAuth verification template over real HTTP"
+echo "5/10 Enqueue the UniAuth verification template over real HTTP"
 payload="$(
     jq -cn '{
       to: "shell@example.test",
@@ -242,7 +302,7 @@ response="$(
     || fail "template endpoint did not return success=true"
 queue_id="$(jq -er '.queueId' <<<"$response")"
 
-echo "5/9 Verify rendered content and configured queue policy in PostgreSQL"
+echo "6/10 Verify rendered content and configured queue policy in PostgreSQL"
 [ "$(db_value "SELECT status FROM email_queue WHERE id = $queue_id;")" = "PENDING" ] \
     || fail "event-disabled request was not left pending"
 [ "$(db_value "SELECT max_retries FROM email_queue WHERE id = $queue_id;")" = "4" ] \
@@ -252,7 +312,7 @@ echo "5/9 Verify rendered content and configured queue policy in PostgreSQL"
 [ "$(db_value "SELECT count(*) FROM email_logs;")" = "0" ] \
     || fail "HTTP E2E unexpectedly attempted SMTP delivery"
 
-echo "6/9 Verify queue detail omits rendered content and metadata"
+echo "7/10 Verify queue detail omits rendered content and metadata"
 queue_detail="$(
     curl -fsS \
         -H "X-Email-Service-Key: $API_KEY" \
@@ -270,7 +330,7 @@ if grep -Fq "246810" <<<"$queue_detail"; then
     fail "queue detail exposed the verification code"
 fi
 
-echo "7/9 Reject malformed and unsupported requests without persistence"
+echo "8/10 Reject malformed and unsupported requests without persistence"
 before_count="$(db_value "SELECT count(*) FROM email_queue;")"
 bad_subject="$(
     jq -cn '{
@@ -333,12 +393,12 @@ unknown_template="$(
 [ "$(db_value "SELECT count(*) FROM email_queue;")" = "$before_count" ] \
     || fail "rejected requests created queue rows"
 
-echo "8/9 Enforce bounded log pagination"
+echo "9/10 Enforce bounded log pagination"
 [ "$(request_status GET '/api/email/logs?page=1&size=101' \
     -H "X-Email-Service-Key: $API_KEY")" = "400" ] \
     || fail "oversized log page was accepted"
 
-echo "9/9 Restart without replaying migrations or losing the queue"
+echo "10/10 Restart without replaying migrations or losing the queue"
 stop_application
 start_application
 wait_for_application

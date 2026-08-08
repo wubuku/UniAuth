@@ -108,6 +108,12 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 加密不可静默降级、证书/主机身份必须校验、凭据不得明文跨越不可信网络。仓库参考
 实现把这些要求具体化为可执行的 Java/Shell runtime guard。
 
+外部邮件 REST 服务还必须把 `/api/email` 及其子路径视为敏感运维 API：成功、鉴权
+失败、参数拒绝和路由错误响应都应设置 `Cache-Control: no-store`、
+`Pragma: no-cache` 与 `X-Content-Type-Options: nosniff`。UniAuth 客户端不会读取
+这些 header 来判定发送是否成功，但部署不能依赖客户端行为来允许队列、日志或邮件
+相关响应进入缓存。
+
 仓库参考实现默认监听 `127.0.0.1:8095`，并有自己的配置和数据库边界：
 
 - 必须使用独立的 `EMAIL_POSTGRES_*` 数据库，不能复用 UniAuth 或共享数据库。

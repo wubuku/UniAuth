@@ -152,7 +152,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、PostgreSQL、受控邮件 REST stub、重启、JWT、Web3、email、登录方式 |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 13/13；exact schema、V2/V4 初始及 apply 前数据预检、非法 email verification state、post-baseline 失败恢复与其他拒绝/清理路径 |
 | Flyway integration | 通过 | fresh V1→V4、existing baseline V1→V4、V3→V4、Hibernate validate、Session、checksum/failure recovery |
-| 邮件参考服务 | 通过 | 124 tests；20 个 PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime guard tests；Shell runtime 27/27、HTTP 9/9、Flyway guard 9/9 |
+| 邮件参考服务 | 通过 | 127 tests；21 个 PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime guard tests；Shell runtime 27/27、HTTP 10/10、Flyway guard 10/10 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
@@ -161,7 +161,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `npm run build` | 通过 | Vite 生产构建成功，保留 chunk warning |
 | `npm run test:e2e` | 通过 | 20/20 Chrome-channel Mock Playwright tests |
 | Python | 通过 | 14/14 离线 RSA/JWKS/Flask tests |
-| 邮件 REST stub contract | 通过 | 6/6；API key、health、接受、拒绝、限流、坏请求和 chunked client 形状 |
+| 邮件 REST stub contract | 通过 | 7/7；API key、health、接受、拒绝、限流、坏请求、chunked client 形状和安全响应 header |
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 | Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
 
@@ -230,6 +230,9 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
   收件人、验证码或 HTML。
 - 独立 Shell 进程门禁验证无 SMTP 副作用的 HTTP/数据库契约、启动保护和 Flyway
   dirty-schema/V2 坏数据失败关闭。
+- 参考服务邮件 API 的真实 HTTP 响应在成功、API key 拒绝、参数拒绝、MVC 路由错误
+  和内部失败下均设置 `Cache-Control: no-store`、`Pragma: no-cache` 和
+  `X-Content-Type-Options: nosniff`；Shell 和 Python stub contract 均有对应断言。
 - 独立 Flyway 集成测试验证 checksum 失配会在 migrate 阶段失败关闭，并保留已有
   migration history 和业务数据。
 - 统一入口在进程专属临时源码快照中执行 Maven 和 Shell E2E，已通过两套完整门禁

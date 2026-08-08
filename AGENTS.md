@@ -310,10 +310,14 @@ PYTHON_BIN=python3 scripts/verify.sh
   HTTP 9/9、Flyway guard 9/9。HTTP E2E 断言 queue detail 不返回 HTML/metadata，
   且当前验证码夹具值不出现在响应中；Flyway guard 断言 checksum drift 失败关闭、
   漂移 checksum 保持、数据不变且可显式恢复。
+- 2026-08-08 敏感邮件 API 响应加固增量：邮件参考服务 127 tests，21 个
+  PostgreSQL/GreenMail ApplicationContext E2E；runtime 27/27、HTTP 10/10、Flyway
+  guard 10/10。成功、401、400、404、500 和 matrix 参数路径均固定返回
+  no-store/no-cache/nosniff 安全 header，不改变 JSON body 或状态码语义。
 - Shell HTTP E2E：15/15。
 - Flyway baseline guard：13/13。
 - Mock Playwright：20 tests。
-- Python 资源服务器：14 tests；邮件 REST stub contract：6 tests。
+- Python 资源服务器：14 tests；邮件 REST stub contract：7 tests。
 - 前端 ESLint、TypeScript 和生产构建通过。
 - 每个未提交批次仍必须在完整门禁后重新执行连续三轮无修改检查；无问题轮次只记录在
   当次工作报告，不为留痕修改仓库文件。
@@ -366,6 +370,9 @@ PYTHON_BIN=python3 scripts/verify.sh
   Shell runtime 27/27、HTTP/Flyway 各 9/9；当前组合工作树的根统一门禁也已通过：
   Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19/19、Python 14/14，
   前端 lint/type/build、文档链接和 patch hygiene 通过。
+- 敏感邮件 API 响应加固的邮件组件门禁已通过：127 tests、21 个
+  PostgreSQL/GreenMail ApplicationContext E2E、Java runtime guard 24 tests、
+  Shell runtime 27/27、HTTP/Flyway 各 10/10；Python 邮件 stub contract 7/7。
 - root Flyway baseline guard 临时配置并发隔离修复已通过两套并行 `12/12` 定向
   验证，并随当前组合工作树通过完整根统一门禁。
 

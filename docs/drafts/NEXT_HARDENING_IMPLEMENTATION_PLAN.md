@@ -32,11 +32,11 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
 | Java | `mvn clean compile test-compile` 和 120 tests 已通过 |
-| 邮件参考服务 | 124 tests；20 个完整 ApplicationContext E2E；Java runtime guard 24 tests；Shell runtime 27/27、HTTP 9/9、Flyway guard 9/9 |
+| 邮件参考服务 | 127 tests；21 个完整 ApplicationContext E2E；Java runtime guard 24 tests；Shell runtime 27/27、HTTP 10/10、Flyway guard 10/10 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 15/15 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 13/13 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、20 个 Mock Playwright tests 已通过 |
-| Python | 14 个离线 JWT/JWKS/Flask tests 和 6 个邮件 REST stub contract tests 已通过 |
+| Python | 14 个离线 JWT/JWKS/Flask tests 和 7 个邮件 REST stub contract tests 已通过 |
 | 统一入口 | `scripts/verify.sh` 本地通过；CI 使用同一入口 |
 | 既有库演练 | `blacksheep_dev` 只读 rehearsal 已通过 |
 | Schema fingerprint | `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
@@ -860,6 +860,41 @@ Batch C 通过后执行。
 - 保留边界：外部已接受后本地 challenge 事务失败、异步 delivery 失败撤销、
   transactional outbox、单一 pending challenge、canonical email 和
   forgot-password 防枚举协议仍归后续 Batch D。
+
+### 邮件参考服务敏感响应安全切片
+
+#### 2026-08-08 固定实施范围
+
+本切片只加固 `reference/email-service/` 的既有 `/api/email` HTTP 响应，不改变模板、
+JSON body、状态码、队列、投递、retry、Flyway schema 或 UniAuth challenge 语义。
+
+纳入范围：
+
+1. 所有 `/api/email` 及其子路径响应统一设置 `Cache-Control: no-store`、
+   `Pragma: no-cache` 和 `X-Content-Type-Options: nosniff`。
+2. 响应策略必须覆盖成功、API key 拒绝、参数校验失败和 MVC 路由错误，并继续支持
+   context path 与 matrix parameter 路径。
+3. API key 与响应过滤器复用一个路径匹配器，响应过滤器先执行，避免 401 提前返回
+   绕过安全 header。
+4. PostgreSQL/ApplicationContext 真实 HTTP E2E、Shell HTTP 进程 E2E、Flyway 成功
+   启动 guard 和 Python 邮件 stub contract 固定该基线。
+5. Playwright 不新增与浏览器无关的直接邮件服务耦合测试，但完整根门禁仍运行现有
+   Mock Playwright、ESLint、TypeScript 和构建回归。
+
+明确不纳入：
+
+- 新增 Spring Security、CORS、CSP、HSTS 或外部反向代理配置。
+- 修改 UniAuth 邮件客户端的成功判定或要求其解析这些响应 header。
+- 修改 migration、数据库数据、SMTP、模板、队列状态机或投递幂等语义。
+
+#### 2026-08-08 实施结果
+
+- 独立响应过滤器先于 API key 过滤器执行，二者复用 context path/matrix-safe 路径
+  matcher；合法业务 body、状态码和持久化行为不变。
+- 邮件组件独立门禁：Maven 127 tests，其中 21 个 PostgreSQL/GreenMail
+  ApplicationContext E2E；Shell runtime 27/27、HTTP 10/10、Flyway guard 10/10。
+- Python 邮件 stub contract 7/7；完整根门禁继续验证 Java 120、HTTP 15/15、
+  Flyway 13/13、Mock Playwright 20/20、Python 资源服务器 14/14 和前端质量门槛。
 
 #### Email/password
 

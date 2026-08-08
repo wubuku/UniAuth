@@ -9,6 +9,7 @@ SOURCE_PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uniauth-verification.XXXXXX")"
 PROJECT_DIR="$TEMP_DIR/project"
 SOURCE_FILE_LIST="$TEMP_DIR/source-files"
+ROOT_SUREFIRE_REPORTS_SNAPSHOT="$TEMP_DIR/root-surefire-reports"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 VERIFICATION_ARTIFACTS_DIR="${VERIFICATION_ARTIFACTS_DIR:-}"
 VERIFICATION_ARTIFACTS_ENABLED=false
@@ -57,8 +58,18 @@ preserve_verification_artifacts() {
 
     artifacts_run_dir="$VERIFICATION_ARTIFACTS_DIR/$RUN_ID"
     mkdir -p "$artifacts_run_dir" || return 1
+    if [ -d "$ROOT_SUREFIRE_REPORTS_SNAPSHOT" ]; then
+        destination_dir="$artifacts_run_dir/target/surefire-reports"
+        mkdir -p "$destination_dir" || return 1
+        rsync -a "$ROOT_SUREFIRE_REPORTS_SNAPSHOT/" "$destination_dir/" \
+            || return 1
+    elif [ -d "$PROJECT_DIR/target/surefire-reports" ]; then
+        destination_dir="$artifacts_run_dir/target/surefire-reports"
+        mkdir -p "$destination_dir" || return 1
+        rsync -a "$PROJECT_DIR/target/surefire-reports/" "$destination_dir/" \
+            || return 1
+    fi
     for relative_path in \
-            target/surefire-reports \
             frontend/test-results \
             frontend/playwright-report \
             frontend/blob-report; do
@@ -77,6 +88,27 @@ preserve_verification_artifacts() {
         printf 'source_fingerprint=%s\n' "${SOURCE_FINGERPRINT:-unavailable}"
     } >"$artifacts_run_dir/verification-status.txt" || return 1
     echo "Verification artifacts: $artifacts_run_dir"
+}
+
+capture_root_surefire_reports() {
+    local report_file
+
+    report_file="$(
+        find "$PROJECT_DIR/target/surefire-reports" \
+            -name 'TEST-*.xml' \
+            -type f \
+            -print \
+            -quit
+    )"
+    if [ -z "$report_file" ]; then
+        echo "ERROR: root Surefire reports are missing after Maven tests" >&2
+        return 1
+    fi
+    rm -rf "$ROOT_SUREFIRE_REPORTS_SNAPSHOT"
+    mkdir -p "$ROOT_SUREFIRE_REPORTS_SNAPSHOT"
+    rsync -a \
+        "$PROJECT_DIR/target/surefire-reports/" \
+        "$ROOT_SUREFIRE_REPORTS_SNAPSHOT/"
 }
 
 cleanup() {
@@ -184,6 +216,7 @@ mvn clean compile test-compile
 
 echo "Verification 5/11: Java integration tests"
 mvn test
+capture_root_surefire_reports
 
 echo "Verification 6/11: reference email-service compilation and integration tests"
 EMAIL_SERVICE_ARTIFACTS_DIR=""

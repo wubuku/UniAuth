@@ -70,7 +70,8 @@ UniAuth 主应用内的 `RestTemplateEmailServiceImpl` 只是 HTTP 客户端，�
 SMTP 或邮件供应商。外部服务必须提供 health、模板邮件端点、模板和约定的 JSON 响应；
 仓库提供一个独立的[邮件服务参考实现](../reference/email-service/README.md)，其 schema
 由独立 Flyway V1/V2 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP
-E2E 验证。客户端使用专用 `RestTemplate`，统一应用 connect/read timeout，并可向
+E2E 验证。参考服务的所有邮件 API 响应还统一禁止缓存和 MIME 嗅探。客户端使用专用
+`RestTemplate`，统一应用 connect/read timeout，并可向
 所有邮件服务请求发送 `X-Email-Service-Key`；类型化配置在 ApplicationContext
 启动时拒绝无 host、非 HTTP/HTTPS、含 userinfo/query/fragment 的 URL 和越界
 timeout，也拒绝超过 1024 字符或包含 CR/LF 的 API key。详细契约见

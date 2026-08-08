@@ -29,8 +29,9 @@
 - Hibernate 只执行 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 邮箱注册验证和密码重置依赖独立邮件服务；UniAuth 主应用只提供 HTTP 客户端适配器，
   仓库另有不纳入根构建的参考实现。依赖契约包括端点、模板、响应语义、可选 API key
-  和客户端 URL/超时约束；参考实现还对生产 SMTP 加密模式和 server identity
-  verification 做失败关闭保护。外部服务同步拒绝、限流或不可用时不保存 challenge；
+  和客户端 URL/超时约束；参考实现还对生产 SMTP 加密模式、server identity
+  verification 和邮件 API 响应 no-store/nosniff 做失败关闭保护。外部服务同步拒绝、
+  限流或不可用时不保存 challenge；
   外部已接受后本地事务失败和异步 delivery 失败仍需可靠状态机处理。普通邮箱加密码
   登录不需要每次发信。
 - 已建立 PostgreSQL Java 集成测试、真实 HTTP Shell E2E、Mock Playwright 和
