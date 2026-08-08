@@ -2,13 +2,20 @@ package org.dddml.email.repository;
 
 import org.dddml.email.entity.EmailLog;
 import org.dddml.email.entity.EmailQueue;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -17,12 +24,39 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 
 @DataJpaTest
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {
-    "spring.datasource.url=jdbc:h2:mem:testdb",
-    "spring.jpa.hibernate.ddl-auto=create-drop",
+    "spring.flyway.enabled=true",
+    "spring.flyway.fail-on-missing-locations=true",
+    "spring.flyway.locations=classpath:db/migration/postgresql",
+    "spring.flyway.table=email_service_flyway_schema_history",
+    "spring.flyway.default-schema=public",
+    "spring.flyway.schemas=public",
+    "spring.flyway.baseline-on-migrate=false",
+    "spring.flyway.clean-disabled=true",
+    "spring.flyway.validate-migration-naming=true",
+    "spring.flyway.validate-on-migrate=true",
+    "spring.flyway.out-of-order=false",
+    "spring.sql.init.mode=never",
+    "spring.jpa.hibernate.ddl-auto=validate",
     "spring.jpa.show-sql=false"
 })
+@Testcontainers
 class EmailQueueRepositoryTest {
+
+    @Container
+    static final PostgreSQLContainer<?> POSTGRES =
+        new PostgreSQLContainer<>("postgres:16")
+            .withDatabaseName("email_service_queue_repository_test")
+            .withUsername("email_queue_test")
+            .withPassword("email_queue_test");
+
+    @DynamicPropertySource
+    static void configurePostgres(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", POSTGRES::getUsername);
+        registry.add("spring.datasource.password", POSTGRES::getPassword);
+    }
 
     @Autowired
     private TestEntityManager entityManager;
@@ -218,6 +252,24 @@ class EmailQueueRepositoryTest {
                 pendingRetry.getId(),
                 now.plusMinutes(6)
             )
+        );
+    }
+
+    @Test
+    void postgresSchemaRejectsRetryCountsAboveTheConfiguredMaximum() {
+        EmailQueue invalidQueue = EmailQueue.builder()
+                .recipient("invalid@example.com")
+                .subject("Invalid retry state")
+                .htmlContent("<p>Invalid retry state</p>")
+                .status("PENDING")
+                .priority(5)
+                .retryCount(4)
+                .maxRetries(3)
+                .build();
+
+        assertThrows(
+            ConstraintViolationException.class,
+            () -> entityManager.persistAndFlush(invalidQueue)
         );
     }
 }

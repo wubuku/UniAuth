@@ -60,7 +60,7 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
   loopback GreenMail 等隔离夹具；Shell 与 Spring ApplicationContext 都执行保护。
 - 参考邮件服务的 `SMTP_HOST` 必须是无 URI 语法、空白或控制字符的 host/IP token；
   `SMTP_PORT` 必须是 `1..65535`。Shell 和 Java guard 校验同一有效 endpoint，
-  H2/PostgreSQL ApplicationContext 断言配置进入真实 `JavaMailSender`。
+  PostgreSQL ApplicationContext 断言配置进入真实 `JavaMailSender`。
 - React 生产构建直接写入 `src/main/resources/static/`，该目录是生成物并被 gitignore。
 - OAuth2 callback 和 `app.frontend.url` 当前包含部署域名硬编码；本地 OAuth2 流程需要显式覆盖配置。
 
@@ -342,6 +342,10 @@ PYTHON_BIN=python3 scripts/verify.sh
   guard、真实 ApplicationContext 与 Flyway baseline guard 均拒绝将其覆盖为
   `false`。邮件服务完整门禁为 Maven 131/131、Shell runtime 39/39、HTTP 11/11、
   Flyway guard 14/14。
+- 2026-08-08 邮件参考服务 PostgreSQL repository fixture 加固增量：移除 H2 测试
+  依赖；两个 JPA repository 测试使用 disposable PostgreSQL + Flyway +
+  Hibernate `validate`，直接覆盖 retry bound 和 queue foreign key 约束。邮件服务
+  完整门禁为 Maven 133/133、Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14。
 - Shell HTTP E2E：15/15；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
 - Flyway baseline guard：13/13。
 - Mock Playwright：21 tests。

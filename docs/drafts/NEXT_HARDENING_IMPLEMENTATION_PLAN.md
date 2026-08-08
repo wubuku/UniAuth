@@ -35,7 +35,7 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
 | Java | `mvn clean compile test-compile` 和 131 tests 已通过 |
-| 邮件参考服务 | 131 tests；22 个完整 ApplicationContext E2E；Java runtime guard 26 tests；Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14 |
+| 邮件参考服务 | 133 tests；22 个完整 ApplicationContext E2E；2 个 PostgreSQL repository constraint tests；Java runtime guard 26 tests；Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 15/15 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 13/13 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、21 个 Mock Playwright tests 已通过 |
@@ -636,7 +636,7 @@ Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19 和 Python 14。
 2. `SMTP_PORT` 只允许 `1..65535` 的十进制整数。
 3. Java/Shell 双重 runtime guard 使用一致错误语义，直接 JAR 和受保护 Shell 入口
    都在投递前拒绝配置错误。
-4. H2 和 PostgreSQL/GreenMail ApplicationContext 断言有效 host/port 进入真实
+4. PostgreSQL/GreenMail ApplicationContext 断言有效 host/port 进入真实
    `JavaMailSender` Bean。
 5. 扩充 Java guard、Shell runtime guard、组件统一门禁和 live 运维文档。
 
@@ -1078,6 +1078,16 @@ runtime `27/27`、HTTP `10/10`、Flyway guard `11/11` 均通过。完整根统�
 - E2E 证明 fresh migration、应用启动、重启和 Flyway history 均保持唯一 schema
   owner；危险外部覆盖在 migration 前失败关闭。
 - 根项目完整统一门禁、连续三轮无修改检查和提交前工作区审计仍是交付门槛。
+
+#### 2026-08-08 PostgreSQL repository fixture 加固结果
+
+- 移除邮件参考服务的 H2 测试依赖；两个 JPA repository 测试统一使用 disposable
+  PostgreSQL、Flyway V1/V2 和 Hibernate `validate`。
+- 真实 PostgreSQL 约束断言覆盖 retry bound check constraint 与
+  `email_logs.queue_id` foreign key；Flyway fixture 同步固定 migration discovery/naming
+  fail-closed 配置。
+- 邮件组件 Maven `133/133`、Shell runtime `39/39`、HTTP/PostgreSQL E2E `11/11`、
+  Flyway baseline guard `14/14` 通过。
 
 #### 2026-08-08 Web3/SIWE challenge 绑定与 nonce 原子消费切片
 

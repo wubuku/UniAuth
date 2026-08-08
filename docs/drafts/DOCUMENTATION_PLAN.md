@@ -90,6 +90,7 @@
 | P1 | 说明根 HTTP E2E 使用真实参考邮件服务完成正常跨进程闭环，并仅用 stub 覆盖 503/429 失败映射 | 已完成 |
 | P1 | 说明参考服务 Flyway schema-owner 配置不可被外部覆盖，并记录 Java/Shell/ApplicationContext/Flyway guard 证据 | 已完成 |
 | P1 | 说明参考服务缺失 migration location 与非法 migration 命名必须 fail closed，并记录覆盖拒绝证据 | 已完成 |
+| P1 | 说明参考服务 JPA repository 测试必须使用 PostgreSQL + Flyway + Hibernate validate，并记录真实约束断言 | 已完成 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -141,10 +142,11 @@
   响应基线也已纳入组件指南、真实 Spring HTTP E2E、Shell HTTP/Flyway guard 和
   Python stub contract。配置 API key 时必须只接受恰好一个精确匹配的 header，
   不能以首值或末值选择消解重复同名凭据；该要求已由真实 Spring HTTP、Shell、
-  Flyway migrated app 和 Python stub contract 固定。邮件 Shell HTTP/Flyway guard
-  当前分别为 10/10 和 11/11，覆盖 queue detail 披露边界、响应安全 header、重复
-  鉴权 header，以及 checksum drift 失败关闭、原样保持与显式恢复。
-- 参考服务当前组合门禁为 Maven 131 tests、Java runtime guard 26/26、Shell
+  Flyway migrated app 和 Python stub contract 固定。相关早期增量的邮件 Shell
+  HTTP/Flyway guard 分别达到 10/10 和 11/11，覆盖 queue detail 披露边界、响应
+  安全 header、重复鉴权 header，以及 checksum drift 失败关闭、原样保持与显式
+  恢复；当前组合计数见下一条。
+- 参考服务当前组合门禁为 Maven 133 tests、Java runtime guard 26/26、Shell
   runtime 39/39、HTTP 11/11、Flyway guard 14/14；Flyway 唯一 schema owner、缺失
   location 和 migration 命名校验的
   固定配置和外部覆盖拒绝已由 Java/Shell/ApplicationContext/Flyway 层共同验证。

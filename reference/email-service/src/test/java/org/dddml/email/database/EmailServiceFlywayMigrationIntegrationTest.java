@@ -268,8 +268,10 @@ class EmailServiceFlywayMigrationIntegrationTest {
             .defaultSchema(schema)
             .table("email_service_flyway_schema_history")
             .locations("classpath:db/migration/postgresql")
+            .failOnMissingLocations(true)
             .baselineOnMigrate(false)
             .cleanDisabled(true)
+            .validateMigrationNaming(true)
             .validateOnMigrate(true)
             .outOfOrder(false);
         if (target != null) {

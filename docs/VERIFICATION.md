@@ -153,7 +153,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、独立 PostgreSQL、参考邮件服务跨进程模板入队、失败映射 stub、重启、JWT、Web3 字段篡改/并发 replay、email、登录方式 |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 13/13；exact schema、V2/V4 初始及 apply 前数据预检、V5 history/message 列、非法 email verification state、post-baseline 失败恢复与其他拒绝/清理路径 |
 | Flyway integration | 通过 | fresh V1→V5、existing baseline V1→V5、V3→V5、Hibernate validate、Session、checksum/failure recovery |
-| 邮件参考服务 | 通过 | 131 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、26 个 Java runtime guard tests；Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14；Flyway schema-owner 与 migration discovery/naming 覆盖拒绝矩阵通过 |
+| 邮件参考服务 | 通过 | 133 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、2 个 PostgreSQL repository constraint tests、26 个 Java runtime guard tests；Shell runtime 39/39、HTTP 11/11、Flyway guard 14/14；Flyway schema-owner 与 migration discovery/naming 覆盖拒绝矩阵通过 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
@@ -227,11 +227,14 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
   `X-Email-Service-Key`；重复正确值、正确/错误和错误/正确组合均返回 `401`，
   单个正确 header 的成功契约保持不变。
 - Java/Shell 双重 runtime guard 拒绝 STARTTLS 降级、STARTTLS 与 implicit SSL
-  同时启用、生产明文 SMTP 和关闭 server identity verification；H2 与 PostgreSQL
-  ApplicationContext 都验证该属性进入真实 `JavaMailSender` Bean。
+  同时启用、生产明文 SMTP 和关闭 server identity verification；PostgreSQL
+  ApplicationContext 验证该属性进入真实 `JavaMailSender` Bean。
 - Java/Shell 双重 runtime guard 拒绝带 URI 语法/空白的 SMTP host，以及非数字或
-  超出 `1..65535` 的 SMTP port；H2 与 PostgreSQL ApplicationContext 都验证实际
-  host/port 进入真实 `JavaMailSender` Bean。
+  超出 `1..65535` 的 SMTP port；PostgreSQL ApplicationContext 验证实际 host/port
+  进入真实 `JavaMailSender` Bean。
+- `EmailQueueRepositoryTest` 和 `EmailLogRepositoryTest` 使用 disposable PostgreSQL
+  + Flyway + Hibernate `validate`，直接验证 retry bound check constraint 和
+  `email_logs.queue_id` 外键拒绝 orphan row；repository 测试不再依赖 H2 `create-drop`。
 - PostgreSQL/GreenMail ApplicationContext 直接持久化绕过 HTTP 的异常队列行，
   验证 CR/LF subject、过大 HTML 和非法 `emailType` 在 SMTP 前被拒绝，同时保留
   现有失败日志和 retry 状态机。

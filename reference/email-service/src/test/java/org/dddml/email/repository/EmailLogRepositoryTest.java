@@ -1,11 +1,18 @@
 package org.dddml.email.repository;
 
 import org.dddml.email.entity.EmailLog;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -14,12 +21,39 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 
 @DataJpaTest
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {
-    "spring.datasource.url=jdbc:h2:mem:testdb",
-    "spring.jpa.hibernate.ddl-auto=create-drop",
+    "spring.flyway.enabled=true",
+    "spring.flyway.fail-on-missing-locations=true",
+    "spring.flyway.locations=classpath:db/migration/postgresql",
+    "spring.flyway.table=email_service_flyway_schema_history",
+    "spring.flyway.default-schema=public",
+    "spring.flyway.schemas=public",
+    "spring.flyway.baseline-on-migrate=false",
+    "spring.flyway.clean-disabled=true",
+    "spring.flyway.validate-migration-naming=true",
+    "spring.flyway.validate-on-migrate=true",
+    "spring.flyway.out-of-order=false",
+    "spring.sql.init.mode=never",
+    "spring.jpa.hibernate.ddl-auto=validate",
     "spring.jpa.show-sql=false"
 })
+@Testcontainers
 class EmailLogRepositoryTest {
+
+    @Container
+    static final PostgreSQLContainer<?> POSTGRES =
+        new PostgreSQLContainer<>("postgres:16")
+            .withDatabaseName("email_service_log_repository_test")
+            .withUsername("email_log_test")
+            .withPassword("email_log_test");
+
+    @DynamicPropertySource
+    static void configurePostgres(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", POSTGRES::getUsername);
+        registry.add("spring.datasource.password", POSTGRES::getPassword);
+    }
 
     @Autowired
     private TestEntityManager entityManager;
@@ -30,7 +64,6 @@ class EmailLogRepositoryTest {
     @Test
     void testSaveAndFind() {
         EmailLog log = EmailLog.builder()
-                .queueId(1L)
                 .recipient("test@example.com")
                 .subject("Test Subject")
                 .status("SUCCESS")
@@ -52,7 +85,6 @@ class EmailLogRepositoryTest {
     @Test
     void testFindByStatus() {
         EmailLog successLog = EmailLog.builder()
-                .queueId(1L)
                 .recipient("user1@example.com")
                 .subject("Success")
                 .status("SUCCESS")
@@ -60,7 +92,6 @@ class EmailLogRepositoryTest {
                 .build();
 
         EmailLog failedLog = EmailLog.builder()
-                .queueId(2L)
                 .recipient("user2@example.com")
                 .subject("Failed")
                 .status("FAILED")
@@ -79,7 +110,6 @@ class EmailLogRepositoryTest {
     @Test
     void testFindByRecipient() {
         EmailLog log1 = EmailLog.builder()
-                .queueId(1L)
                 .recipient("user@example.com")
                 .subject("Email 1")
                 .status("SUCCESS")
@@ -87,7 +117,6 @@ class EmailLogRepositoryTest {
                 .build();
 
         EmailLog log2 = EmailLog.builder()
-                .queueId(2L)
                 .recipient("user@example.com")
                 .subject("Email 2")
                 .status("SUCCESS")
@@ -95,7 +124,6 @@ class EmailLogRepositoryTest {
                 .build();
 
         EmailLog log3 = EmailLog.builder()
-                .queueId(3L)
                 .recipient("other@example.com")
                 .subject("Other")
                 .status("SUCCESS")
@@ -114,7 +142,6 @@ class EmailLogRepositoryTest {
     @Test
     void testCountByStatus() {
         EmailLog success1 = EmailLog.builder()
-                .queueId(1L)
                 .recipient("user1@example.com")
                 .subject("Success1")
                 .status("SUCCESS")
@@ -122,7 +149,6 @@ class EmailLogRepositoryTest {
                 .build();
 
         EmailLog success2 = EmailLog.builder()
-                .queueId(2L)
                 .recipient("user2@example.com")
                 .subject("Success2")
                 .status("SUCCESS")
@@ -130,7 +156,6 @@ class EmailLogRepositoryTest {
                 .build();
 
         EmailLog failed = EmailLog.builder()
-                .queueId(3L)
                 .recipient("user3@example.com")
                 .subject("Failed")
                 .status("FAILED")
@@ -152,7 +177,6 @@ class EmailLogRepositoryTest {
     @Test
     void testCountBySendMethodSince() {
         EmailLog eventLog = EmailLog.builder()
-                .queueId(1L)
                 .recipient("user1@example.com")
                 .subject("Event")
                 .status("SUCCESS")
@@ -162,7 +186,6 @@ class EmailLogRepositoryTest {
                 .build();
 
         EmailLog scheduledLog = EmailLog.builder()
-                .queueId(2L)
                 .recipient("user2@example.com")
                 .subject("Scheduled")
                 .status("SUCCESS")
@@ -184,7 +207,6 @@ class EmailLogRepositoryTest {
     @Test
     void testFindAll() {
         EmailLog log1 = EmailLog.builder()
-                .queueId(1L)
                 .recipient("user1@example.com")
                 .subject("Email 1")
                 .status("SUCCESS")
@@ -192,7 +214,6 @@ class EmailLogRepositoryTest {
                 .build();
 
         EmailLog log2 = EmailLog.builder()
-                .queueId(2L)
                 .recipient("user2@example.com")
                 .subject("Email 2")
                 .status("SUCCESS")
@@ -205,5 +226,20 @@ class EmailLogRepositoryTest {
 
         List<EmailLog> allLogs = emailLogRepository.findAll();
         assertEquals(2, allLogs.size());
+    }
+
+    @Test
+    void postgresSchemaRejectsOrphanQueueReferences() {
+        EmailLog orphanLog = EmailLog.builder()
+                .queueId(999L)
+                .recipient("orphan@example.com")
+                .subject("Orphan")
+                .status("FAILED")
+                .build();
+
+        assertThrows(
+            ConstraintViolationException.class,
+            () -> entityManager.persistAndFlush(orphanLog)
+        );
     }
 }

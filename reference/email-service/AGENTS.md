@@ -40,8 +40,10 @@
 - 所有 `/api/email` 及其子路径的响应都必须设置 `Cache-Control: no-store`、
   `Pragma: no-cache` 和 `X-Content-Type-Options: nosniff`，包括成功、鉴权失败、
   参数拒绝和路由错误；该策略不改变 JSON body 契约。
-- 默认测试可使用 H2/mock 做快速反馈，并使用 disposable PostgreSQL 和进程内
-  GreenMail 做完整 ApplicationContext E2E；不得连接真实 SMTP 或发送真实邮件。
+- 纯 service/config 单测可使用 mock 做快速反馈；所有 JPA repository 测试必须使用
+  disposable PostgreSQL、Flyway 和 Hibernate `validate`，组件级 E2E 继续使用完整
+  Spring ApplicationContext、真实 repository/service/event Bean 和进程内 GreenMail；
+  不得连接真实 SMTP 或发送真实邮件。
 - 真实 SMTP/供应商测试必须显式 opt in，并使用隔离测试账户。
 
 ## Contract

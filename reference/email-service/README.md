@@ -271,9 +271,11 @@ V1 创建 `email_queue`、`email_logs`、基础检查约束和查询索引。V2 
 
 ## 构建和测试
 
-快速测试保留 H2 和 mock；组件级 E2E 使用完整 Spring ApplicationContext、随机真实
-HTTP 端口、Testcontainers PostgreSQL、Flyway、真实 repository/service/event Bean、
-Thymeleaf 和进程内 GreenMail SMTP。它不读取 `.env`，也不会连接真实邮件供应商。
+纯 service/config 单测可使用 mock 做快速反馈；所有 JPA repository 测试和组件级 E2E
+使用 disposable Testcontainers PostgreSQL、Flyway 和 Hibernate `validate`。组件级
+E2E 还使用完整 Spring ApplicationContext、随机真实 HTTP 端口、真实
+repository/service/event Bean、Thymeleaf 和进程内 GreenMail SMTP。它不读取 `.env`，
+也不会连接真实邮件供应商。
 
 ```bash
 cd reference/email-service
@@ -306,8 +308,8 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - SMTP 连接失败、配置化重试、原子 claim 和 stuck `PROCESSING` 恢复。
 - Java/Shell runtime guard 的 STARTTLS、implicit SSL、生产加密和 server identity
   拒绝矩阵；真实 `JavaMailSender` Bean 保留身份校验属性。
-- Java/Shell runtime guard 的 SMTP host/port 拒绝矩阵；H2 和 PostgreSQL
-  ApplicationContext 都确认真实 `JavaMailSender` 使用预期 host/port。
+- Java/Shell runtime guard 的 SMTP host/port 拒绝矩阵；PostgreSQL
+  ApplicationContext 确认真实 `JavaMailSender` 使用预期 host/port。
 - 最终投递把 PostgreSQL 队列行作为不受信任输入，重新校验 recipient、subject、
   HTML 上限以及 `X-Email-Type`、`X-Send-Method` token；异常行不进入 SMTP。
 - 异常行的投递日志只保留 queue id、通用错误和安全占位字段；合法内部
@@ -324,8 +326,9 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 
 2026-08-08 当前组合基线：
 
-- 本组件 Maven：131 tests，0 failures/errors/skips；其中 22 个
-  PostgreSQL/GreenMail ApplicationContext E2E、26 个 Java runtime guard tests。
+- 本组件 Maven：133 tests，0 failures/errors/skips；其中 22 个
+  PostgreSQL/GreenMail ApplicationContext E2E、26 个 Java runtime guard tests，
+  以及 2 个 PostgreSQL repository constraint tests。
 - 本组件 Shell runtime 39/39、HTTP/PostgreSQL E2E 11/11、Flyway guard 14/14。
 - UniAuth 根项目：Java 131 tests、HTTP 15/15、Flyway 13/13、
   Mock Playwright 21/21、Python 资源服务器 16/16、邮件 REST stub contract 8/8；
@@ -357,6 +360,17 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   危险覆盖均失败关闭，且不创建 history/table。
 - 完整邮件服务门禁通过：Maven 131 tests、Java runtime guard 26/26、
   Shell runtime 39/39、HTTP/PostgreSQL E2E 11/11、Flyway baseline guard 14/14。
+
+2026-08-08 PostgreSQL repository fixture 加固增量：
+
+- 移除仅用于测试的 H2 依赖；`EmailQueueRepositoryTest` 和
+  `EmailLogRepositoryTest` 均使用 disposable Testcontainers PostgreSQL、Flyway
+  V1/V2 和 Hibernate `validate`，不再使用 `create-drop` 绕过真实 schema。
+- 新增 retry bound check constraint 和 `email_logs.queue_id` 外键的真实 PostgreSQL
+  约束断言；Flyway migration fixture 同步固定
+  `fail-on-missing-locations=true` 与 `validate-migration-naming=true`。
+- 完整邮件服务门禁通过：Maven 133 tests、Shell runtime 39/39、
+  HTTP/PostgreSQL E2E 11/11、Flyway baseline guard 14/14。
 
 2026-08-07 初始纳入基线：
 
