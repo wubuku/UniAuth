@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -106,5 +107,33 @@ class EmailEventListenerTest {
         emailEventListener.handleEmailQueuedEvent(event);
 
         verify(rateLimiter).release();
+    }
+
+    @Test
+    void claimFailureReleasesTheReservedRateLimitSlot() {
+        when(queueConfig.isEventDriven()).thenReturn(true);
+        when(rateLimiter.tryAcquire()).thenReturn(true);
+        doThrow(new IllegalStateException("claim unavailable"))
+            .when(claimService)
+            .claimPending(eq(1L), any(LocalDateTime.class));
+
+        emailEventListener.handleEmailQueuedEvent(event);
+
+        verify(rateLimiter).release();
+        verify(deliveryService, never()).deliver(1L, "EVENT");
+    }
+
+    @Test
+    void deliveryFailureKeepsTheConsumedRateLimitSlot() {
+        when(queueConfig.isEventDriven()).thenReturn(true);
+        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(claimService.claimPending(eq(1L), any(LocalDateTime.class))).thenReturn(true);
+        doThrow(new IllegalStateException("delivery unavailable"))
+            .when(deliveryService)
+            .deliver(1L, "EVENT");
+
+        emailEventListener.handleEmailQueuedEvent(event);
+
+        verify(rateLimiter, never()).release();
     }
 }

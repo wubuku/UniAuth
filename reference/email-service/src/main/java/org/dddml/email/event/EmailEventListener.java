@@ -33,14 +33,15 @@ public class EmailEventListener {
             return;
         }
 
+        boolean releaseReservation = false;
         try {
             if (!rateLimiter.tryAcquire()) {
                 log.warn("Rate limit reached [ID={}], handing to scheduled task", event.getQueueId());
                 return;
             }
+            releaseReservation = true;
 
             if (!claimService.claimPending(event.getQueueId(), LocalDateTime.now())) {
-                rateLimiter.release();
                 log.debug(
                     "Email already processed by another thread, skipping [ID={}]",
                     event.getQueueId()
@@ -48,10 +49,11 @@ public class EmailEventListener {
                 return;
             }
 
+            releaseReservation = false;
             EmailDeliveryService.DeliveryOutcome outcome =
                 deliveryService.deliver(event.getQueueId(), "EVENT");
             if (outcome == EmailDeliveryService.DeliveryOutcome.SKIPPED) {
-                rateLimiter.release();
+                releaseReservation = true;
             }
 
         } catch (Exception exception) {
@@ -60,6 +62,10 @@ public class EmailEventListener {
                 event.getQueueId(),
                 exception.getClass().getSimpleName()
             );
+        } finally {
+            if (releaseReservation) {
+                rateLimiter.release();
+            }
         }
     }
 }

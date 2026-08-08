@@ -2,7 +2,7 @@
 
 > 状态：Batch A、Batch B1、Batch B2a、Batch B2b 与邮件服务边界加固已完成；
 > 下一批待重新探索后冻结
-> 事实基线：2026-08-07；邮件 SMTP transport/endpoint 增量：2026-08-08
+> 事实基线：2026-08-07；邮件 SMTP、持久化投递和限流异常路径增量：2026-08-08
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
 > 前置成果：PostgreSQL-only、Flyway V1 baseline + V2 + V3 + V4、Testcontainers、
 > Java/Shell/Playwright/Python 与邮件参考服务基础门禁
@@ -32,7 +32,7 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
 | Java | `mvn clean compile test-compile` 和 98 tests 已通过 |
-| 邮件参考服务 | 108 tests；14 个完整 ApplicationContext E2E；Java runtime guard 24 tests；Shell runtime 27/27、HTTP 8/8、Flyway guard 8/8 |
+| 邮件参考服务 | 116 tests；18 个完整 ApplicationContext E2E；Java runtime guard 24 tests；Shell runtime 27/27、HTTP 8/8、Flyway guard 8/8 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 14/14 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 12/12 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、19 个 Mock Playwright tests 已通过 |
@@ -684,6 +684,45 @@ PostgreSQL/GreenMail ApplicationContext E2E、Java runtime guard 24 tests、
 Shell runtime 27/27、HTTP/PostgreSQL 8/8、Flyway guard 8/8。当前组合工作树的
 根统一门禁也已通过：Java 98 tests、HTTP 14/14、Flyway 12/12、
 Mock Playwright 19/19、Python 14/14，前端 lint/type/build 通过。
+
+### 邮件服务限流 reservation 异常路径加固切片
+
+#### 2026-08-08 固定实施范围
+
+本切片只修复参考邮件服务 event/recovery 在队列 claim 异常时泄漏单进程限流
+reservation 的问题，不改变正常投递、失败 retry、REST 契约、Flyway schema 或
+UniAuth 邮箱业务流程。
+
+纳入范围：
+
+1. 先增加 event/recovery 的 claim 异常释放和 delivery 异常消费行为测试。
+2. 把“尚未进入 delivery”的 reservation 统一放入 `finally` 释放，覆盖 claim
+   返回 false、claim 抛异常和 delivery 返回 `SKIPPED`。
+3. 一旦调用 delivery bean 就按一次投递尝试计数；后续失败或异常不归还 slot，
+   防止未知 SMTP 结果绕过限流。
+4. PostgreSQL/ApplicationContext E2E 使用真实 `EmailRateLimiter`、listener/
+   processor、repository 和事务 Bean，只对 claim 方法注入受控异常。
+5. 同步组件 README/AGENTS、根架构、配置、验证和文档计划。
+
+明确非目标：
+
+- 不改变成功/失败投递、retry 次数、队列状态机或至少一次语义。
+- 不新增或修改 Flyway migration、数据库约束、HTTP endpoint、模板或跨端契约。
+- 不实现多实例分布式限流，不连接真实 SMTP 或共享数据库。
+- 不为无关的 Shell/Playwright/Python 路径增加伪相关测试；完整统一门禁仍全部重跑。
+
+#### 当前状态
+
+保护测试先证明 event/recovery 的 claim 异常各泄漏一个限流 slot；delivery 异常
+继续消费已开始尝试的既有语义正确。实现收拢 reservation 所有权后，15 个定向
+event/recovery 行为测试和 18 个 PostgreSQL/GreenMail ApplicationContext E2E
+通过。完整邮件组件门禁已通过：116 tests、Java runtime guard 24 tests、
+Shell runtime 27/27、HTTP/PostgreSQL 8/8、Flyway guard 8/8。根统一门禁也已通过：
+Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19/19、Python 14/14，
+前端 lint/type/build、文档链接和 patch hygiene 通过。
+统一门禁同时暴露并修复了邮箱注册 Playwright 的竞态夹具：验证响应使用 `user.id`，
+首页 `GET /api/user` 则按真实契约返回 `userId`。测试现使用同一注册用户的真实 wire
+形状并断言 `checkAuth()` 后的稳定状态，定向并发重复 10/10 和完整 19/19 均通过。
 
 ### Flyway baseline guard 并发隔离切片
 

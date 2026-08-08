@@ -17,6 +17,7 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -155,6 +156,39 @@ class EmailProcessorServiceTest {
         emailProcessorService.recoverFailedEmails();
 
         verify(deliveryService, times(2)).deliver(any(), eq("SCHEDULED"));
+    }
+
+    @Test
+    void claimFailureReleasesTheReservedRateLimitSlot() {
+        enableRecovery();
+        when(emailQueueRepository.findFailedOrStuckEmails(any(), any(), any()))
+            .thenReturn(new PageImpl<>(List.of(queue), PageRequest.of(0, 50), 1));
+        when(rateLimiter.tryAcquire()).thenReturn(true);
+        doThrow(new IllegalStateException("claim unavailable"))
+            .when(claimService)
+            .claimRecoverable(eq(1L), any(LocalDateTime.class), any(LocalDateTime.class));
+
+        emailProcessorService.recoverFailedEmails();
+
+        verify(rateLimiter).release();
+        verify(deliveryService, never()).deliver(1L, "SCHEDULED");
+    }
+
+    @Test
+    void deliveryFailureKeepsTheConsumedRateLimitSlot() {
+        enableRecovery();
+        when(emailQueueRepository.findFailedOrStuckEmails(any(), any(), any()))
+            .thenReturn(new PageImpl<>(List.of(queue), PageRequest.of(0, 50), 1));
+        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(claimService.claimRecoverable(eq(1L), any(LocalDateTime.class), any(LocalDateTime.class)))
+            .thenReturn(true);
+        doThrow(new IllegalStateException("delivery unavailable"))
+            .when(deliveryService)
+            .deliver(1L, "SCHEDULED");
+
+        emailProcessorService.recoverFailedEmails();
+
+        verify(rateLimiter, never()).release();
     }
 
     private void enableRecovery() {

@@ -80,6 +80,9 @@ timeout，也拒绝超过 1024 字符或包含 CR/LF 的 API key。详细契约�
 参考服务自己的恢复 worker 只有在邮件总开关、队列和 recovery 都启用时才处理
 存量，避免停用投递后定时任务继续发送。参考服务提供至少一次而非恰好一次投递：
 SMTP 已接受后若数据库提交或进程失败，stuck recovery 可能使用相同 queue id 再次发送。
+event 与 recovery 共用单进程限流器；reservation 只在队列 claim 未成功或 delivery
+返回 `SKIPPED` 时释放。一旦调用 delivery bean 就视为一次投递尝试，即使后续 SMTP
+或数据库路径失败、抛异常也会消耗当前窗口配额。
 
 ### API 认证
 

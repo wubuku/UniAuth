@@ -199,6 +199,9 @@ subject、HTML 和自定义 header token 必须在构造 MIME 前重新校验。
 非法队列载荷的失败审计只保留 queue id、通用错误和安全占位字段，不复制恶意
 recipient、subject、HTML 或 header token；非法 `sendMethod` 必须降级为
 `UNKNOWN`，不能让 `email_logs` 写入失败并回滚 retry。
+event 和 recovery 共用的单进程限流 slot 在 claim 返回 false 或抛异常时必须释放；
+一旦进入 delivery bean 就按一次投递尝试计数，即使后续失败或抛异常也不归还，
+只有 `SKIPPED` 表示未发生投递并释放 slot。
 
 ## Database Reality
 
@@ -252,6 +255,9 @@ npm run test:e2e
 
 登录方式 id 的前端类型已统一为 UUID string。跨端修改时仍要核对真实 JSON，
 并同步 service、types、页面、Playwright 和 Shell contract。
+`GET /api/user` 的 wire 字段是 `userId`、`userName`、`userEmail`；Playwright route
+必须按真实响应形状提供当前用户。跨页面认证测试要断言导航和 `checkAuth()` 完成后的
+稳定状态，不能依赖登录/验证响应写入 localStorage 后被当前用户接口覆盖前的瞬时值。
 
 ## Verification Commands
 
@@ -288,6 +294,9 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 2026-08-08 持久化队列投递边界加固增量：邮件参考服务 110 tests，
   16 个 PostgreSQL/GreenMail ApplicationContext E2E；runtime 27/27、HTTP 8/8
   和 Flyway guard 8/8 保持通过。
+- 2026-08-08 限流 reservation 异常路径加固增量：邮件参考服务 116 tests，
+  18 个 PostgreSQL/GreenMail ApplicationContext E2E；runtime 27/27、HTTP 8/8
+  和 Flyway guard 8/8 保持通过。
 - Shell HTTP E2E：14/14。
 - Flyway baseline guard：12/12。
 - Mock Playwright：19 tests。
@@ -320,6 +329,10 @@ PYTHON_BIN=python3 scripts/verify.sh
 
 - 持久化队列投递边界加固已通过完整邮件组件门禁：邮件参考服务 110 tests、
   16 个 PostgreSQL/GreenMail ApplicationContext E2E、Java runtime guard 24 tests、
+  Shell runtime 27/27、HTTP/Flyway 各 8/8；根 Java 98 tests、HTTP 14/14、
+  Flyway 12/12、Mock Playwright 19/19、Python 14/14 和前端 lint/type/build 通过。
+- 限流 reservation 异常路径加固的邮件组件门禁已通过：116 tests、
+  18 个 PostgreSQL/GreenMail ApplicationContext E2E、Java runtime guard 24 tests、
   Shell runtime 27/27、HTTP/Flyway 各 8/8；根 Java 98 tests、HTTP 14/14、
   Flyway 12/12、Mock Playwright 19/19、Python 14/14 和前端 lint/type/build 通过。
 - root Flyway baseline guard 临时配置并发隔离修复已通过两套并行 `12/12` 定向

@@ -164,6 +164,11 @@ ApplicationContext/运行保护阶段被拒绝，避免将无效值传入 HTTP h
 `app.mail.queue.enabled` 和 `app.mail.recovery.enabled` 同时为 true 时才处理
 pending/stuck 队列；关闭邮件或队列不会继续发送已有积压。
 
+event 和 recovery 共用单进程内存限流器。每次先预留 slot，再以 PostgreSQL 条件
+更新 claim 队列；claim 返回 false 或抛异常时释放 reservation。claim 成功后，一旦
+调用 delivery bean 就按一次投递尝试计数，即使 SMTP/数据库后续失败或抛异常也不
+归还本分钟 slot；delivery 返回 `SKIPPED` 表示未发生投递，会释放该 slot。
+
 `SMTP_HOST` 只填写裸 host/IP token，不填写 `smtp://` URL。它最长 255 字符，不能
 包含空白、控制字符、路径、userinfo、query 或 fragment。`SMTP_PORT` 必须是
 `1..65535` 的十进制整数。Shell 入口和 Spring ApplicationContext 中的 Java guard
@@ -259,6 +264,8 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   HTML 上限以及 `X-Email-Type`、`X-Send-Method` token；异常行不进入 SMTP。
 - 异常行的投递日志只保留 queue id、通用错误和安全占位字段；合法内部
   `sendMethod` 可保留，非法值记录为 `UNKNOWN`，不会因审计字段约束回滚 retry。
+- event/recovery 在 PostgreSQL claim 返回 false 或抛异常时释放真实限流 Bean 的
+  reservation；一旦进入 delivery 则保留已消费 slot，`SKIPPED` 才释放。
 - 恢复候选按 priority 降序处理；关闭邮件总开关或队列后不投递存量队列。
 - event 与 recovery 并发 claim 同一 PostgreSQL 队列记录时只允许一个投递者成功，
   最终只有一条成功日志和一封 SMTP 邮件。
@@ -286,6 +293,8 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - Shell runtime guard：27/27。
 - Shell HTTP/PostgreSQL E2E：8/8。
 - Shell Flyway guard：8/8。
+- 根统一门禁：Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19/19、
+  Python 14/14，前端 lint/type/build 和文档检查通过。
 
 2026-08-08 持久化队列投递边界加固增量：
 
@@ -297,6 +306,19 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - `NULL` 或 blank 的历史 `emailType` 均按 `GENERAL` 成功投递。
 - 拒绝记录不会复制恶意载荷；非法 `sendMethod` 安全降级为 `UNKNOWN`。
 - Shell HTTP E2E 同步覆盖 `emailType` header injection 拒绝。
+- Shell runtime guard：27/27。
+- Shell HTTP/PostgreSQL E2E：8/8。
+- Shell Flyway guard：8/8。
+
+2026-08-08 限流 reservation 异常路径加固增量：
+
+- Maven：116 tests，0 failures/errors/skips。
+- 其中 18 个 PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime
+  guard tests。
+- event 与 recovery 的 claim 异常使用真实 `EmailRateLimiter`、真实队列 Bean 和
+  PostgreSQL 验证：队列保持 `PENDING`，不写日志、不进入 SMTP，slot 可立即复用。
+- 单元行为测试同时固定 delivery 已开始后异常仍消费配额，避免把未知 SMTP 结果
+  误当成未尝试。
 - Shell runtime guard：27/27。
 - Shell HTTP/PostgreSQL E2E：8/8。
 - Shell Flyway guard：8/8。
@@ -397,6 +419,7 @@ EMAIL_SERVICE_API_KEY=
 - 增加输入、header injection、batch、分页和错误信息边界。
 - 避免配置、实体、事件和请求 DTO 的自动对象字符串暴露 API key 或邮件内容。
 - 将队列 claim/delivery 拆为独立事务 Bean，原子恢复 stuck `PROCESSING` 记录。
+- 在 event/recovery claim 异常和竞争失败时可靠释放未消费的限流 reservation。
 - 邮件或队列关闭时停止恢复扫描投递，恢复候选按 priority 优先处理。
 - 让异步发送事件在入队事务提交后、独立事务中处理。
 - 将 PostgreSQL 不支持的 `LONGTEXT` 列声明改为 `TEXT`。

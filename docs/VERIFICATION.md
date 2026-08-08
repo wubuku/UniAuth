@@ -1,7 +1,7 @@
 # UniAuth 验证指南
 
 > 状态：Live
-> 最近基线：2026-08-07
+> 最近基线：2026-08-08
 > 本页是项目交付验收的权威规则，区分静态/构建验证与会启动应用的行为验证。
 
 ## 交付验收硬门槛
@@ -66,6 +66,9 @@ npm run build
 - 核心用户路径应使用 Mock 配置执行浏览器级测试，优先使用 Playwright，并覆盖本次改动。
 - 测试配置优先通过命令环境变量注入，不为验收持久化本地环境文件。
 - 如果临时创建 `frontend/.env.local` 或类似文件，测试结束后必须删除，并确认未进入提交。
+- `GET /api/user` route mock 必须使用真实 wire 字段 `userId`、`userName`、`userEmail`。
+  涉及导航的认证测试应等待首页 `checkAuth()` 完成并断言最终稳定状态，不能把验证响应
+  写入 localStorage 与当前用户响应覆盖之间的瞬时字段当作通过条件。
 - 当前仓库的核心 Mock 浏览器门禁是：
 
 ```bash
@@ -205,6 +208,9 @@ UniAuth 主应用的邮件相关门禁只验证内部状态机和 HTTP 边界：
 - 恢复候选按优先级处理；邮件总开关或队列关闭时，存量 pending/stuck 邮件不投递。
 - event 与 recovery 并发竞争同一 PostgreSQL 队列记录时，只有一个投递者成功，
   最终只产生一条成功日志和一封 SMTP 邮件。
+- event/recovery 的 PostgreSQL claim 抛异常时，真实 `EmailRateLimiter` reservation
+  会释放，队列保持 `PENDING` 且不写日志、不进入 SMTP；delivery 一旦开始则按一次
+  尝试计数，异常不会错误归还 slot。
 - 异步执行器拒绝任务时不向已提交的入队事务传播异常，持久队列可由 recovery 接管。
 - API key 配置、实体、事件和 HTTP 请求 DTO 的对象字符串不会包含 API key、
   收件人、验证码或 HTML。
@@ -303,6 +309,30 @@ Flyway history 前失败关闭。第二个 fixture 在 baseline 已创建后注�
 确认 V2 拒绝迁移，并且脚本只在受管 schema 未变、history 为 baseline-only 时移除
 不完整 history，恢复为可重新 rehearsal 的状态。V4 fixture 另行确认实体契约坏数据
 会在创建 history 前被只读 preflight 拒绝。
+
+## 2026-08-08 限流 reservation 异常路径加固增量
+
+> 状态：Verified。邮件组件和根统一门禁均于 2026-08-08 通过。
+
+本轮只修复 event/recovery 在 PostgreSQL claim 抛异常时泄漏单进程限流 slot 的
+问题，不改变正常投递、失败 retry、REST 契约、Flyway schema 或 UniAuth 邮箱流程：
+
+- reservation 在 claim 返回 false、claim 抛异常或 delivery 返回 `SKIPPED` 时释放。
+- 一旦调用 delivery bean 就按一次投递尝试计数；后续 SMTP/数据库失败或异常不归还
+  slot，避免未知投递结果绕过限流。
+- 两个 PostgreSQL/ApplicationContext E2E 使用真实 `EmailRateLimiter`、listener/
+  processor、repository 和事务 Bean，只对 claim 方法注入异常；断言队列仍为
+  `PENDING`、无 `email_logs`、无 GreenMail 邮件且 slot 可立即复用。
+- 四个行为测试分别固定 event/recovery 的 claim 异常释放和 delivery 异常消费语义。
+
+邮件组件验证结果：
+
+- Maven：116 tests，0 failures/errors/skips；其中 18 个 PostgreSQL/GreenMail
+  ApplicationContext E2E、24 个 Java runtime guard tests。
+- Shell runtime guard 27/27、HTTP/PostgreSQL E2E 8/8、Flyway guard 8/8。
+- 根统一门禁：Java 98 tests、HTTP E2E 14/14、Flyway guard 12/12、
+  Mock Playwright 19/19、Python 14/14，前端 lint/type/build、文档链接和
+  patch hygiene 通过。
 
 前端依赖已把 Axios、Ethers、Vite、Rollup、PostCSS 及相关传递依赖升级到修复版本。
 审计仍报告 2 个 React Router moderate advisories；当前代码只使用客户端

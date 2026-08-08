@@ -6,16 +6,20 @@ import com.icegreen.greenmail.util.ServerSetup;
 import jakarta.mail.internet.MimeMessage;
 import org.dddml.email.entity.EmailLog;
 import org.dddml.email.entity.EmailQueue;
+import org.dddml.email.event.EmailEventListener;
+import org.dddml.email.event.EmailQueuedEvent;
 import org.dddml.email.repository.EmailLogRepository;
 import org.dddml.email.repository.EmailQueueRepository;
 import org.dddml.email.service.EmailDeliveryService;
 import org.dddml.email.service.EmailQueueClaimService;
+import org.dddml.email.service.EmailRateLimiter;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
@@ -31,6 +35,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.util.AopTestUtils;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -49,6 +54,9 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
@@ -120,10 +128,17 @@ class EmailServiceEndToEndIntegrationTest {
     private org.dddml.email.config.MailProperties mailProperties;
 
     @Autowired
+    @SpyBean
     private EmailQueueClaimService emailQueueClaimService;
 
     @Autowired
     private EmailDeliveryService emailDeliveryService;
+
+    @Autowired
+    private EmailEventListener emailEventListener;
+
+    @Autowired
+    private EmailRateLimiter emailRateLimiter;
 
     @Autowired
     @Qualifier("emailExecutor")
@@ -814,6 +829,56 @@ class EmailServiceEndToEndIntegrationTest {
         assertThat(SMTP.getReceivedMessages()).hasSize(1);
     }
 
+    @Test
+    void eventClaimFailureReleasesTheRealRateLimitReservation() throws Exception {
+        EmailQueue queued = savePendingQueue(
+            "event-claim-failure@example.test",
+            "Event claim failure"
+        );
+        enableSingleSlotRateLimit();
+        doThrow(new IllegalStateException("test claim failure"))
+            .when(emailQueueClaimService)
+            .claimPending(eq(queued.getId()), any(LocalDateTime.class));
+
+        try {
+            EmailEventListener target =
+                AopTestUtils.getUltimateTargetObject(emailEventListener);
+            target.handleEmailQueuedEvent(new EmailQueuedEvent(this, queued.getId()));
+
+            assertSingleRateLimitSlotAvailable();
+            assertQueueWasNotDelivered(queued.getId());
+        } finally {
+            resetRateLimit();
+        }
+    }
+
+    @Test
+    void recoveryClaimFailureReleasesTheRealRateLimitReservation() {
+        EmailQueue queued = savePendingQueue(
+            "recovery-claim-failure@example.test",
+            "Recovery claim failure"
+        );
+        enableSingleSlotRateLimit();
+        mailProperties.getRecovery().setEnabled(true);
+        doThrow(new IllegalStateException("test claim failure"))
+            .when(emailQueueClaimService)
+            .claimRecoverable(
+                eq(queued.getId()),
+                any(LocalDateTime.class),
+                any(LocalDateTime.class)
+            );
+
+        try {
+            emailProcessorService.recoverFailedEmails();
+
+            assertSingleRateLimitSlotAvailable();
+            assertQueueWasNotDelivered(queued.getId());
+        } finally {
+            mailProperties.getRecovery().setEnabled(false);
+            resetRateLimit();
+        }
+    }
+
     private long enqueueTemplate(String to, String subject, String templateName,
                                  Map<String, Object> variables, String emailType) {
         ResponseEntity<Map<String, Object>> response = exchange(
@@ -832,6 +897,44 @@ class EmailServiceEndToEndIntegrationTest {
         assertThat(response.getBody()).containsEntry("success", true);
         assertThat(response.getBody()).containsKey("queueId");
         return ((Number) response.getBody().get("queueId")).longValue();
+    }
+
+    private EmailQueue savePendingQueue(String recipient, String subject) {
+        return emailQueueRepository.saveAndFlush(
+            EmailQueue.builder()
+                .recipient(recipient)
+                .subject(subject)
+                .htmlContent("<p>must remain pending</p>")
+                .emailType("GENERAL")
+                .status("PENDING")
+                .priority(5)
+                .retryCount(0)
+                .maxRetries(4)
+                .build()
+        );
+    }
+
+    private void enableSingleSlotRateLimit() {
+        mailProperties.getRateLimit().setMaxPerMinute(1);
+        mailProperties.getRateLimit().setEnabled(true);
+    }
+
+    private void assertSingleRateLimitSlotAvailable() {
+        assertThat(emailRateLimiter.tryAcquire()).isTrue();
+        assertThat(emailRateLimiter.tryAcquire()).isFalse();
+    }
+
+    private void resetRateLimit() {
+        emailRateLimiter.release();
+        mailProperties.getRateLimit().setEnabled(false);
+        mailProperties.getRateLimit().setMaxPerMinute(60);
+    }
+
+    private void assertQueueWasNotDelivered(long queueId) {
+        EmailQueue persisted = emailQueueRepository.findById(queueId).orElseThrow();
+        assertThat(persisted.getStatus()).isEqualTo("PENDING");
+        assertThat(emailLogRepository.findByQueueId(queueId)).isEmpty();
+        assertThat(SMTP.getReceivedMessages()).isEmpty();
     }
 
     private EmailDeliveryService.DeliveryOutcome claimAndDeliver(

@@ -8,12 +8,15 @@ const currentUser = {
   userId: 'browser-user-id',
 };
 
-async function mockCurrentUser(page: Parameters<typeof test>[0]['page']) {
+async function mockCurrentUser(
+  page: Parameters<typeof test>[0]['page'],
+  user = currentUser,
+) {
   await page.route(/\/api\/user(?:\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(currentUser),
+      body: JSON.stringify(user),
     });
   });
 }
@@ -78,7 +81,12 @@ test('email registration sends one code and completes verification', async ({ pa
   let sendCount = 0;
   let verificationRequest: Record<string, string> | undefined;
 
-  await mockCurrentUser(page);
+  await mockCurrentUser(page, {
+    ...currentUser,
+    userName: email,
+    userEmail: email,
+    userId: 'browser-registration-id',
+  });
   await page.route(/\/api\/auth\/register$/, async (route) => {
     const body = route.request().postDataJSON();
     expect(body.username).toBe(email);
@@ -154,7 +162,7 @@ test('email registration sends one code and completes verification', async ({ pa
     .toBe('registration.access.token');
   await expect.poll(() => page.evaluate(() => {
     const value = localStorage.getItem('auth_user');
-    return value ? JSON.parse(value).id : null;
+    return value ? JSON.parse(value).userId : null;
   })).toBe('browser-registration-id');
 });
 

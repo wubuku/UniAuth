@@ -52,22 +52,24 @@ public class EmailProcessorService {
             int successCount = 0, failedCount = 0;
 
             for (EmailQueue emailQueue : failedEmails) {
+                boolean releaseReservation = false;
                 try {
                     if (!rateLimiter.tryAcquire()) {
                         log.warn("Recovery rate limit reached; remaining candidates stay pending");
                         break;
                     }
+                    releaseReservation = true;
 
                     LocalDateTime claimTime = LocalDateTime.now();
                     if (!claimService.claimRecoverable(
                             emailQueue.getId(),
                             claimTime,
                             stuckTime)) {
-                        rateLimiter.release();
                         log.debug("Email already handled by event, skipping [ID={}]", emailQueue.getId());
                         continue;
                     }
 
+                    releaseReservation = false;
                     log.info("Recovering email [ID={}]", emailQueue.getId());
                     EmailDeliveryService.DeliveryOutcome outcome =
                         deliveryService.deliver(emailQueue.getId(), "SCHEDULED");
@@ -76,7 +78,7 @@ public class EmailProcessorService {
                     } else if (outcome == EmailDeliveryService.DeliveryOutcome.FAILED) {
                         failedCount++;
                     } else {
-                        rateLimiter.release();
+                        releaseReservation = true;
                     }
 
                 } catch (Exception exception) {
@@ -86,6 +88,10 @@ public class EmailProcessorService {
                         exception.getClass().getSimpleName()
                     );
                     failedCount++;
+                } finally {
+                    if (releaseReservation) {
+                        rateLimiter.release();
+                    }
                 }
             }
 

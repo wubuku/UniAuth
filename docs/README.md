@@ -1,6 +1,6 @@
 # UniAuth 文档导航
 
-> 当前文档基线：2026-08-07
+> 当前文档基线：2026-08-08
 > 本页是项目文档的主入口。代码、配置与本文冲突时，以当前代码和配置为准。
 > `docs/Perplexity/` 和 `docs/drafts/` 中包含大量历史方案，不应直接当作运行手册。
 
@@ -15,7 +15,7 @@
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
 | [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | In progress | H0.1-H0.3、H1.1-H1.3、H1.4 Batch B1/B2a/B2b 已验证；其余 H1.4-H8 待实施 |
-| [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Draft | Batch B2b 已完成；继续按测试优先切片执行后续加固 |
+| [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Draft | Batch B2b 与邮件服务边界加固已完成；继续按测试优先切片执行后续加固 |
 
 ## 当前关键结论
 
@@ -44,7 +44,7 @@
 |------|------|------|
 | [前端 README](../frontend/README.md) | Needs verification | React/Vite 使用说明；以 `vite.config.ts` 为端口和构建事实 |
 | [Python 资源服务器 README](../python-resource-server/README.md) | Needs verification | Flask 示例说明；以 `app.py` 为端口和 JWT claim 事实 |
-| [邮件服务参考实现](../reference/email-service/README.md) | Reference | 独立 Spring Boot REST/SMTP 组件；Flyway V1/V2、SMTP endpoint/transport guard、PostgreSQL/GreenMail 与 Shell E2E |
+| [邮件服务参考实现](../reference/email-service/README.md) | Reference | 独立 Spring Boot REST/SMTP 组件；Flyway V1/V2、SMTP/限流 guard、PostgreSQL/GreenMail 与 Shell E2E |
 | [异构资源服务器验证记录](../VERIFICATION_CHECKLIST.md) | Historical | 2026-01-25 的历史验证快照，不是当前回归证明 |
 
 ## 契约与集成材料
@@ -53,7 +53,7 @@
 |------|------|------|
 | [前后端契约](FRONTEND_BACKEND_CONTRACT.md) | Needs verification | 大型设计/契约材料，代码示例和端口存在漂移 |
 | [GitHub OAuth2 集成规划](GitHub-OAuth2-Integration-Planning.md) | Historical | GitHub 集成前的规划，功能现已部分落地 |
-| [草稿与历史索引](drafts/README.md) | Live index | 20 份计划、调查、实施记录的逐项分类 |
+| [草稿与历史索引](drafts/README.md) | Live index | 23 份计划、调查、实施记录的逐项分类 |
 | [文档体系计划](drafts/DOCUMENTATION_PLAN.md) | Draft | 本轮文档整理范围、顺序和验收标准 |
 
 ## Perplexity 历史资料

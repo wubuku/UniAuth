@@ -22,7 +22,7 @@
 | 数据库 | PostgreSQL-only |
 | Migration | Flyway V1 baseline + V2 + V3 + V4，history `uniauth_flyway_schema_history` |
 | Java 验证 | 98 tests |
-| 邮件参考服务 | 110 tests；另有 runtime 27/27、HTTP 8/8、Flyway guard 8/8 |
+| 邮件参考服务 | 116 tests；其中 18 个 PostgreSQL/ApplicationContext E2E；另有 runtime 27/27、HTTP 8/8、Flyway guard 8/8 |
 | HTTP E2E | 14/14 |
 | Flyway baseline guard | 12/12 |
 | Playwright | 19 tests |

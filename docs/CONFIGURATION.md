@@ -143,6 +143,9 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - 拒绝非法队列载荷时，`email_logs` 只保留 queue id、通用错误和安全占位字段；
   合法内部 `sendMethod` 可用于定位来源，非法值统一记录为 `UNKNOWN`。这保证失败
   审计本身不会因字段长度或 header injection 值而回滚现有 retry 状态机。
+- event 与 recovery 共用单进程限流器。取得 slot 后如果 PostgreSQL claim 返回 false
+  或抛异常，必须释放 reservation；delivery 返回 `SKIPPED` 也释放。进入 delivery
+  bean 后则按一次真实投递尝试计数，后续失败或异常不会归还本分钟 slot。
 - API key 配置对象、持久化实体、队列事件和 HTTP 请求 DTO 不生成包含 API key、
   收件人、验证码或 HTML 的自动 `toString()`；日志和异常仍需遵守同一脱敏边界。
 

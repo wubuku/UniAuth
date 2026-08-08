@@ -1,7 +1,7 @@
 # UniAuth 文档体系建设计划
 
 > 状态：Live maintenance；首版体系已建立，随加固 batch 持续校准
-> 基线日期：2026-08-07
+> 首版基线：2026-08-07；最近校准：2026-08-08
 > 原则：已有文档不移动；新文档链接已有内容；当前事实以代码、配置和可执行验证为准。
 
 ## 目标
@@ -39,7 +39,7 @@
 | API 行为 | controller、service、repository 和 entity |
 | 前端端口、代理、构建输出 | `frontend/vite.config.ts`、`frontend/package.json` |
 | Python 示例行为 | `python-resource-server/app.py` |
-| 可执行验证状态 | 2026-08-07 本地无启动验证结果 |
+| 可执行验证状态 | `scripts/verify.sh` 与 `docs/VERIFICATION.md` 记录的 2026-08-08 完整门禁 |
 
 现有 prose 与这些来源冲突时，不把 prose 视为当前事实。
 
@@ -83,6 +83,7 @@
 | P1 | 说明参考服务 SMTP 传输模式、生产身份校验和测试边界 | 已完成 |
 | P1 | 说明参考服务 SMTP host/port 形状、双重 guard 和 Bean 绑定证据 | 已完成 |
 | P1 | 说明持久化队列到最终 SMTP 投递的二次校验信任边界 | 已完成 |
+| P1 | 说明 event/recovery 限流 reservation 的 claim 异常释放和投递尝试消费语义 | 已完成 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -126,7 +127,7 @@
   约束也已纳入当前指南。生产 SMTP 的强制 STARTTLS/implicit SSL 二选一、
   server identity verification、host/port 形状和默认门禁不执行真实 TLS 握手的
   边界也已说明；最终投递对持久化 recipient/subject/HTML/header token 的二次校验
-  也已纳入 live 配置和验证文档。
+  以及 claim 异常不泄漏限流 reservation 的语义也已纳入 live 配置和验证文档。
 - 邮箱验证码发送值已与持久化值一致；失败、频控和并发语义仍待修复。
 - token blacklist 尚未接入验证、刷新和登出流程。
 - Web3 的 `isNewUser`、bind 返回处理和 EIP-191 字节长度已修复；
@@ -157,7 +158,7 @@ git diff --check
 
 ## 延后事项
 
-- 不在本轮重写 20 份草稿和 8 份 Perplexity 历史材料。
+- 不批量重写 `docs/drafts/` 中的 24 个文件和 8 份 Perplexity 历史材料。
 - 不在文档整理阶段改变认证架构、数据库 schema 或 token 行为。
 - 不把历史测试记录提升为当前发布证明。
 - 详细 API 文档随下一阶段加固实现和测试补齐后再校准。
