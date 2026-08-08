@@ -33,6 +33,9 @@ class EmailEventListenerTest {
     private EmailRateLimiter rateLimiter;
 
     @Mock
+    private EmailRateLimiter.Reservation reservation;
+
+    @Mock
     private EmailQueueClaimService claimService;
 
     @Mock
@@ -63,7 +66,7 @@ class EmailEventListenerTest {
     @Test
     void rateLimitDenialLeavesTheQueuePending() {
         when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimiter.tryAcquire()).thenReturn(false);
+        when(rateLimiter.tryAcquire()).thenReturn(null);
 
         emailEventListener.handleEmailQueuedEvent(event);
 
@@ -74,19 +77,19 @@ class EmailEventListenerTest {
     @Test
     void failedClaimReleasesTheReservedRateLimitSlot() {
         when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(rateLimiter.tryAcquire()).thenReturn(reservation);
         when(claimService.claimPending(eq(1L), any(LocalDateTime.class))).thenReturn(false);
 
         emailEventListener.handleEmailQueuedEvent(event);
 
-        verify(rateLimiter).release();
+        verify(reservation).release();
         verify(deliveryService, never()).deliver(1L, "EVENT");
     }
 
     @Test
     void claimedQueueIsDeliveredByTheTransactionalDeliveryBean() {
         when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(rateLimiter.tryAcquire()).thenReturn(reservation);
         when(claimService.claimPending(eq(1L), any(LocalDateTime.class))).thenReturn(true);
         when(deliveryService.deliver(1L, "EVENT"))
             .thenReturn(EmailDeliveryService.DeliveryOutcome.SUCCESS);
@@ -99,34 +102,34 @@ class EmailEventListenerTest {
     @Test
     void skippedDeliveryReleasesTheReservedRateLimitSlot() {
         when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(rateLimiter.tryAcquire()).thenReturn(reservation);
         when(claimService.claimPending(eq(1L), any(LocalDateTime.class))).thenReturn(true);
         when(deliveryService.deliver(1L, "EVENT"))
             .thenReturn(EmailDeliveryService.DeliveryOutcome.SKIPPED);
 
         emailEventListener.handleEmailQueuedEvent(event);
 
-        verify(rateLimiter).release();
+        verify(reservation).release();
     }
 
     @Test
     void claimFailureReleasesTheReservedRateLimitSlot() {
         when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(rateLimiter.tryAcquire()).thenReturn(reservation);
         doThrow(new IllegalStateException("claim unavailable"))
             .when(claimService)
             .claimPending(eq(1L), any(LocalDateTime.class));
 
         emailEventListener.handleEmailQueuedEvent(event);
 
-        verify(rateLimiter).release();
+        verify(reservation).release();
         verify(deliveryService, never()).deliver(1L, "EVENT");
     }
 
     @Test
     void deliveryFailureKeepsTheConsumedRateLimitSlot() {
         when(queueConfig.isEventDriven()).thenReturn(true);
-        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(rateLimiter.tryAcquire()).thenReturn(reservation);
         when(claimService.claimPending(eq(1L), any(LocalDateTime.class))).thenReturn(true);
         doThrow(new IllegalStateException("delivery unavailable"))
             .when(deliveryService)
@@ -134,6 +137,6 @@ class EmailEventListenerTest {
 
         emailEventListener.handleEmailQueuedEvent(event);
 
-        verify(rateLimiter, never()).release();
+        verify(reservation, never()).release();
     }
 }

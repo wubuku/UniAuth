@@ -53,7 +53,25 @@ PYTHON_BIN=python3 scripts/verify.sh
 ```
 
 `PYTHON_BIN` 可指向已安装 `python-resource-server/requirements.txt` 依赖的解释器。
-该入口不会读取 `.env`，不会写共享开发库，也不会执行 Flyway baseline apply。
+该入口只复制 Git 已跟踪和非忽略的未跟踪源码到进程专属临时 Git 快照，在快照中
+执行 Maven、npm、Shell E2E、Playwright 和 Python 阶段；不会复制或读取 `.env`，
+不会写共享开发库，也不会执行 Flyway baseline apply。原工作区源码若在验证期间
+变化，入口会失败并要求基于稳定工作树重跑；并行验证不共享 `target/`、
+`node_modules/` 或前端静态生成物。
+
+需要在快照清理后保留测试报告或 Playwright trace 时，使用仓库外的绝对目录：
+
+```bash
+VERIFICATION_ARTIFACTS_DIR=/tmp/uniauth-verification-artifacts \
+  PYTHON_BIN=python3 scripts/verify.sh
+```
+
+入口会为每次运行创建独立子目录，并写入退出码、HEAD 和源码指纹。CI 使用同一机制
+上传失败证据；artifact 根目录会解析符号链接并拒绝任何最终落入源码仓库的路径，
+不要把该目录放进仓库。根入口会汇总并检查邮件服务独立快照中的 Surefire XML；
+任何 artifact 写入失败都会令门槛失败。中断运行固定记录 `SIGINT=130`、
+`SIGTERM=143`；成功证据写入后若最终日志输出失败，也会覆写为真实非零状态，
+不能把人为中止或日志管道失败误判为成功。
 
 ## 前端开发
 

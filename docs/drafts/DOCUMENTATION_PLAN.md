@@ -84,6 +84,7 @@
 | P1 | 说明参考服务 SMTP host/port 形状、双重 guard 和 Bean 绑定证据 | 已完成 |
 | P1 | 说明持久化队列到最终 SMTP 投递的二次校验信任边界 | 已完成 |
 | P1 | 说明 event/recovery 限流 reservation 的 claim 异常释放和投递尝试消费语义 | 已完成 |
+| P1 | 说明限流 reservation 的窗口 generation ownership、幂等释放和 E2E 证据 | 已完成 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -127,7 +128,9 @@
   约束也已纳入当前指南。生产 SMTP 的强制 STARTTLS/implicit SSL 二选一、
   server identity verification、host/port 形状和默认门禁不执行真实 TLS 握手的
   边界也已说明；最终投递对持久化 recipient/subject/HTML/header token 的二次校验
-  以及 claim 异常不泄漏限流 reservation 的语义也已纳入 live 配置和验证文档。
+  以及 claim 异常不泄漏限流 reservation、旧窗口迟到释放不影响新窗口额度的语义
+  也已纳入 live 配置和验证文档。邮件 Shell HTTP/Flyway guard 已分别扩展为 9/9，
+  覆盖 queue detail 披露边界和 checksum drift 失败关闭、原样保持与显式恢复。
 - 邮箱验证码发送值已与持久化值一致；失败、频控和并发语义仍待修复。
 - token blacklist 尚未接入验证、刷新和登出流程。
 - Web3 的 `isNewUser`、bind 返回处理和 EIP-191 字节长度已修复；

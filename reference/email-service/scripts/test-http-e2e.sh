@@ -183,11 +183,11 @@ fi
 start_application
 wait_for_application
 
-echo "1/8 Verify Flyway-owned startup"
+echo "1/9 Verify Flyway-owned startup"
 [ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "2" ] \
     || fail "Flyway did not record V1 and V2"
 
-echo "2/8 Verify API-key enforcement"
+echo "2/9 Verify API-key enforcement"
 [ "$(request_status GET /api/email/health)" = "401" ] \
     || fail "health endpoint accepted a missing API key"
 [ "$(request_status GET /api/email/health -H "X-Email-Service-Key: wrong")" = "401" ] \
@@ -198,7 +198,7 @@ echo "2/8 Verify API-key enforcement"
     -H "X-Email-Service-Key: $API_KEY")" = "200" ] \
     || fail "matrix-parameter request did not reach the protected health endpoint"
 
-echo "3/8 Verify health and template discovery contracts"
+echo "3/9 Verify health and template discovery contracts"
 health="$(
     curl -fsS \
         -H "X-Email-Service-Key: $API_KEY" \
@@ -215,7 +215,7 @@ jq -e 'index("email/email-verify") != null and index("email/password-reset") != 
     <<<"$templates" >/dev/null \
     || fail "required UniAuth templates were not advertised"
 
-echo "4/8 Enqueue the UniAuth verification template over real HTTP"
+echo "4/9 Enqueue the UniAuth verification template over real HTTP"
 payload="$(
     jq -cn '{
       to: "shell@example.test",
@@ -242,7 +242,7 @@ response="$(
     || fail "template endpoint did not return success=true"
 queue_id="$(jq -er '.queueId' <<<"$response")"
 
-echo "5/8 Verify rendered content and configured queue policy in PostgreSQL"
+echo "5/9 Verify rendered content and configured queue policy in PostgreSQL"
 [ "$(db_value "SELECT status FROM email_queue WHERE id = $queue_id;")" = "PENDING" ] \
     || fail "event-disabled request was not left pending"
 [ "$(db_value "SELECT max_retries FROM email_queue WHERE id = $queue_id;")" = "4" ] \
@@ -252,7 +252,25 @@ echo "5/8 Verify rendered content and configured queue policy in PostgreSQL"
 [ "$(db_value "SELECT count(*) FROM email_logs;")" = "0" ] \
     || fail "HTTP E2E unexpectedly attempted SMTP delivery"
 
-echo "6/8 Reject malformed and unsupported requests without persistence"
+echo "6/9 Verify queue detail omits rendered content and metadata"
+queue_detail="$(
+    curl -fsS \
+        -H "X-Email-Service-Key: $API_KEY" \
+        "http://127.0.0.1:${SERVER_PORT}/api/email/queue/${queue_id}"
+)"
+[ "$(jq -er '.id' <<<"$queue_detail")" = "$queue_id" ] \
+    || fail "queue detail returned the wrong queue id"
+[ "$(jq -er '.status' <<<"$queue_detail")" = "PENDING" ] \
+    || fail "queue detail returned the wrong status"
+jq -e 'has("htmlContent") | not' <<<"$queue_detail" >/dev/null \
+    || fail "queue detail exposed rendered email content"
+jq -e 'has("metadata") | not' <<<"$queue_detail" >/dev/null \
+    || fail "queue detail exposed internal metadata"
+if grep -Fq "246810" <<<"$queue_detail"; then
+    fail "queue detail exposed the verification code"
+fi
+
+echo "7/9 Reject malformed and unsupported requests without persistence"
 before_count="$(db_value "SELECT count(*) FROM email_queue;")"
 bad_subject="$(
     jq -cn '{
@@ -315,12 +333,12 @@ unknown_template="$(
 [ "$(db_value "SELECT count(*) FROM email_queue;")" = "$before_count" ] \
     || fail "rejected requests created queue rows"
 
-echo "7/8 Enforce bounded log pagination"
+echo "8/9 Enforce bounded log pagination"
 [ "$(request_status GET '/api/email/logs?page=1&size=101' \
     -H "X-Email-Service-Key: $API_KEY")" = "400" ] \
     || fail "oversized log page was accepted"
 
-echo "8/8 Restart without replaying migrations or losing the queue"
+echo "9/9 Restart without replaying migrations or losing the queue"
 stop_application
 start_application
 wait_for_application

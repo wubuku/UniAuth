@@ -52,9 +52,11 @@ public class EmailProcessorService {
             int successCount = 0, failedCount = 0;
 
             for (EmailQueue emailQueue : failedEmails) {
+                EmailRateLimiter.Reservation reservation = null;
                 boolean releaseReservation = false;
                 try {
-                    if (!rateLimiter.tryAcquire()) {
+                    reservation = rateLimiter.tryAcquire();
+                    if (reservation == null) {
                         log.warn("Recovery rate limit reached; remaining candidates stay pending");
                         break;
                     }
@@ -90,7 +92,7 @@ public class EmailProcessorService {
                     failedCount++;
                 } finally {
                     if (releaseReservation) {
-                        rateLimiter.release();
+                        reservation.release();
                     }
                 }
             }

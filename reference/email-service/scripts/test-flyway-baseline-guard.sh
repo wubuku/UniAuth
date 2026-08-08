@@ -201,12 +201,14 @@ DIRTY_DATABASE="email_dirty_schema_test"
 SHARED_DATABASE="uniauth_test"
 V2_DATABASE="email_v2_guard_test"
 ORPHAN_DATABASE="email_orphan_guard_test"
+CHECKSUM_DATABASE="email_checksum_guard_test"
 create_database "$DIRTY_DATABASE"
 create_database "$SHARED_DATABASE"
 create_database "$V2_DATABASE"
 create_database "$ORPHAN_DATABASE"
+create_database "$CHECKSUM_DATABASE"
 
-echo "1/8 Reject a shared database before Flyway can create schema objects"
+echo "1/9 Reject a shared database before Flyway can create schema objects"
 shared_log="$TEMP_DIR/shared-database.log"
 expect_startup_failure "$SHARED_DATABASE" "$shared_log"
 grep -Fq "Email service database name must contain email or mail" "$shared_log" \
@@ -218,7 +220,7 @@ grep -Fq "Email service database name must contain email or mail" "$shared_log" 
     "SELECT to_regclass('public.email_queue') IS NULL;")" = "t" ] \
     || fail "shared-database startup created email schema objects"
 
-echo "2/8 Reject a non-empty schema without Flyway history"
+echo "2/9 Reject a non-empty schema without Flyway history"
 db_command "$DIRTY_DATABASE" \
     -c "CREATE TABLE unexpected_table (id bigint PRIMARY KEY);" >/dev/null
 dirty_log="$TEMP_DIR/dirty-schema.log"
@@ -229,7 +231,7 @@ grep -Fq "non-empty schema" "$dirty_log" \
     "SELECT to_regclass('public.email_service_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "dirty-schema startup created Flyway history"
 
-echo "3/8 Apply only V1 to a disposable database"
+echo "3/9 Apply only V1 to a disposable database"
 v1_log="$TEMP_DIR/v1.log"
 start_application "$V2_DATABASE" "$v1_log" 1
 wait_for_application "$v1_log"
@@ -241,7 +243,7 @@ stop_application
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '2';")" = "0" ] \
     || fail "V1-only startup unexpectedly applied V2"
 
-echo "4/8 Reject V1 data that violates the V2 retry bound"
+echo "4/9 Reject V1 data that violates the V2 retry bound"
 db_command "$V2_DATABASE" -c "
     INSERT INTO email_queue (
         recipient,
@@ -272,7 +274,7 @@ expect_startup_failure "$V2_DATABASE" "$v2_failure_log"
 grep -Fq "chk_email_queue_retry_bounds" "$v2_failure_log" \
     || fail "V2 failure did not identify the retry-bound constraint"
 
-echo "5/8 Preserve V1 history and source data after failed V2"
+echo "5/9 Preserve V1 history and source data after failed V2"
 [ "$(db_value "$V2_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '1' AND success;")" = "1" ] \
     || fail "failed V2 damaged V1 history"
@@ -283,7 +285,7 @@ echo "5/8 Preserve V1 history and source data after failed V2"
     "SELECT count(*) FROM email_queue WHERE retry_count = 2 AND max_retries = 1;")" = "1" ] \
     || fail "failed V2 changed source data"
 
-echo "6/8 Forward-fix retry data and apply V2 successfully"
+echo "6/9 Forward-fix retry data and apply V2 successfully"
 db_command "$V2_DATABASE" \
     -c "UPDATE email_queue SET retry_count = max_retries WHERE retry_count > max_retries;" \
     >/dev/null
@@ -300,7 +302,7 @@ stop_application
     WHERE conname = 'chk_email_queue_retry_bounds';
 ")" = "1" ] || fail "V2 retry-bound constraint is missing"
 
-echo "7/8 Reject V1 logs that reference a missing queue row"
+echo "7/9 Reject V1 logs that reference a missing queue row"
 orphan_v1_log="$TEMP_DIR/orphan-v1.log"
 start_application "$ORPHAN_DATABASE" "$orphan_v1_log" 1
 wait_for_application "$orphan_v1_log"
@@ -333,7 +335,7 @@ grep -Fq "fk_email_logs_queue" "$orphan_failure_log" \
     "SELECT count(*) FROM email_logs WHERE queue_id = 999;")" = "1" ] \
     || fail "orphan-log failure changed source data"
 
-echo "8/8 Forward-fix the orphan reference and apply V2 successfully"
+echo "8/9 Forward-fix the orphan reference and apply V2 successfully"
 db_command "$ORPHAN_DATABASE" \
     -c "UPDATE email_logs SET queue_id = NULL WHERE queue_id = 999;" \
     >/dev/null
@@ -347,5 +349,81 @@ stop_application
 [ "$(db_value "$ORPHAN_DATABASE" \
     "SELECT count(*) FROM email_logs WHERE queue_id IS NULL;")" = "1" ] \
     || fail "forward-fixed orphan log was not preserved"
+
+echo "9/9 Reject checksum drift without changing data, then recover"
+checksum_initial_log="$TEMP_DIR/checksum-initial.log"
+start_application "$CHECKSUM_DATABASE" "$checksum_initial_log"
+wait_for_application "$checksum_initial_log"
+stop_application
+db_command "$CHECKSUM_DATABASE" -c "
+    INSERT INTO email_queue (
+        recipient,
+        subject,
+        html_content,
+        email_type,
+        status,
+        priority,
+        retry_count,
+        max_retries,
+        created_time,
+        updated_time
+    ) VALUES (
+        'checksum@example.test',
+        'Checksum guard',
+        '<p>preserve me</p>',
+        'TEST',
+        'PENDING',
+        5,
+        0,
+        3,
+        CURRENT_TIMESTAMP,
+        CURRENT_TIMESTAMP
+    );
+" >/dev/null
+original_checksum="$(db_value "$CHECKSUM_DATABASE" "
+    SELECT checksum
+    FROM email_service_flyway_schema_history
+    WHERE version = '1';
+")"
+drifted_checksum="$((original_checksum + 1))"
+db_command "$CHECKSUM_DATABASE" -c "
+    UPDATE email_service_flyway_schema_history
+    SET checksum = $drifted_checksum
+    WHERE version = '1';
+" >/dev/null
+checksum_failure_log="$TEMP_DIR/checksum-failure.log"
+expect_startup_failure "$CHECKSUM_DATABASE" "$checksum_failure_log"
+grep -Fq "Migration checksum mismatch" "$checksum_failure_log" \
+    || fail "checksum drift failure did not report a migration checksum mismatch"
+[ "$(db_value "$CHECKSUM_DATABASE" \
+    "SELECT count(*) FROM email_queue WHERE recipient = 'checksum@example.test';")" = "1" ] \
+    || fail "checksum validation failure changed migrated data"
+[ "$(db_value "$CHECKSUM_DATABASE" \
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "2" ] \
+    || fail "checksum validation failure changed Flyway history"
+[ "$(db_value "$CHECKSUM_DATABASE" "
+    SELECT checksum
+    FROM email_service_flyway_schema_history
+    WHERE version = '1';
+")" = "$drifted_checksum" ] \
+    || fail "checksum validation failure rewrote the drifted history checksum"
+db_command "$CHECKSUM_DATABASE" -c "
+    UPDATE email_service_flyway_schema_history
+    SET checksum = $original_checksum
+    WHERE version = '1';
+" >/dev/null
+checksum_recovery_log="$TEMP_DIR/checksum-recovery.log"
+start_application "$CHECKSUM_DATABASE" "$checksum_recovery_log"
+wait_for_application "$checksum_recovery_log"
+stop_application
+[ "$(db_value "$CHECKSUM_DATABASE" \
+    "SELECT count(*) FROM email_queue WHERE recipient = 'checksum@example.test';")" = "1" ] \
+    || fail "checksum recovery lost migrated data"
+[ "$(db_value "$CHECKSUM_DATABASE" "
+    SELECT checksum
+    FROM email_service_flyway_schema_history
+    WHERE version = '1';
+")" = "$original_checksum" ] \
+    || fail "checksum recovery did not preserve the explicitly restored checksum"
 
 echo "PASS: email service Flyway baseline guard"

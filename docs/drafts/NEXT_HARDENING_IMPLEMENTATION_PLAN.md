@@ -32,7 +32,7 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
 | Java | `mvn clean compile test-compile` 和 98 tests 已通过 |
-| 邮件参考服务 | 116 tests；18 个完整 ApplicationContext E2E；Java runtime guard 24 tests；Shell runtime 27/27、HTTP 8/8、Flyway guard 8/8 |
+| 邮件参考服务 | 124 tests；20 个完整 ApplicationContext E2E；Java runtime guard 24 tests；Shell runtime 27/27、HTTP 9/9、Flyway guard 9/9 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 14/14 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 12/12 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、19 个 Mock Playwright tests 已通过 |
@@ -723,6 +723,44 @@ Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19/19、Python 14/14
 统一门禁同时暴露并修复了邮箱注册 Playwright 的竞态夹具：验证响应使用 `user.id`，
 首页 `GET /api/user` 则按真实契约返回 `userId`。测试现使用同一注册用户的真实 wire
 形状并断言 `checkAuth()` 后的稳定状态，定向并发重复 10/10 和完整 19/19 均通过。
+
+### 邮件限流窗口 ownership 与附加 E2E 切片
+
+#### 2026-08-08 固定实施范围
+
+本切片只修复旧窗口 reservation 迟到释放可能扣减新窗口额度的问题，并扩充两个
+已有只读/失败关闭契约；不改变正常投递、retry、队列状态机、REST schema 或 Flyway
+migration。
+
+纳入范围：
+
+1. 每次受限 acquisition 返回绑定当前窗口 generation 的 reservation。
+2. reservation release 幂等，且只归还相同 generation 的额度；释放不依赖执行时
+   rate-limit enabled 配置。
+3. 单元测试覆盖窗口滚动、临时禁用、当前窗口释放、重复释放和禁用模式。
+4. event/recovery PostgreSQL/ApplicationContext E2E 覆盖 claim 内窗口滚动后旧
+   reservation 的迟到释放。
+5. Shell HTTP E2E 固定 queue detail 不披露 HTML/metadata，并确认当前夹具验证码
+   不出现在响应中；不把它描述为对允许返回字段的通用脱敏保证。
+6. Java PostgreSQL migration 测试与 Shell Flyway guard 固定 checksum drift
+   失败关闭、漂移 history 原样保持、数据不变和显式恢复路径。
+
+#### 当前状态
+
+邮件组件统一门禁已通过：124 tests、20 个 PostgreSQL/GreenMail ApplicationContext
+E2E、Java runtime guard 24 tests、Shell runtime 27/27、HTTP/PostgreSQL 9/9、
+Flyway guard 9/9。当前组合工作树的根 `scripts/verify.sh` 也已通过：Java 98、
+HTTP 14/14、Flyway 12/12、Mock Playwright 19/19、Python 14/14，前端
+lint/type/build、文档链接和 patch hygiene 通过。收敛检查补强了 Java 与 Shell
+checksum drift 断言。并行根门禁随后暴露共享根 `target/` 的验证竞态：一个
+`mvn clean` 可删除另一进程正在使用的测试 class。根统一入口已改为在进程专属临时
+Git 快照中执行全部阶段，并在结束前校验原工作区指纹。收敛检查又发现快照清理会
+删除 CI 原本尝试从工作区上传的 Playwright trace；统一入口现支持仓库外的
+`VERIFICATION_ARTIFACTS_DIR`，按运行隔离保留 Surefire/Playwright 证据；邮件
+子门槛显式回传 Surefire XML，根门槛立即检查子状态和报告存在性，CI 从同一根目录
+上传。artifact 写入失败必须失败关闭，信号测试固定 `SIGINT=130`、
+`SIGTERM=143`；成功证据写入后若最终输出失败，EXIT 清理必须覆写真实非零状态。
+提交前必须通过带 artifact 目录和完整日志的相同根门禁。
 
 ### Flyway baseline guard 并发隔离切片
 

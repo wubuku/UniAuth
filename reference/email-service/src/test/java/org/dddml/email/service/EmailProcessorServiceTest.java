@@ -39,6 +39,9 @@ class EmailProcessorServiceTest {
     private EmailRateLimiter rateLimiter;
 
     @Mock
+    private EmailRateLimiter.Reservation reservation;
+
+    @Mock
     private MailProperties mailProperties;
 
     @Mock
@@ -95,7 +98,7 @@ class EmailProcessorServiceTest {
         enableRecovery();
         when(emailQueueRepository.findFailedOrStuckEmails(any(), any(), any()))
             .thenReturn(new PageImpl<>(List.of(queue), PageRequest.of(0, 50), 1));
-        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(rateLimiter.tryAcquire()).thenReturn(reservation);
         when(claimService.claimRecoverable(eq(1L), any(LocalDateTime.class), any(LocalDateTime.class)))
             .thenReturn(true);
         when(deliveryService.deliver(1L, "SCHEDULED"))
@@ -111,13 +114,13 @@ class EmailProcessorServiceTest {
         enableRecovery();
         when(emailQueueRepository.findFailedOrStuckEmails(any(), any(), any()))
             .thenReturn(new PageImpl<>(List.of(queue), PageRequest.of(0, 50), 1));
-        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(rateLimiter.tryAcquire()).thenReturn(reservation);
         when(claimService.claimRecoverable(eq(1L), any(LocalDateTime.class), any(LocalDateTime.class)))
             .thenReturn(false);
 
         emailProcessorService.recoverFailedEmails();
 
-        verify(rateLimiter).release();
+        verify(reservation).release();
         verify(deliveryService, never()).deliver(1L, "SCHEDULED");
     }
 
@@ -126,7 +129,7 @@ class EmailProcessorServiceTest {
         enableRecovery();
         when(emailQueueRepository.findFailedOrStuckEmails(any(), any(), any()))
             .thenReturn(new PageImpl<>(List.of(queue), PageRequest.of(0, 50), 1));
-        when(rateLimiter.tryAcquire()).thenReturn(false);
+        when(rateLimiter.tryAcquire()).thenReturn(null);
 
         emailProcessorService.recoverFailedEmails();
 
@@ -148,7 +151,7 @@ class EmailProcessorServiceTest {
         enableRecovery();
         when(emailQueueRepository.findFailedOrStuckEmails(any(), any(), any()))
             .thenReturn(new PageImpl<>(List.of(queue, second), PageRequest.of(0, 50), 2));
-        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(rateLimiter.tryAcquire()).thenReturn(reservation);
         when(claimService.claimRecoverable(any(), any(), any())).thenReturn(true);
         when(deliveryService.deliver(any(), eq("SCHEDULED")))
             .thenReturn(EmailDeliveryService.DeliveryOutcome.SUCCESS);
@@ -163,14 +166,14 @@ class EmailProcessorServiceTest {
         enableRecovery();
         when(emailQueueRepository.findFailedOrStuckEmails(any(), any(), any()))
             .thenReturn(new PageImpl<>(List.of(queue), PageRequest.of(0, 50), 1));
-        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(rateLimiter.tryAcquire()).thenReturn(reservation);
         doThrow(new IllegalStateException("claim unavailable"))
             .when(claimService)
             .claimRecoverable(eq(1L), any(LocalDateTime.class), any(LocalDateTime.class));
 
         emailProcessorService.recoverFailedEmails();
 
-        verify(rateLimiter).release();
+        verify(reservation).release();
         verify(deliveryService, never()).deliver(1L, "SCHEDULED");
     }
 
@@ -179,7 +182,7 @@ class EmailProcessorServiceTest {
         enableRecovery();
         when(emailQueueRepository.findFailedOrStuckEmails(any(), any(), any()))
             .thenReturn(new PageImpl<>(List.of(queue), PageRequest.of(0, 50), 1));
-        when(rateLimiter.tryAcquire()).thenReturn(true);
+        when(rateLimiter.tryAcquire()).thenReturn(reservation);
         when(claimService.claimRecoverable(eq(1L), any(LocalDateTime.class), any(LocalDateTime.class)))
             .thenReturn(true);
         doThrow(new IllegalStateException("delivery unavailable"))
@@ -188,7 +191,7 @@ class EmailProcessorServiceTest {
 
         emailProcessorService.recoverFailedEmails();
 
-        verify(rateLimiter, never()).release();
+        verify(reservation, never()).release();
     }
 
     private void enableRecovery() {

@@ -334,6 +334,76 @@ Flyway history 前失败关闭。第二个 fixture 在 baseline 已创建后注�
   Mock Playwright 19/19、Python 14/14，前端 lint/type/build、文档链接和
   patch hygiene 通过。
 
+## 2026-08-08 限流 reservation 窗口 ownership 与附加 E2E 增量
+
+> 状态：Verified。邮件组件和根统一门禁均于 2026-08-08 通过。
+
+本轮延续上一切片，不改变邮件内容、队列状态机、retry、REST schema 或 Flyway
+migration：
+
+- `EmailRateLimiter.tryAcquire()` 返回绑定当前窗口 generation 的 reservation；
+  release 幂等，只能归还同一窗口额度。
+- 旧窗口 reservation 在新窗口开始后迟到释放不会扣减新窗口计数；取得额度后临时
+  关闭限流也不影响原 reservation 的正确释放。
+- event/recovery 的 PostgreSQL/ApplicationContext E2E 在 claim 内滚动窗口并取得
+  新窗口唯一额度，随后让旧 reservation 释放，确认新额度仍保持占用。
+- Shell HTTP E2E 新增 queue detail 披露边界断言：响应不包含渲染 HTML/metadata，
+  且当前夹具的验证码值不出现在响应中。endpoint 仍返回 subject，不能据此推导任意
+  敏感值都不可能经允许字段返回。
+- Shell Flyway guard 新增 checksum drift 场景，确认启动失败关闭、不改变业务数据
+  和成功 history 行数，也不自动改写漂移 checksum；显式恢复原 checksum 后可正常
+  启动。Java PostgreSQL migration 集成测试覆盖同一保持和恢复路径。
+
+邮件组件验证结果：
+
+- Maven：124 tests，0 failures/errors/skips；其中 20 个 PostgreSQL/GreenMail
+  ApplicationContext E2E、24 个 Java runtime guard tests。
+- Shell runtime guard 27/27、HTTP/PostgreSQL E2E 9/9、Flyway guard 9/9。
+- 根统一门禁：Java 98 tests、HTTP E2E 14/14、Flyway guard 12/12、
+  Mock Playwright 19/19、Python 14/14，前端 lint/type/build、文档链接和
+  patch hygiene 通过。
+- 完整日志：`/tmp/uniauth-email-verify-checksum-preservation-20260808.log`，该路径是本机
+  临时证据，不属于仓库交付物。
+- 根统一门禁日志：`/tmp/uniauth-verify-checksum-preservation-20260808.log`，
+  该路径同样只作为本机临时证据。
+
+## 2026-08-08 根统一门禁源码快照隔离
+
+> 状态：Implemented。最终提交门槛固定使用下述仓库外 artifact 目录并保存完整日志。
+
+根 `scripts/verify.sh` 现在先固定当前 HEAD、tracked diff 和非忽略 untracked 文件
+指纹，再把全部非忽略源码复制到进程专属临时 Git 快照中执行 11 个阶段。这样并行
+门禁不会共享根 `target/`、前端 `node_modules/` 或静态构建输出，也不会因另一进程
+执行 `mvn clean` 导致测试运行中 `.class` 消失。门禁结束前会在原工作区执行
+`git diff --check` 并重新核对源码指纹；`rsync` 完成后也会在编译前立即复核一次，
+避免对写入中的中间态执行昂贵测试。验证期间发生任何源码或计划文档变化都失败关闭，
+不能继承快照结果。邮件参考服务的独立快照入口执行同样的复制后复核。
+
+快照无论成功或失败都会在显式的 `VERIFICATION_ARTIFACTS_DIR` 下创建运行专属目录，
+保留可用的主服务 Surefire 报告、邮件参考服务独立快照回传的 Surefire 报告、
+Playwright `test-results`/report/blob report，并写入退出码、HEAD 和源码指纹。
+该目录必须是仓库外的绝对路径，且符号链接解析后的目标仍必须位于仓库外。根门槛在
+邮件阶段结束后立即断言子门槛 `verification-status.txt` 为 `exit_code=0` 且至少
+存在一个 `TEST-*.xml`；任意 artifact 复制或状态写入失败都会反向令门槛失败。
+`SIGINT`/`SIGTERM` 分别固定记录 `130`/`143`，不能留下 `exit_code=0` 的伪成功。
+成功证据已写入后若最终 `PASS` 输出失败，EXIT 清理仍会以真实非零状态重新保存，
+不能让较早的 `exit_code=0` 掩盖进程失败。
+CI 从 runner 临时目录上传失败证据；不能从原工作区 `frontend/test-results`
+取文件，因为测试实际在快照中执行。
+
+最终提交门槛：
+
+```bash
+VERIFICATION_ARTIFACTS_DIR=/tmp/uniauth-verification-artifacts-20260808 \
+  PYTHON_BIN=python3 scripts/verify.sh \
+  2>&1 | tee /tmp/uniauth-verify-root-snapshot-20260808.log
+```
+
+只有日志以 `PASS: complete repository verification gate` 结束，且 artifact
+根运行和邮件子运行的 `verification-status.txt` 都记录 `exit_code=0`，邮件目录
+存在 Surefire XML，才能继承本轮完整门槛结果。路径与信号守卫由
+`scripts/test-verification-artifacts-guard.sh` 的 `8/8` 测试固定。
+
 前端依赖已把 Axios、Ethers、Vite、Rollup、PostCSS 及相关传递依赖升级到修复版本。
 审计仍报告 2 个 React Router moderate advisories；当前代码只使用客户端
 `BrowserRouter/Routes`，导航 pathname 均为固定同源值；OAuth provider 错误仅进入

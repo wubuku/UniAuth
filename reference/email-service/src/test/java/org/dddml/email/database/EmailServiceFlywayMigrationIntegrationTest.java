@@ -196,12 +196,18 @@ class EmailServiceFlywayMigrationIntegrationTest {
     }
 
     @Test
-    void checksumMismatchFailsValidationWithoutChangingMigratedData() throws Exception {
+    void checksumMismatchPreservesHistoryAndDataUntilExplicitlyRepaired() throws Exception {
         String schema = newSchema();
         flyway(schema, null).migrate();
 
+        int originalChecksum;
         try (Connection connection = connection(schema);
              Statement statement = connection.createStatement()) {
+            originalChecksum = queryInt(statement, """
+                SELECT checksum
+                FROM email_service_flyway_schema_history
+                WHERE version = '1'
+                """);
             statement.executeUpdate("""
                 INSERT INTO email_queue (
                     recipient, subject, html_content, email_type, status, priority,
@@ -230,6 +236,28 @@ class EmailServiceFlywayMigrationIntegrationTest {
                 WHERE success = TRUE
                   AND version IN ('1', '2')
                 """)).isEqualTo(2);
+            assertThat(queryInt(statement, """
+                SELECT checksum
+                FROM email_service_flyway_schema_history
+                WHERE version = '1'
+                """)).isEqualTo(originalChecksum + 1);
+            statement.executeUpdate("""
+                UPDATE email_service_flyway_schema_history
+                SET checksum = %d
+                WHERE version = '1'
+                """.formatted(originalChecksum));
+        }
+
+        flyway(schema, null).migrate();
+
+        try (Connection connection = connection(schema);
+             Statement statement = connection.createStatement()) {
+            assertThat(queryInt(statement, "SELECT COUNT(*) FROM email_queue")).isEqualTo(1);
+            assertThat(queryInt(statement, """
+                SELECT checksum
+                FROM email_service_flyway_schema_history
+                WHERE version = '1'
+                """)).isEqualTo(originalChecksum);
         }
     }
 

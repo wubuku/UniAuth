@@ -247,6 +247,9 @@ scripts/verify.sh
 - dirty schema、V2 坏数据和 forward-fix Flyway guard。
 - 先把所有非忽略源码复制到进程专属临时目录，所有构建和 E2E 都在该快照内执行；
   并行运行不会共享 `target/`，原源码在验证期间变化则失败关闭并要求重跑。
+- 根统一门槛通过仓库外的 `EMAIL_SERVICE_VERIFICATION_ARTIFACTS_DIR` 收集本快照的
+  Surefire XML 和退出状态，并在邮件阶段返回后立即检查；artifact 写失败、缺少
+  报告或非零子状态都必须失败关闭。
 
 ApplicationContext/PostgreSQL/SMTP 覆盖：
 
@@ -322,6 +325,24 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - Shell runtime guard：27/27。
 - Shell HTTP/PostgreSQL E2E：8/8。
 - Shell Flyway guard：8/8。
+
+2026-08-08 限流 reservation 窗口 ownership 与附加 E2E 加固增量：
+
+- Maven：124 tests，0 failures/errors/skips。
+- 其中 20 个 PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime
+  guard tests。
+- 每个受限 acquisition 返回绑定窗口 generation 的幂等 reservation；旧窗口迟到
+  释放不会扣减新窗口额度，限流配置临时关闭也不会阻止释放原 reservation。
+- event/recovery 的真实 Spring Bean E2E 同时覆盖窗口滚动期间 claim 返回 false，
+  确认新窗口额度保持占用、队列不投递且不写日志。
+- Shell HTTP E2E 断言 queue detail 不返回渲染 HTML/metadata，且当前夹具的验证码
+  值不出现在响应中；该 endpoint 仍返回 subject，这不是任意敏感值的通用脱敏保证。
+- Java PostgreSQL migration 测试和 Shell Flyway guard 注入 V1 checksum drift，
+  断言启动失败关闭、业务数据和 history 行数不变、漂移 checksum 不被自动改写；
+  显式恢复原 checksum 后可正常启动。
+- Shell runtime guard：27/27。
+- Shell HTTP/PostgreSQL E2E：9/9。
+- Shell Flyway guard：9/9。
 
 2026-08-08 SMTP transport 加固增量：
 

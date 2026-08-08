@@ -82,7 +82,9 @@ timeout，也拒绝超过 1024 字符或包含 CR/LF 的 API key。详细契约�
 SMTP 已接受后若数据库提交或进程失败，stuck recovery 可能使用相同 queue id 再次发送。
 event 与 recovery 共用单进程限流器；reservation 只在队列 claim 未成功或 delivery
 返回 `SKIPPED` 时释放。一旦调用 delivery bean 就视为一次投递尝试，即使后续 SMTP
-或数据库路径失败、抛异常也会消耗当前窗口配额。
+或数据库路径失败、抛异常也会消耗当前窗口配额。reservation 绑定取得额度时的窗口
+generation 并幂等释放，因此旧窗口迟到释放不会误释放新窗口额度；释放也不依赖
+执行时配置开关是否仍为 enabled。
 
 ### API 认证
 

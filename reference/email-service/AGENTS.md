@@ -25,7 +25,8 @@
   `sendMethod` 必须记录为 `UNKNOWN`，不得让审计写入失败并回滚 retry。
 - event/recovery 取得限流 slot 后，如果 claim 返回 false 或抛异常，必须释放；
   一旦调用 delivery bean 就按一次投递尝试计数，失败或异常不归还，`SKIPPED`
-  因未实际投递而释放。
+  因未实际投递而释放。reservation 必须绑定取得 slot 时的窗口 generation 且
+  幂等释放；旧窗口迟到释放不得扣减新窗口额度，配置临时关闭不得阻止释放旧额度。
 - 配置、实体、事件和请求 DTO 不得通过自动 `toString()` 暴露 API key、收件人、
   验证码或 HTML。
 - 默认测试可使用 H2/mock 做快速反馈，并使用 disposable PostgreSQL 和进程内
@@ -59,10 +60,13 @@ scripts/verify.sh
 ```
 
 该入口在进程专属临时源码快照中执行全部 Maven 和 E2E 阶段；不要绕过它直接依赖
-共享 `target/` 的结果。验证期间源文件发生变化时必须重跑。
+共享 `target/` 的结果。验证期间源文件发生变化时必须重跑。根统一门槛传入
+仓库外的 `EMAIL_SERVICE_VERIFICATION_ARTIFACTS_DIR`，邮件入口必须回传实际
+Surefire XML 和非伪造的退出状态；artifact 写入失败必须令验证失败。
 
 Flyway 是 PostgreSQL schema owner，history table 是
 `email_service_flyway_schema_history`；所有 profile 的 Hibernate 都使用 `validate`。
-已发布 migration 不得改写；新增 schema 变更使用 V3+。E2E 必须经过真实 HTTP、
-Flyway/PostgreSQL、真实 Spring Beans、Thymeleaf、异步事件和 GreenMail SMTP。
-不要把该参考实现描述为生产就绪服务。
+已发布 migration 不得改写；新增 schema 变更使用 V3+。checksum drift 测试必须
+证明失败启动不会自动改写 history，只有显式恢复后才能重新通过验证。E2E 必须经过
+真实 HTTP、Flyway/PostgreSQL、真实 Spring Beans、Thymeleaf、异步事件和
+GreenMail SMTP。不要把该参考实现描述为生产就绪服务。

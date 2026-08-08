@@ -56,12 +56,13 @@ jobs:
       - name: Run complete verification gate
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'true'
+          VERIFICATION_ARTIFACTS_DIR: ${{ runner.temp }}/uniauth-verification-artifacts
         run: scripts/verify.sh
 
-      - name: Upload Playwright traces on failure
+      - name: Upload verification artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-test-results
-          path: frontend/test-results
-          if-no-files-found: ignore
+          name: verification-failure-artifacts
+          path: ${{ runner.temp }}/uniauth-verification-artifacts
+          if-no-files-found: warn

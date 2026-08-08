@@ -33,9 +33,11 @@ public class EmailEventListener {
             return;
         }
 
+        EmailRateLimiter.Reservation reservation = null;
         boolean releaseReservation = false;
         try {
-            if (!rateLimiter.tryAcquire()) {
+            reservation = rateLimiter.tryAcquire();
+            if (reservation == null) {
                 log.warn("Rate limit reached [ID={}], handing to scheduled task", event.getQueueId());
                 return;
             }
@@ -64,7 +66,7 @@ public class EmailEventListener {
             );
         } finally {
             if (releaseReservation) {
-                rateLimiter.release();
+                reservation.release();
             }
         }
     }

@@ -5,14 +5,104 @@
 
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE_PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uniauth-verification.XXXXXX")"
+PROJECT_DIR="$TEMP_DIR/project"
+SOURCE_FILE_LIST="$TEMP_DIR/source-files"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+VERIFICATION_ARTIFACTS_DIR="${VERIFICATION_ARTIFACTS_DIR:-}"
+VERIFICATION_ARTIFACTS_ENABLED=false
+VERIFICATION_ARTIFACTS_SUCCESS_PRESERVED=false
 export TESTCONTAINERS_RYUK_DISABLED="${TESTCONTAINERS_RYUK_DISABLED:-true}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmjs.org/}"
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}localhost,127.0.0.1,::1"
 export no_proxy="${no_proxy:+${no_proxy},}localhost,127.0.0.1,::1"
 
-for command_name in bash docker git java mvn node npm; do
+source "$SOURCE_PROJECT_DIR/scripts/verification-artifacts-guard.sh"
+
+source_fingerprint() {
+    (
+        cd "$SOURCE_PROJECT_DIR"
+        git rev-parse HEAD
+        git diff --binary HEAD --
+        while IFS= read -r -d '' path; do
+            printf 'untracked:%s\0' "$path"
+            shasum -a 256 "./$path"
+        done < <(git ls-files --others --exclude-standard -z | sort -z)
+    ) | shasum -a 256 | awk '{print $1}'
+}
+
+write_source_file_list() {
+    (
+        cd "$SOURCE_PROJECT_DIR"
+        while IFS= read -r -d '' path; do
+            if [ -e "$path" ] || [ -L "$path" ]; then
+                printf '%s\0' "$path"
+            fi
+        done < <(git ls-files -co --exclude-standard -z | sort -z)
+    )
+}
+
+preserve_verification_artifacts() {
+    local exit_code="$1"
+    local artifacts_run_dir
+    local destination_dir
+    local relative_path
+    local source_path
+
+    if [ "$VERIFICATION_ARTIFACTS_ENABLED" != "true" ]; then
+        return
+    fi
+
+    artifacts_run_dir="$VERIFICATION_ARTIFACTS_DIR/$RUN_ID"
+    mkdir -p "$artifacts_run_dir" || return 1
+    for relative_path in \
+            target/surefire-reports \
+            frontend/test-results \
+            frontend/playwright-report \
+            frontend/blob-report; do
+        source_path="$PROJECT_DIR/$relative_path"
+        if [ ! -e "$source_path" ]; then
+            continue
+        fi
+        destination_dir="$artifacts_run_dir/$(dirname "$relative_path")"
+        mkdir -p "$destination_dir" || return 1
+        rsync -a "$source_path" "$destination_dir/" || return 1
+    done
+    {
+        printf 'exit_code=%s\n' "$exit_code"
+        printf 'source_head=%s\n' \
+            "$(git -C "$SOURCE_PROJECT_DIR" rev-parse HEAD 2>/dev/null || printf unavailable)"
+        printf 'source_fingerprint=%s\n' "${SOURCE_FINGERPRINT:-unavailable}"
+    } >"$artifacts_run_dir/verification-status.txt" || return 1
+    echo "Verification artifacts: $artifacts_run_dir"
+}
+
+cleanup() {
+    local exit_code="$1"
+    trap - EXIT INT TERM
+    set +e
+    if verification_artifacts_need_preservation \
+            "$VERIFICATION_ARTIFACTS_ENABLED" \
+            "$VERIFICATION_ARTIFACTS_SUCCESS_PRESERVED" \
+            "$exit_code"; then
+        if ! preserve_verification_artifacts "$exit_code"; then
+            echo "ERROR: failed to preserve verification artifacts" >&2
+            if [ "$exit_code" -eq 0 ]; then
+                exit_code=1
+            fi
+        fi
+    fi
+    rm -rf "$TEMP_DIR"
+    exit "$exit_code"
+}
+trap 'cleanup $?' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+for command_name in awk bash docker find git grep java mvn node npm rsync \
+        shasum sleep; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "ERROR: required command is unavailable: $command_name" >&2
         exit 1
@@ -22,9 +112,47 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
     echo "ERROR: configured Python is unavailable: $PYTHON_BIN" >&2
     exit 1
 fi
+if [ -n "$VERIFICATION_ARTIFACTS_DIR" ]; then
+    if ! resolved_artifacts_dir="$(
+        validate_verification_artifacts_dir \
+            "$PYTHON_BIN" \
+            "$VERIFICATION_ARTIFACTS_DIR" \
+            "$SOURCE_PROJECT_DIR"
+    )"; then
+        exit 1
+    fi
+    VERIFICATION_ARTIFACTS_DIR="$resolved_artifacts_dir"
+    VERIFICATION_ARTIFACTS_ENABLED=true
+fi
 if ! docker info >/dev/null 2>&1; then
     echo "ERROR: Docker is unavailable" >&2
     exit 1
+fi
+
+SOURCE_FINGERPRINT="$(source_fingerprint)"
+write_source_file_list >"$SOURCE_FILE_LIST"
+mkdir -p "$PROJECT_DIR"
+rsync -a \
+    --from0 \
+    --files-from="$SOURCE_FILE_LIST" \
+    "$SOURCE_PROJECT_DIR/" \
+    "$PROJECT_DIR/"
+if [ "$(source_fingerprint)" != "$SOURCE_FINGERPRINT" ]; then
+    echo "ERROR: repository sources changed while creating the verification snapshot; rerun the gate" >&2
+    exit 1
+fi
+git -C "$PROJECT_DIR" init -q
+git -C "$PROJECT_DIR" add -A
+git -C "$PROJECT_DIR" \
+    -c user.name="UniAuth Verification" \
+    -c user.email="verification@localhost" \
+    commit -qm "verification snapshot"
+
+if [ "${UNIAUTH_VERIFICATION_SIGNAL_TEST_MODE:-false}" = "true" ]; then
+    echo "Verification signal self-test ready"
+    while true; do
+        sleep 1
+    done
 fi
 
 cd "$PROJECT_DIR"
@@ -37,6 +165,7 @@ bash -n \
     scripts/*.sh \
     reference/email-service/start.sh \
     reference/email-service/scripts/*.sh
+bash scripts/test-verification-artifacts-guard.sh
 
 echo "Verification 2/11: frontend clean dependency install"
 (
@@ -57,7 +186,34 @@ echo "Verification 5/11: Java integration tests"
 mvn test
 
 echo "Verification 6/11: reference email-service compilation and integration tests"
-reference/email-service/scripts/verify.sh
+EMAIL_SERVICE_ARTIFACTS_DIR=""
+if [ "$VERIFICATION_ARTIFACTS_ENABLED" = "true" ]; then
+    EMAIL_SERVICE_ARTIFACTS_DIR="$VERIFICATION_ARTIFACTS_DIR/$RUN_ID/email-service"
+fi
+EMAIL_SERVICE_VERIFICATION_ARTIFACTS_DIR="$EMAIL_SERVICE_ARTIFACTS_DIR" \
+    reference/email-service/scripts/verify.sh
+if [ "$VERIFICATION_ARTIFACTS_ENABLED" = "true" ]; then
+    email_status_file="$(
+        find "$EMAIL_SERVICE_ARTIFACTS_DIR" \
+            -name verification-status.txt \
+            -type f \
+            -print \
+            -quit
+    )"
+    [ -n "$email_status_file" ] \
+        || { echo "ERROR: email verification status artifact is missing" >&2; exit 1; }
+    grep -Fxq 'exit_code=0' "$email_status_file" \
+        || { echo "ERROR: email verification artifact did not record success" >&2; exit 1; }
+    email_report_file="$(
+        find "$EMAIL_SERVICE_ARTIFACTS_DIR" \
+            -name 'TEST-*.xml' \
+            -type f \
+            -print \
+            -quit
+    )"
+    [ -n "$email_report_file" ] \
+        || { echo "ERROR: email Surefire report artifact is missing" >&2; exit 1; }
+fi
 
 echo "Verification 7/11: HTTP and Flyway shell E2E"
 scripts/test-http-e2e.sh
@@ -92,6 +248,17 @@ echo "Verification 11/11: documentation links and patch hygiene"
     python-resource-server/README.md \
     reference/email-service \
     .agents/skills/project-docs
-git diff --check
+git -C "$SOURCE_PROJECT_DIR" diff --check
+if [ "$(source_fingerprint)" != "$SOURCE_FINGERPRINT" ]; then
+    echo "ERROR: repository sources changed during verification; rerun the gate" >&2
+    exit 1
+fi
 
+if [ "$VERIFICATION_ARTIFACTS_ENABLED" = "true" ]; then
+    if ! preserve_verification_artifacts 0; then
+        echo "ERROR: failed to preserve successful verification artifacts" >&2
+        exit 1
+    fi
+    VERIFICATION_ARTIFACTS_SUCCESS_PRESERVED=true
+fi
 echo "PASS: complete repository verification gate"

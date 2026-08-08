@@ -201,7 +201,9 @@ recipient、subject、HTML 或 header token；非法 `sendMethod` 必须降级�
 `UNKNOWN`，不能让 `email_logs` 写入失败并回滚 retry。
 event 和 recovery 共用的单进程限流 slot 在 claim 返回 false 或抛异常时必须释放；
 一旦进入 delivery bean 就按一次投递尝试计数，即使后续失败或抛异常也不归还，
-只有 `SKIPPED` 表示未发生投递并释放 slot。
+只有 `SKIPPED` 表示未发生投递并释放 slot。每次取得 slot 都返回绑定当前窗口
+generation 的幂等 reservation；旧窗口的迟到释放不得扣减新窗口额度，临时关闭
+限流也不得阻止释放原窗口的 reservation。
 
 ## Database Reality
 
@@ -297,6 +299,11 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 2026-08-08 限流 reservation 异常路径加固增量：邮件参考服务 116 tests，
   18 个 PostgreSQL/GreenMail ApplicationContext E2E；runtime 27/27、HTTP 8/8
   和 Flyway guard 8/8 保持通过。
+- 2026-08-08 限流 reservation 窗口 ownership 与附加 E2E 加固增量：邮件参考服务
+  124 tests，20 个 PostgreSQL/GreenMail ApplicationContext E2E；runtime 27/27、
+  HTTP 9/9、Flyway guard 9/9。HTTP E2E 断言 queue detail 不返回 HTML/metadata，
+  且当前验证码夹具值不出现在响应中；Flyway guard 断言 checksum drift 失败关闭、
+  漂移 checksum 保持、数据不变且可显式恢复。
 - Shell HTTP E2E：14/14。
 - Flyway baseline guard：12/12。
 - Mock Playwright：19 tests。
@@ -318,7 +325,15 @@ PYTHON_BIN=python3 scripts/verify.sh
   会断言一次 rehearsal 的 5 个配置路径互不相同且均被删除，并已通过两套并行
   `12/12` guard 验证。
 - `scripts/verify.sh` 是本地统一验证入口；`.github/workflows/verification.yml` 在 CI
-  中执行同一入口。
+  中执行同一入口。根入口会复制当前全部非忽略源码到进程专属临时 Git 快照后执行
+  11 个阶段，避免并行 `mvn clean`、`npm ci` 或前端构建共享 `target/`、
+  `node_modules/` 和静态生成物；原工作区源码在验证期间变化时失败关闭。需要保留
+  Surefire 报告和 Playwright trace 时，将绝对且位于仓库外的
+  `VERIFICATION_ARTIFACTS_DIR` 传给入口；CI 已固定上传该目录，不能改回原工作区
+  `frontend/test-results`。根门槛必须断言邮件子门槛的 `exit_code=0` 和实际
+  Surefire XML 已回传；artifact 写入失败必须令门槛失败。`SIGINT`/`SIGTERM`
+  分别记录为 `130`/`143`；成功证据写入后若最终输出失败，也必须用真实非零状态
+  覆写，不能生成伪成功状态。
 - 邮件参考服务的统一入口会复制当前非忽略源码到进程专属临时目录后执行全部 Maven
   和 E2E 阶段，避免并行 `mvn clean` 共享 `target/`；验证期间源文件变化会失败关闭。
 - 后续变更必须重新运行受影响门禁，不能继承该结果。
@@ -335,6 +350,11 @@ PYTHON_BIN=python3 scripts/verify.sh
   18 个 PostgreSQL/GreenMail ApplicationContext E2E、Java runtime guard 24 tests、
   Shell runtime 27/27、HTTP/Flyway 各 8/8；根 Java 98 tests、HTTP 14/14、
   Flyway 12/12、Mock Playwright 19/19、Python 14/14 和前端 lint/type/build 通过。
+- 限流 reservation 窗口 ownership 与附加 E2E 的邮件组件门禁已通过：124 tests、
+  20 个 PostgreSQL/GreenMail ApplicationContext E2E、Java runtime guard 24 tests、
+  Shell runtime 27/27、HTTP/Flyway 各 9/9；当前组合工作树的根统一门禁也已通过：
+  Java 98 tests、HTTP 14/14、Flyway 12/12、Mock Playwright 19/19、Python 14/14，
+  前端 lint/type/build、文档链接和 patch hygiene 通过。
 - root Flyway baseline guard 临时配置并发隔离修复已通过两套并行 `12/12` 定向
   验证，并随当前组合工作树通过完整根统一门禁。
 

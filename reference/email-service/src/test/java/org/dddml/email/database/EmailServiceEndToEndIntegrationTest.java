@@ -36,6 +36,7 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.AopTestUtils;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -51,11 +52,13 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 
 @SpringBootTest(
@@ -879,6 +882,74 @@ class EmailServiceEndToEndIntegrationTest {
         }
     }
 
+    @Test
+    void eventLateReleaseDoesNotFreeTheCurrentRateLimitWindow() throws Exception {
+        EmailQueue queued = savePendingQueue(
+            "event-window-rollover@example.test",
+            "Event window rollover"
+        );
+        enableSingleSlotRateLimit();
+        AtomicReference<EmailRateLimiter.Reservation> currentWindowReservation =
+            new AtomicReference<>();
+        doAnswer(invocation -> {
+            expireRateLimitWindow();
+            currentWindowReservation.set(trackRateLimitReservation(
+                emailRateLimiter.tryAcquire()
+            ));
+            return false;
+        })
+            .when(emailQueueClaimService)
+            .claimPending(eq(queued.getId()), any(LocalDateTime.class));
+
+        try {
+            EmailEventListener target =
+                AopTestUtils.getUltimateTargetObject(emailEventListener);
+            target.handleEmailQueuedEvent(new EmailQueuedEvent(this, queued.getId()));
+
+            assertThat(currentWindowReservation.get()).isNotNull();
+            assertThat(emailRateLimiter.tryAcquire()).isNull();
+            assertQueueWasNotDelivered(queued.getId());
+        } finally {
+            resetRateLimit();
+        }
+    }
+
+    @Test
+    void recoveryLateReleaseDoesNotFreeTheCurrentRateLimitWindow() {
+        EmailQueue queued = savePendingQueue(
+            "recovery-window-rollover@example.test",
+            "Recovery window rollover"
+        );
+        enableSingleSlotRateLimit();
+        mailProperties.getRecovery().setEnabled(true);
+        AtomicReference<EmailRateLimiter.Reservation> currentWindowReservation =
+            new AtomicReference<>();
+        doAnswer(invocation -> {
+            expireRateLimitWindow();
+            currentWindowReservation.set(trackRateLimitReservation(
+                emailRateLimiter.tryAcquire()
+            ));
+            return false;
+        })
+            .when(emailQueueClaimService)
+            .claimRecoverable(
+                eq(queued.getId()),
+                any(LocalDateTime.class),
+                any(LocalDateTime.class)
+            );
+
+        try {
+            emailProcessorService.recoverFailedEmails();
+
+            assertThat(currentWindowReservation.get()).isNotNull();
+            assertThat(emailRateLimiter.tryAcquire()).isNull();
+            assertQueueWasNotDelivered(queued.getId());
+        } finally {
+            mailProperties.getRecovery().setEnabled(false);
+            resetRateLimit();
+        }
+    }
+
     private long enqueueTemplate(String to, String subject, String templateName,
                                  Map<String, Object> variables, String emailType) {
         ResponseEntity<Map<String, Object>> response = exchange(
@@ -920,14 +991,34 @@ class EmailServiceEndToEndIntegrationTest {
     }
 
     private void assertSingleRateLimitSlotAvailable() {
-        assertThat(emailRateLimiter.tryAcquire()).isTrue();
-        assertThat(emailRateLimiter.tryAcquire()).isFalse();
+        assertThat(trackRateLimitReservation(emailRateLimiter.tryAcquire())).isNotNull();
+        assertThat(emailRateLimiter.tryAcquire()).isNull();
     }
 
     private void resetRateLimit() {
-        emailRateLimiter.release();
+        rateLimitReservations.forEach(EmailRateLimiter.Reservation::release);
+        rateLimitReservations.clear();
         mailProperties.getRateLimit().setEnabled(false);
         mailProperties.getRateLimit().setMaxPerMinute(60);
+    }
+
+    private final List<EmailRateLimiter.Reservation> rateLimitReservations =
+        new ArrayList<>();
+
+    private EmailRateLimiter.Reservation trackRateLimitReservation(
+            EmailRateLimiter.Reservation reservation) {
+        if (reservation != null) {
+            rateLimitReservations.add(reservation);
+        }
+        return reservation;
+    }
+
+    private void expireRateLimitWindow() {
+        ReflectionTestUtils.setField(
+            emailRateLimiter,
+            "windowStartedAt",
+            System.nanoTime() - Duration.ofMinutes(1).toNanos()
+        );
     }
 
     private void assertQueueWasNotDelivered(long queueId) {
