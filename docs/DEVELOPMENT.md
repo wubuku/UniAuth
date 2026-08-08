@@ -170,6 +170,9 @@ SMTP 或发送真实邮件。参考服务的真实进程 HTTP E2E 验证其自�
 边界，根 HTTP E2E 另外验证 UniAuth 调用它的跨进程模板入队契约。入口在进程专属
 临时源码快照中运行，避免并行 Maven `clean` 互相删除 `target/`；如果原源码在验证
 期间变化，门禁会失败并要求重跑。根 `scripts/verify.sh` 会执行同一入口。
+参考服务的 Flyway schema-owner 配置是硬约束，不是部署建议：Java
+ApplicationContext guard 和 Shell guard 都拒绝 Flyway、SQL init 或 Hibernate
+schema-generation 的外部覆盖；任何这类配置变化都必须重新运行完整参考服务门禁。
 
 启用邮箱注册验证或密码重置前：
 

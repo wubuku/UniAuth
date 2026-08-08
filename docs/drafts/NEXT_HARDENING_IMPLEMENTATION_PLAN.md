@@ -1,11 +1,12 @@
 # UniAuth 下一轮加固实施计划
 
 > 状态：Batch A、Batch B1、Batch B2a、Batch B2b、邮件服务边界、邮箱 challenge
-> 投递接受/原子消费、邮件 API 敏感响应、API key 单值鉴权和 Batch C 认证 Cookie/
-> 浏览器 refresh 存储预备切片已完成；Batch C 原子切换待下一轮冻结
+> 投递接受/原子消费、邮件 API 敏感响应、API key 单值鉴权、邮件 Flyway
+> schema-owner 覆盖保护、Batch C 认证 Cookie/浏览器 refresh 存储预备切片和
+> Web3/SIWE challenge 加固切片已完成；下一轮待重新探索并冻结
 > 事实基线：2026-08-07；邮件 SMTP、持久化投递和限流异常路径增量：2026-08-08
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
-> 前置成果：PostgreSQL-only、Flyway V1 baseline + V2 + V3 + V4、Testcontainers、
+> 前置成果：PostgreSQL-only、Flyway V1 baseline + V2 + V3 + V4 + V5、Testcontainers、
 > Java/Shell/Playwright/Python 与邮件参考服务基础门禁
 
 ## 1. 目标
@@ -29,11 +30,11 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 |------|----------|
 | 数据库 | `dev`、`test`、`prod` 只支持显式 PostgreSQL |
 | Schema owner | Flyway，runtime location 为 `db/migration/postgresql` |
-| 当前 migration | V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束/索引对齐 |
+| 当前 migration | V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束/索引对齐 + V5 Web3/SIWE message 绑定 |
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
-| Java | `mvn clean compile test-compile` 和 127 tests 已通过 |
-| 邮件参考服务 | 129 tests；22 个完整 ApplicationContext E2E；Java runtime guard 24 tests；Shell runtime 27/27、HTTP 10/10、Flyway guard 11/11 |
+| Java | `mvn clean compile test-compile` 和 131 tests 已通过 |
+| 邮件参考服务 | 131 tests；22 个完整 ApplicationContext E2E；Java runtime guard 26 tests；Shell runtime 37/37、HTTP 11/11、Flyway guard 12/12 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 15/15 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 13/13 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、21 个 Mock Playwright tests 已通过 |
@@ -53,14 +54,15 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 
 ### 3.1 已有后端覆盖
 
-- fresh PostgreSQL 执行 Flyway V1→V4，Hibernate validate。
-- 既有 V1 schema baseline 后执行 V2/V3/V4 并启动应用。
+- fresh PostgreSQL 执行 Flyway V1→V5，Hibernate validate。
+- 既有 V1 schema baseline 后执行 V2/V3/V4/V5 并启动应用。
 - Spring Session JDBC create/read/delete。
 - 本地注册、登录、错误密码、refresh、access/refresh type confusion。
 - `/api/user`、登录方式查询、设置 primary、删除、添加本地方式。
 - 登录方式并发 bind/set-primary、并发删除，以及删除与 set-primary 的组合竞争。
 - 邮箱注册、真实持久化验证码、密码重置。
-- Web3 本地签名登录、nonce replay、钱包绑定。
+- Web3 本地签名登录、完整 SIWE message 字段绑定、nonce replay、并发消费、并发生成
+  覆盖和钱包绑定。
 - `/api/auth/**` allowlist、未知/已删除路由 fail closed。
 - JWT key 文件权限、损坏文件和重载。
 
@@ -1041,6 +1043,65 @@ header、JSON body、状态码、模板、队列、SMTP、retry 或 Flyway V1/V2
 runtime `27/27`、HTTP `10/10`、Flyway guard `11/11` 均通过。完整根统一门禁和
 连续三轮无修改检查仍是提交前门槛。
 
+### 邮件服务 Flyway schema-owner 覆盖保护切片
+
+#### 2026-08-08 固定实施范围
+
+本切片只保护参考邮件服务现有 PostgreSQL/Flyway schema owner，不改变 REST、
+模板、队列、SMTP、retry、限流或 UniAuth 邮箱业务语义。
+
+纳入范围：
+
+1. Java `EmailServiceRuntimeGuard` 和 Shell `runtime-guard.sh` 固定并拒绝覆盖
+   Flyway enabled/baseline/clean/validation/out-of-order、migration location、
+   history table、schema、SQL init 和 Hibernate schema-generation 配置。
+2. `EmailServiceApplicationTests` 使用真实 Testcontainers PostgreSQL、Flyway
+   migration 和 Hibernate `validate`；不通过禁用 Flyway 或放宽 ORM 来绕过 guard。
+3. Spring ApplicationContext、Java guard、Shell runtime、真实 HTTP/PostgreSQL
+   E2E 和 Flyway baseline guard 同时覆盖安全值和危险覆盖矩阵。
+4. README、组件/根 AGENTS、配置、开发和验证文档明确：这些是外部服务依赖的
+   运行要求，不是可选推荐默认值。
+
+明确不纳入：
+
+- 修改邮件 HTTP 契约、模板、队列状态机、投递语义、SMTP 配置语义或根邮件 client。
+- 修改根项目 Web3/SIWE WIP、共享数据库或任何历史 Flyway migration。
+- 对共享 `blacksheep_dev` 执行 baseline/apply 或真实邮件供应商调用。
+
+#### 2026-08-08 定向验证结果
+
+- 邮件组件 Maven `131` tests，22 个 PostgreSQL/GreenMail ApplicationContext E2E、
+  26 个 Java runtime guard tests。
+- Shell runtime guard `37/37`、HTTP/PostgreSQL E2E `11/11`、Flyway baseline guard
+  `12/12`，完整 `reference/email-service/scripts/verify.sh` 通过。
+- E2E 证明 fresh migration、应用启动、重启和 Flyway history 均保持唯一 schema
+  owner；危险外部覆盖在 migration 前失败关闭。
+- 根项目完整统一门禁、连续三轮无修改检查和提交前工作区审计仍是交付门槛。
+
+#### 2026-08-08 Web3/SIWE challenge 绑定与 nonce 原子消费切片
+
+本切片只修复既有 Web3 登录/绑定流程的 challenge 可信边界和并发 replay 缺口，不
+增加新的登录方式、链或公开成功响应：
+
+1. 新增不可修改的 Flyway V5。`web3_nonces.message` 为必填，保存服务端生成的完整
+   SIWE message；迁移时删除 V1-V4 期间无法安全重建的旧未消费 nonce。
+2. nonce 生成使用 PostgreSQL `ON CONFLICT (wallet_address) DO UPDATE` 原子 upsert，
+   保持同一钱包“最新 challenge 覆盖旧 challenge”的既有语义，避免先查后写竞态。
+3. 验证先校验钱包签名和可选 request chain ID，再使用 wallet、nonce、完整 message、
+   有效期条件执行单条条件删除；并发提交只有一个请求能消费 challenge，过期记录按
+   wallet 惰性清理。
+4. 完整 message 的 domain、address、URI、chain ID、nonce、issuedAt 和 expiration
+   通过服务端保存的 exact message 绑定；篡改后即使由正确钱包重新签名也会失败。
+5. PostgreSQL/ApplicationContext 集成测试覆盖完整字段矩阵、request chain ID、
+   并发 replay、并发 nonce 生成和 V5 schema；Shell HTTP E2E 使用真实应用覆盖
+   domain/chain 篡改、并发 replay、重启幂等和最终 nonce 不变量；baseline guard
+   校验 V5 history 和 message 列。
+
+本切片验证结果：Web3/Flyway 定向 Maven 测试通过；真实 HTTP E2E `15/15`；Flyway
+baseline guard `13/13`；前端 lint、TypeScript、生产构建、Mock Playwright `21/21`；
+Python 资源服务器离线测试 `16/16`。统一根门禁和连续三轮无修改检查仍是本切片
+提交前硬门槛。
+
 #### Email/password
 
 - 通过可靠 outbox/delivery 状态关闭“外部先接受、本地 challenge 后失败”的窗口。
@@ -1053,11 +1114,8 @@ runtime `27/27`、HTTP `10/10`、Flyway guard `11/11` 均通过。完整根统�
 
 #### Web3/SIWE
 
-- 服务端保存并验证完整 challenge，而不是信任客户端回传 message。
-- 严格绑定 domain、URI、address、nonce、chainId、issuedAt、expiration。
-- nonce 通过单条条件删除/更新原子消费。
-- 过期 nonce 有明确清理策略。
-- 并发首次登录/绑定依赖数据库约束和稳定冲突映射。
+本节目标已由 2026-08-08 V5 切片完成。后续重新探索时继续检查 Web3 登录/绑定与
+账户创建之间的跨请求并发、失败映射和可观测性，但不得把新的钱包功能混入加固批次。
 
 ## 5. 每批硬门槛
 

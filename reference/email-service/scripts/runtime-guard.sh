@@ -51,6 +51,70 @@ email_service_require_boolean() {
     esac
 }
 
+email_service_require_exact_value() {
+    local variable_name="$1"
+    local value="$2"
+    local expected="$3"
+
+    if [ "$value" != "$expected" ]; then
+        echo "Error: ${variable_name} must be exactly ${expected}" >&2
+        return 1
+    fi
+}
+
+email_service_validate_schema_ownership_configuration() {
+    local flyway_enabled="${SPRING_FLYWAY_ENABLED:-true}"
+    local baseline_on_migrate="${SPRING_FLYWAY_BASELINE_ON_MIGRATE:-false}"
+    local clean_disabled="${SPRING_FLYWAY_CLEAN_DISABLED:-true}"
+    local validate_on_migrate="${SPRING_FLYWAY_VALIDATE_ON_MIGRATE:-true}"
+    local out_of_order="${SPRING_FLYWAY_OUT_OF_ORDER:-false}"
+    local flyway_locations="${SPRING_FLYWAY_LOCATIONS:-classpath:db/migration/postgresql}"
+    local flyway_table="${SPRING_FLYWAY_TABLE:-email_service_flyway_schema_history}"
+    local flyway_default_schema="${SPRING_FLYWAY_DEFAULT_SCHEMA:-public}"
+    local flyway_schemas="${SPRING_FLYWAY_SCHEMAS:-public}"
+    local sql_init_mode="${SPRING_SQL_INIT_MODE:-never}"
+    local hibernate_ddl_auto="${SPRING_JPA_HIBERNATE_DDL_AUTO:-validate}"
+
+    email_service_require_boolean SPRING_FLYWAY_ENABLED "$flyway_enabled" || return 1
+    email_service_require_boolean \
+        SPRING_FLYWAY_BASELINE_ON_MIGRATE \
+        "$baseline_on_migrate" || return 1
+    email_service_require_boolean \
+        SPRING_FLYWAY_CLEAN_DISABLED \
+        "$clean_disabled" || return 1
+    email_service_require_boolean \
+        SPRING_FLYWAY_VALIDATE_ON_MIGRATE \
+        "$validate_on_migrate" || return 1
+    email_service_require_boolean \
+        SPRING_FLYWAY_OUT_OF_ORDER \
+        "$out_of_order" || return 1
+
+    email_service_require_exact_value \
+        SPRING_FLYWAY_ENABLED "$flyway_enabled" true || return 1
+    email_service_require_exact_value \
+        SPRING_FLYWAY_BASELINE_ON_MIGRATE "$baseline_on_migrate" false || return 1
+    email_service_require_exact_value \
+        SPRING_FLYWAY_CLEAN_DISABLED "$clean_disabled" true || return 1
+    email_service_require_exact_value \
+        SPRING_FLYWAY_VALIDATE_ON_MIGRATE "$validate_on_migrate" true || return 1
+    email_service_require_exact_value \
+        SPRING_FLYWAY_OUT_OF_ORDER "$out_of_order" false || return 1
+    email_service_require_exact_value \
+        SPRING_FLYWAY_LOCATIONS "$flyway_locations" \
+        "classpath:db/migration/postgresql" || return 1
+    email_service_require_exact_value \
+        SPRING_FLYWAY_TABLE "$flyway_table" \
+        email_service_flyway_schema_history || return 1
+    email_service_require_exact_value \
+        SPRING_FLYWAY_DEFAULT_SCHEMA "$flyway_default_schema" public || return 1
+    email_service_require_exact_value \
+        SPRING_FLYWAY_SCHEMAS "$flyway_schemas" public || return 1
+    email_service_require_exact_value \
+        SPRING_SQL_INIT_MODE "$sql_init_mode" never || return 1
+    email_service_require_exact_value \
+        SPRING_JPA_HIBERNATE_DDL_AUTO "$hibernate_ddl_auto" validate || return 1
+}
+
 email_service_require_host() {
     local variable_name="$1"
     local value="$2"
@@ -163,6 +227,8 @@ email_service_prepare_runtime() {
             return 1
             ;;
     esac
+
+    email_service_validate_schema_ownership_configuration || return 1
 
     email_service_require_env EMAIL_POSTGRES_HOST || return 1
     email_service_require_env EMAIL_POSTGRES_PORT || return 1

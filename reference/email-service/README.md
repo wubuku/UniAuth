@@ -251,6 +251,15 @@ Flyway 是本组件唯一的 schema owner：
 - SQL init：`never`
 - Hibernate：所有 profile 均为 `ddl-auto=validate`
 
+这些值不是“推荐默认值”，而是运行契约。Spring `ApplicationContext` 中的
+`EmailServiceRuntimeGuard` 和 `scripts/runtime-guard.sh` 都会拒绝外部配置覆盖：
+Flyway 必须启用、禁止自动 baseline、禁止 clean、启用 migrate validation、禁止
+out-of-order，并固定 migration location、history table、schema；SQL init 必须为
+`never`，Hibernate schema generation 必须为 `validate`。因此，环境变量、JVM
+系统属性或部署平台注入的同名覆盖不能把 schema owner 切换给 Hibernate、SQL init
+或另一套 Flyway 配置。该拒绝矩阵由 Java guard 测试、Shell runtime guard、
+ApplicationContext PostgreSQL 测试、HTTP E2E 和 Flyway baseline guard 共同覆盖。
+
 V1 创建 `email_queue`、`email_logs`、基础检查约束和查询索引。V2 增加
 `retry_count <= max_retries`、日志到队列的 `ON DELETE SET NULL` 外键，以及恢复和
 状态分页索引。已发布 migration 不得改写；后续 schema 变更必须新增 V3+。邮件服务
@@ -312,10 +321,10 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 
 2026-08-08 当前组合基线：
 
-- 本组件 Maven：129 tests，0 failures/errors/skips；其中 22 个
-  PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime guard tests。
-- 本组件 Shell runtime 27/27、HTTP/PostgreSQL E2E 10/10、Flyway guard 11/11。
-- UniAuth 根项目：Java 127 tests、HTTP 15/15、Flyway 13/13、
+- 本组件 Maven：131 tests，0 failures/errors/skips；其中 22 个
+  PostgreSQL/GreenMail ApplicationContext E2E、26 个 Java runtime guard tests。
+- 本组件 Shell runtime 37/37、HTTP/PostgreSQL E2E 11/11、Flyway guard 12/12。
+- UniAuth 根项目：Java 131 tests、HTTP 15/15、Flyway 13/13、
   Mock Playwright 21/21、Python 资源服务器 16/16、邮件 REST stub contract 8/8；
   本轮功能性门禁已通过；完整根统一门禁的源码快照检查和连续三轮无修改检查仍是
   提交前门槛。
@@ -325,6 +334,16 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   `RestTemplateEmailServiceImpl` 验证失败不保存 challenge。
 - 默认门禁仍不连接真实 SMTP/供应商，也不证明最终收件、退信、外部 TLS 或
   “外部已接受后 UniAuth 本地事务失败”窗口。
+
+2026-08-08 Flyway schema-owner 覆盖保护增量：
+
+- `EmailServiceApplicationTests` 改为真实 Testcontainers PostgreSQL + Flyway +
+  Hibernate `validate`，测试夹具显式固定完整 schema-owner 配置。
+- Java `EmailServiceRuntimeGuard` 和 Shell guard 拒绝禁用 Flyway、自动 baseline、
+  clean、校验或 out-of-order，拒绝 migration location/history/schema、SQL init 和
+  Hibernate schema generation 覆盖。
+- 完整邮件服务门禁通过：Maven 131 tests、Java runtime guard 26/26、
+  Shell runtime 37/37、HTTP/PostgreSQL E2E 11/11、Flyway baseline guard 12/12。
 
 2026-08-07 初始纳入基线：
 

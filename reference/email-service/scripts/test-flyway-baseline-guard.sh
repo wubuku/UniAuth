@@ -136,6 +136,7 @@ start_application() {
     local database="$1"
     local log_file="$2"
     local flyway_target="${3:-}"
+    local flyway_override="${4:-}"
     SERVER_PORT="$(free_port)"
     (
         export SPRING_PROFILES_ACTIVE=dev
@@ -160,6 +161,9 @@ start_application() {
         export EMAIL_RATE_LIMIT_ENABLED=false
         if [ -n "$flyway_target" ]; then
             export SPRING_FLYWAY_TARGET="$flyway_target"
+        fi
+        if [ -n "$flyway_override" ]; then
+            export "$flyway_override"
         fi
         exec java -jar "$APPLICATION_JAR"
     ) >"$log_file" 2>&1 &
@@ -193,8 +197,10 @@ wait_for_application() {
 expect_startup_failure() {
     local database="$1"
     local log_file="$2"
+    local flyway_target="${3:-}"
+    local flyway_override="${4:-}"
 
-    start_application "$database" "$log_file"
+    start_application "$database" "$log_file" "$flyway_target" "$flyway_override"
     for _ in $(seq 1 60); do
         if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
             if wait "$APP_PID"; then
@@ -261,13 +267,15 @@ SHARED_DATABASE="uniauth_test"
 V2_DATABASE="email_v2_guard_test"
 ORPHAN_DATABASE="email_orphan_guard_test"
 CHECKSUM_DATABASE="email_checksum_guard_test"
+CONFIG_DATABASE="email_flyway_config_guard_test"
 create_database "$DIRTY_DATABASE"
 create_database "$SHARED_DATABASE"
 create_database "$V2_DATABASE"
 create_database "$ORPHAN_DATABASE"
 create_database "$CHECKSUM_DATABASE"
+create_database "$CONFIG_DATABASE"
 
-echo "1/11 Reject a shared database before Flyway can create schema objects"
+echo "1/12 Reject a shared database before Flyway can create schema objects"
 shared_log="$TEMP_DIR/shared-database.log"
 expect_startup_failure "$SHARED_DATABASE" "$shared_log"
 grep -Fq "Email service database name must contain email or mail" "$shared_log" \
@@ -279,7 +287,7 @@ grep -Fq "Email service database name must contain email or mail" "$shared_log" 
     "SELECT to_regclass('public.email_queue') IS NULL;")" = "t" ] \
     || fail "shared-database startup created email schema objects"
 
-echo "2/11 Reject a non-empty schema without Flyway history"
+echo "2/12 Reject a non-empty schema without Flyway history"
 db_command "$DIRTY_DATABASE" \
     -c "CREATE TABLE unexpected_table (id bigint PRIMARY KEY);" >/dev/null
 dirty_log="$TEMP_DIR/dirty-schema.log"
@@ -290,18 +298,18 @@ grep -Fq "non-empty schema" "$dirty_log" \
     "SELECT to_regclass('public.email_service_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "dirty-schema startup created Flyway history"
 
-echo "3/11 Apply only V1 to a disposable database"
+echo "3/12 Apply only V1 to a disposable database"
 v1_log="$TEMP_DIR/v1.log"
 start_application "$V2_DATABASE" "$v1_log" 1
 wait_for_application "$v1_log"
-echo "4/11 Verify migrated application response security headers"
+echo "4/12 Verify migrated application response security headers"
 assert_security_headers
 stop_application
 APPLICATION_API_KEY="email-flyway-key-${RUN_ID}"
 credential_log="$TEMP_DIR/v1-credential.log"
 start_application "$V2_DATABASE" "$credential_log" 1
 wait_for_application "$credential_log"
-echo "5/11 Reject repeated API-key headers after migration"
+echo "5/12 Reject repeated API-key headers after migration"
 assert_repeated_api_key_rejected
 stop_application
 APPLICATION_API_KEY=""
@@ -312,7 +320,7 @@ APPLICATION_API_KEY=""
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '2';")" = "0" ] \
     || fail "V1-only startup unexpectedly applied V2"
 
-echo "6/11 Reject V1 data that violates the V2 retry bound"
+echo "6/12 Reject V1 data that violates the V2 retry bound"
 db_command "$V2_DATABASE" -c "
     INSERT INTO email_queue (
         recipient,
@@ -343,7 +351,7 @@ expect_startup_failure "$V2_DATABASE" "$v2_failure_log"
 grep -Fq "chk_email_queue_retry_bounds" "$v2_failure_log" \
     || fail "V2 failure did not identify the retry-bound constraint"
 
-echo "7/11 Preserve V1 history and source data after failed V2"
+echo "7/12 Preserve V1 history and source data after failed V2"
 [ "$(db_value "$V2_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '1' AND success;")" = "1" ] \
     || fail "failed V2 damaged V1 history"
@@ -354,7 +362,7 @@ echo "7/11 Preserve V1 history and source data after failed V2"
     "SELECT count(*) FROM email_queue WHERE retry_count = 2 AND max_retries = 1;")" = "1" ] \
     || fail "failed V2 changed source data"
 
-echo "8/11 Forward-fix retry data, apply V2, and exercise the UniAuth template contract"
+echo "8/12 Forward-fix retry data, apply V2, and exercise the UniAuth template contract"
 db_command "$V2_DATABASE" \
     -c "UPDATE email_queue SET retry_count = max_retries WHERE retry_count > max_retries;" \
     >/dev/null
@@ -402,7 +410,7 @@ stop_application
     WHERE conname = 'chk_email_queue_retry_bounds';
 ")" = "1" ] || fail "V2 retry-bound constraint is missing"
 
-echo "9/11 Reject V1 logs that reference a missing queue row"
+echo "9/12 Reject V1 logs that reference a missing queue row"
 orphan_v1_log="$TEMP_DIR/orphan-v1.log"
 start_application "$ORPHAN_DATABASE" "$orphan_v1_log" 1
 wait_for_application "$orphan_v1_log"
@@ -435,7 +443,7 @@ grep -Fq "fk_email_logs_queue" "$orphan_failure_log" \
     "SELECT count(*) FROM email_logs WHERE queue_id = 999;")" = "1" ] \
     || fail "orphan-log failure changed source data"
 
-echo "10/11 Forward-fix the orphan reference and apply V2 successfully"
+echo "10/12 Forward-fix the orphan reference and apply V2 successfully"
 db_command "$ORPHAN_DATABASE" \
     -c "UPDATE email_logs SET queue_id = NULL WHERE queue_id = 999;" \
     >/dev/null
@@ -450,7 +458,7 @@ stop_application
     "SELECT count(*) FROM email_logs WHERE queue_id IS NULL;")" = "1" ] \
     || fail "forward-fixed orphan log was not preserved"
 
-echo "11/11 Reject checksum drift without changing data, then recover"
+echo "11/12 Reject checksum drift without changing data, then recover"
 checksum_initial_log="$TEMP_DIR/checksum-initial.log"
 start_application "$CHECKSUM_DATABASE" "$checksum_initial_log"
 wait_for_application "$checksum_initial_log"
@@ -525,5 +533,21 @@ stop_application
     WHERE version = '1';
 ")" = "$original_checksum" ] \
     || fail "checksum recovery did not preserve the explicitly restored checksum"
+
+echo "12/12 Reject an unsafe schema-owner override before migration"
+config_failure_log="$TEMP_DIR/config-failure.log"
+expect_startup_failure \
+    "$CONFIG_DATABASE" \
+    "$config_failure_log" \
+    "" \
+    "SPRING_FLYWAY_CLEAN_DISABLED=false"
+grep -Fq "SPRING_FLYWAY_CLEAN_DISABLED must be exactly true" "$config_failure_log" \
+    || fail "unsafe Flyway override did not fail in the runtime guard"
+[ "$(db_value "$CONFIG_DATABASE" \
+    "SELECT to_regclass('public.email_service_flyway_schema_history') IS NULL;")" = "t" ] \
+    || fail "unsafe Flyway override created migration history"
+[ "$(db_value "$CONFIG_DATABASE" \
+    "SELECT to_regclass('public.email_queue') IS NULL;")" = "t" ] \
+    || fail "unsafe Flyway override created email tables"
 
 echo "PASS: email service Flyway baseline guard"

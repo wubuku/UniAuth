@@ -23,6 +23,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -68,6 +69,13 @@ import static org.mockito.Mockito.doThrow;
         "spring.flyway.enabled=true",
         "spring.flyway.locations=classpath:db/migration/postgresql",
         "spring.flyway.table=email_service_flyway_schema_history",
+        "spring.flyway.default-schema=public",
+        "spring.flyway.schemas=public",
+        "spring.flyway.baseline-on-migrate=false",
+        "spring.flyway.clean-disabled=true",
+        "spring.flyway.validate-on-migrate=true",
+        "spring.flyway.out-of-order=false",
+        "spring.sql.init.mode=never",
         "spring.jpa.hibernate.ddl-auto=validate",
         "spring.jpa.open-in-view=false",
         "spring.mail.username=",
@@ -115,6 +123,9 @@ class EmailServiceEndToEndIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private Environment environment;
 
     @Autowired
     private EmailQueueRepository emailQueueRepository;
@@ -184,6 +195,20 @@ class EmailServiceEndToEndIntegrationTest {
 
         assertThat(tableCount).isEqualTo(2);
         assertThat(migrationCount).isEqualTo(2);
+        assertThat(environment.getProperty("spring.flyway.enabled", Boolean.class))
+            .isTrue();
+        assertThat(environment.getProperty("spring.flyway.baseline-on-migrate", Boolean.class))
+            .isFalse();
+        assertThat(environment.getProperty("spring.flyway.clean-disabled", Boolean.class))
+            .isTrue();
+        assertThat(environment.getProperty("spring.flyway.validate-on-migrate", Boolean.class))
+            .isTrue();
+        assertThat(environment.getProperty("spring.flyway.out-of-order", Boolean.class))
+            .isFalse();
+        assertThat(environment.getProperty("spring.sql.init.mode"))
+            .isEqualTo("never");
+        assertThat(environment.getProperty("spring.jpa.hibernate.ddl-auto"))
+            .isEqualTo("validate");
         assertThat(mailSender.getHost()).isEqualTo("127.0.0.1");
         assertThat(mailSender.getPort()).isEqualTo(SMTP.getSmtp().getPort());
         assertThat(mailSender.getJavaMailProperties())

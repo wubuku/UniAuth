@@ -313,7 +313,7 @@ response="$(
     || fail "template endpoint did not return success=true"
 queue_id="$(jq -er '.queueId' <<<"$response")"
 
-echo "6/10 Verify rendered content and configured queue policy in PostgreSQL"
+echo "6/11 Verify rendered content and configured queue policy in PostgreSQL"
 [ "$(db_value "SELECT status FROM email_queue WHERE id = $queue_id;")" = "PENDING" ] \
     || fail "event-disabled request was not left pending"
 [ "$(db_value "SELECT max_retries FROM email_queue WHERE id = $queue_id;")" = "4" ] \
@@ -323,7 +323,7 @@ echo "6/10 Verify rendered content and configured queue policy in PostgreSQL"
 [ "$(db_value "SELECT count(*) FROM email_logs;")" = "0" ] \
     || fail "HTTP E2E unexpectedly attempted SMTP delivery"
 
-echo "7/10 Verify queue detail omits rendered content and metadata"
+echo "7/11 Verify queue detail and queue stats omit rendered content"
 queue_detail="$(
     curl -fsS \
         -H "X-Email-Service-Key: $API_KEY" \
@@ -340,8 +340,25 @@ jq -e 'has("metadata") | not' <<<"$queue_detail" >/dev/null \
 if grep -Fq "246810" <<<"$queue_detail"; then
     fail "queue detail exposed the verification code"
 fi
+queue_stats="$(
+    curl -fsS \
+        -H "X-Email-Service-Key: $API_KEY" \
+        "http://127.0.0.1:${SERVER_PORT}/api/email/queue/stats"
+)"
+jq -e '
+    .pending == 1
+    and .processing == 0
+    and .completed == 0
+    and .failed == 0
+    and .eventDrivenCount == 0
+    and .scheduledCount == 0
+' <<<"$queue_stats" >/dev/null \
+    || fail "queue stats did not report the expected pending-only state"
+if grep -Fq "246810" <<<"$queue_stats"; then
+    fail "queue stats exposed rendered email content"
+fi
 
-echo "8/10 Reject malformed and unsupported requests without persistence"
+echo "8/11 Reject malformed and unsupported requests without persistence"
 before_count="$(db_value "SELECT count(*) FROM email_queue;")"
 bad_subject="$(
     jq -cn '{
@@ -404,12 +421,16 @@ unknown_template="$(
 [ "$(db_value "SELECT count(*) FROM email_queue;")" = "$before_count" ] \
     || fail "rejected requests created queue rows"
 
-echo "9/10 Enforce bounded log pagination"
+echo "9/11 Enforce bounded log pagination"
 [ "$(request_status GET '/api/email/logs?page=1&size=101' \
     -H "X-Email-Service-Key: $API_KEY")" = "400" ] \
     || fail "oversized log page was accepted"
 
-echo "10/10 Restart without replaying migrations or losing the queue"
+echo "10/11 Verify Flyway history remains stable before restart"
+[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "2" ] \
+    || fail "Flyway history changed before restart"
+
+echo "11/11 Restart without replaying migrations or losing the queue"
 stop_application
 start_application
 wait_for_application

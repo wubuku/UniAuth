@@ -41,6 +41,7 @@ public class EmailServiceRuntimeGuard {
     void validateRuntime() {
         String profile = validateProfile();
         validateDatabaseTarget();
+        validateSchemaOwnershipConfiguration();
         validateSmtpEndpoint();
         validateSmtpAuthentication();
         validateSmtpTransport(profile);
@@ -132,6 +133,89 @@ public class EmailServiceRuntimeGuard {
             return jdbcUrl.substring("jdbc:h2:mem:".length()).split("[;?]", 2)[0];
         }
         throw new IllegalStateException("Unsupported email service datasource URL");
+    }
+
+    private void validateSchemaOwnershipConfiguration() {
+        requireStrictBooleanProperty(
+            "spring.flyway.enabled",
+            true,
+            "SPRING_FLYWAY_ENABLED"
+        );
+        requireStrictBooleanProperty(
+            "spring.flyway.baseline-on-migrate",
+            false,
+            "SPRING_FLYWAY_BASELINE_ON_MIGRATE"
+        );
+        requireStrictBooleanProperty(
+            "spring.flyway.clean-disabled",
+            true,
+            "SPRING_FLYWAY_CLEAN_DISABLED"
+        );
+        requireStrictBooleanProperty(
+            "spring.flyway.validate-on-migrate",
+            true,
+            "SPRING_FLYWAY_VALIDATE_ON_MIGRATE"
+        );
+        requireStrictBooleanProperty(
+            "spring.flyway.out-of-order",
+            false,
+            "SPRING_FLYWAY_OUT_OF_ORDER"
+        );
+        requireExactProperty(
+            "spring.flyway.locations",
+            "classpath:db/migration/postgresql",
+            "SPRING_FLYWAY_LOCATIONS"
+        );
+        requireExactProperty(
+            "spring.flyway.table",
+            "email_service_flyway_schema_history",
+            "SPRING_FLYWAY_TABLE"
+        );
+        requireExactProperty(
+            "spring.flyway.default-schema",
+            "public",
+            "SPRING_FLYWAY_DEFAULT_SCHEMA"
+        );
+        requireExactProperty(
+            "spring.flyway.schemas",
+            "public",
+            "SPRING_FLYWAY_SCHEMAS"
+        );
+        requireExactProperty(
+            "spring.sql.init.mode",
+            "never",
+            "SPRING_SQL_INIT_MODE"
+        );
+        requireExactProperty(
+            "spring.jpa.hibernate.ddl-auto",
+            "validate",
+            "SPRING_JPA_HIBERNATE_DDL_AUTO"
+        );
+    }
+
+    private void requireStrictBooleanProperty(
+            String propertyName,
+            boolean expected,
+            String environmentVariableName) {
+        String expectedValue = Boolean.toString(expected);
+        String actualValue = environment.getProperty(propertyName);
+        if (!expectedValue.equals(actualValue)) {
+            throw new IllegalStateException(
+                environmentVariableName + " must be exactly " + expectedValue
+            );
+        }
+    }
+
+    private void requireExactProperty(
+            String propertyName,
+            String expected,
+            String environmentVariableName) {
+        String actual = environment.getProperty(propertyName);
+        if (!expected.equals(actual)) {
+            throw new IllegalStateException(
+                environmentVariableName + " must be exactly " + expected
+            );
+        }
     }
 
     private void validateSmtpAuthentication() {

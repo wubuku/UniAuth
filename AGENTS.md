@@ -46,7 +46,8 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - `dev`、`test`、`prod` 只支持 PostgreSQL。
 - 三个 profile 的 host、port、database、user 和 password 都必须显式提供。
 - Flyway 是唯一 schema owner；当前 runtime migration 链是 PostgreSQL V1 baseline +
-  V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束与索引对齐。
+  V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束与索引对齐 + V5
+  Web3/SIWE challenge message 绑定。
 - Hibernate 使用 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 外部邮件服务默认地址：`http://localhost:8095`。
 - UniAuth 主应用只实现邮件服务 HTTP 适配器；真实邮箱注册验证和密码重置需要独立
@@ -236,8 +237,10 @@ V1 精确复现获准的 8 张 dev auth/session 表；V2 对齐登录方式时�
 增加 provider/行形状约束和每用户至多一个 primary 的唯一索引；V3 增加用户级
 `login_methods_revision`，用于登录方式集合变更的乐观 CAS；V4 对齐 users、Web3
 nonce、email verification 和 token blacklist 的既有实体约束，补齐 email repository
-索引并移除有等价唯一/规范索引覆盖的重复索引。后续结构修复必须新增 V5+，不得修改
-已经发布或 baseline 的 V1/V2/V3/V4 checksum。
+索引并移除有等价唯一/规范索引覆盖的重复索引；V5 将 Web3 nonce 绑定到服务端签发
+的完整 SIWE message，并通过 PostgreSQL 条件删除完成一次性消费。V5 发布时会失效
+所有旧的未消费 Web3 challenge；后续结构修复必须新增 V6+，不得修改已经发布或
+baseline 的 V1/V2/V3/V4/V5 checksum。
 
 修改 entity/schema 时至少核对：
 
@@ -247,7 +250,7 @@ nonce、email verification 和 token blacklist 的既有实体约束，补齐 em
 - fresh migrate、existing-schema baseline、Hibernate validate 和 Session round-trip 测试
 - 生产/开发库的 preflight、备份、forward-fix 和显式 apply 流程
 
-旧 V1-V4、V6-V8（V5 缺失）及旧 PostgreSQL/SQLite init SQL 已原样归档到
+历史 V1-V4、V6-V8 及旧 PostgreSQL/SQLite init SQL 已原样归档到
 `docs/archive/database/legacy-sql/`，不得恢复到 runtime classpath。
 
 ## Frontend Workflow
@@ -300,7 +303,7 @@ PYTHON_BIN=python3 scripts/verify.sh
 
 当前验证基线（2026-08-08 工作树；每次后续变更仍须重跑）：
 
-- Maven：127 tests，0 failures/errors/skips。
+- Maven：131 tests，0 failures/errors/skips。
 - 邮件参考服务初始纳入基线：94 tests，0 failures/errors/skips；另有 runtime guard 15/15、
   Shell HTTP 8/8 和 Flyway guard 8/8。
 - 2026-08-08 SMTP transport 加固增量：邮件参考服务 101 tests，
@@ -328,6 +331,12 @@ PYTHON_BIN=python3 scripts/verify.sh
   PostgreSQL/GreenMail ApplicationContext E2E；runtime 27/27、HTTP 10/10、Flyway
   guard 11/11。配置 API key 时只接受恰好一个精确匹配的 header，重复正确值、
   正确/错误和错误/正确组合均返回 `401`；Python 邮件 stub contract 8/8。
+- 2026-08-08 邮件参考服务 Flyway schema-owner 覆盖保护增量：邮件服务 131 tests、
+  其中 22 个 PostgreSQL/GreenMail ApplicationContext E2E、26 个 Java runtime
+  guard tests；Shell runtime 37/37、HTTP 11/11、Flyway guard 12/12。测试夹具使用
+  真实 disposable PostgreSQL + Flyway + Hibernate `validate`；Java/Shell guard
+  均拒绝 Flyway disable/baseline/clean/validation/out-of-order、location/history/
+  schema、SQL init 和 Hibernate schema-generation 覆盖。
 - Shell HTTP E2E：15/15；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
 - Flyway baseline guard：13/13。
 - Mock Playwright：21 tests。
@@ -430,7 +439,8 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 邮件同步接受失败和 challenge 消费并发已经失败关闭/原子化；外部接受后本地事务
   失败、异步 delivery 失败、单一 pending challenge、canonical email 和可靠
   outbox/补偿状态机仍未解决。
-- Web3 尚未严格绑定完整 SIWE message，nonce 也不是原子消费。
+- Web3 V5 已严格绑定服务端保存的完整 SIWE message；nonce 生成使用 PostgreSQL
+  原子 upsert，验证使用带 message/有效期条件的原子消费，旧 challenge 在迁移时失效。
 - 登录方式并发 bind 与 set-primary 已由数据库约束和稳定冲突映射加固；删除与
   其他登录方式变更并发时仍可能产生零登录方式或零 primary，归下一批处理。
 - live 端口已统一到后端 `8081`、Python `5002`；部署域名仍需外部化。

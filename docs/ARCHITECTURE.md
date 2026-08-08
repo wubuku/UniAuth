@@ -187,11 +187,14 @@ access token 默认 1 小时，refresh token 默认 7 天。
 
 - 演示数据默认关闭；显式启用时只允许 disposable test/demo 数据库并只 upsert 受管账户。
 - Flyway 当前为 dev-derived V1 baseline + V2 登录方式约束 + V3 登录方式 revision
-  CAS + V4 实体约束与索引对齐；不得修改已发布的 V1/V2/V3/V4。
+  CAS + V4 实体约束与索引对齐 + V5 Web3/SIWE challenge message 绑定；不得修改
+  已发布的 V1/V2/V3/V4/V5。
 - V2 已对齐登录方式的时区/nullability，并增加 provider/行形状与 primary 唯一约束；
   V3 已保护 remove/set-primary 组合并发；V4 已对齐 users、Web3 nonce、email
   verification 和 token blacklist 的目标 nullability/default/check，并补齐 email 查询
   索引、移除可证明冗余的索引。其余 schema 和数据预检仍归后续 H1.4 切片。
+- V5 将 Web3 nonce 与服务端完整 SIWE message 绑定；nonce 生成采用 PostgreSQL
+  upsert，验证采用带 message 和有效期条件的原子删除，V5 migration 会失效旧 challenge。
 - Spring Session 表由 Flyway V1 管理，框架自动建表关闭。
 - `blacksheep_dev` 已通过只读 baseline rehearsal，尚未执行 baseline apply。
 

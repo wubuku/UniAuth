@@ -31,6 +31,11 @@
   幂等释放；旧窗口迟到释放不得扣减新窗口额度，配置临时关闭不得阻止释放旧额度。
 - 配置、实体、事件和请求 DTO 不得通过自动 `toString()` 暴露 API key、收件人、
   验证码或 HTML。
+- Flyway 是唯一 schema owner：`spring.flyway.enabled=true`、
+  `baseline-on-migrate=false`、`clean-disabled=true`、`validate-on-migrate=true`、
+  `out-of-order=false`，location/history/default schema/schemas 必须固定；SQL init
+  必须为 `never`，Hibernate 必须为 `validate`。Java ApplicationContext guard 和
+  `scripts/runtime-guard.sh` 都要拒绝环境变量、JVM 属性或部署平台注入的覆盖。
 - 所有 `/api/email` 及其子路径的响应都必须设置 `Cache-Control: no-store`、
   `Pragma: no-cache` 和 `X-Content-Type-Options: nosniff`，包括成功、鉴权失败、
   参数拒绝和路由错误；该策略不改变 JSON body 契约。
@@ -72,10 +77,11 @@ Surefire XML 和非伪造的退出状态；artifact 写入失败必须令验证�
 
 Flyway 是 PostgreSQL schema owner，history table 是
 `email_service_flyway_schema_history`；所有 profile 的 Hibernate 都使用 `validate`。
-已发布 migration 不得改写；新增 schema 变更使用 V3+。checksum drift 测试必须
+已发布 migration 不得改写；新增 schema 变更使用 V3+。Java/Shell guard 必须在迁移
+前拒绝 schema-owner 配置覆盖；checksum drift 测试必须
 证明失败启动不会自动改写 history，只有显式恢复后才能重新通过验证。E2E 必须经过
 真实 HTTP、Flyway/PostgreSQL、真实 Spring Beans、Thymeleaf、异步事件和
-GreenMail SMTP。不要把该参考实现描述为生产就绪服务。
+ GreenMail SMTP。不要把该参考实现描述为生产就绪服务。
 根项目 `scripts/test-http-e2e.sh` 的正常邮箱注册/重置路径会启动本服务真实 JAR 和
 独立 PostgreSQL，并检查 `email_queue`；根脚本仅在需要稳定制造 `503/429` 失败映射
 时切换到受控 stub。修改根邮件边界文档或脚本时，必须保持这一区分清晰。

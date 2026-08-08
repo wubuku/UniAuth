@@ -88,6 +88,7 @@
 | P1 | 说明参考服务敏感邮件 API 的 no-store/no-cache/nosniff 响应基线和验证证据 | 已完成 |
 | P1 | 说明邮件服务 API key header 的单值精确匹配要求和重复凭据拒绝证据 | 已完成 |
 | P1 | 说明根 HTTP E2E 使用真实参考邮件服务完成正常跨进程闭环，并仅用 stub 覆盖 503/429 失败映射 | 已完成 |
+| P1 | 说明参考服务 Flyway schema-owner 配置不可被外部覆盖，并记录 Java/Shell/ApplicationContext/Flyway guard 证据 | 已完成 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -116,7 +117,9 @@
 - Flyway V1 baseline + V2 + V3 + V4 已接管 8 张认证/Session 表，并加固登录方式
   行形状、primary、集合变更 CAS 以及其余目标实体约束和 email repository 索引；
   旧 SQL 已归档到 runtime classpath 外。
-- Java 已有 PostgreSQL/Testcontainers 集成测试，当前完整门禁为 127 tests。
+- Java 已有 PostgreSQL/Testcontainers 集成测试；当前完整门禁数量以最近一次
+  `mvn test` Surefire 汇总为准，Web3 V5 slice 另增字段绑定、并发 upsert/consume
+  覆盖。
 - HTTP Shell E2E 当前 15/15，Flyway baseline guard 13/13，
   Mock Playwright 21 tests，Python 资源服务器 16 tests，邮件 REST stub contract
   8 tests。
@@ -140,6 +143,9 @@
   Flyway migrated app 和 Python stub contract 固定。邮件 Shell HTTP/Flyway guard
   当前分别为 10/10 和 11/11，覆盖 queue detail 披露边界、响应安全 header、重复
   鉴权 header，以及 checksum drift 失败关闭、原样保持与显式恢复。
+- 参考服务当前组合门禁为 Maven 131 tests、Java runtime guard 26/26、Shell
+  runtime 37/37、HTTP 11/11、Flyway guard 12/12；Flyway 唯一 schema owner 的
+  固定配置和外部覆盖拒绝已由 Java/Shell/ApplicationContext/Flyway 层共同验证。
 - 根 `scripts/test-http-e2e.sh` 的正常邮箱注册/重置路径已使用真实
   `reference/email-service` JAR、独立 PostgreSQL 和真实 HTTP；仅失败/限流映射路径
   使用受控 stub。参考服务队列中的模板持久化已成为根 E2E 的直接断言。

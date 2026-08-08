@@ -124,6 +124,11 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - Flyway location 是 `classpath:db/migration/postgresql`，history table 是
   `email_service_flyway_schema_history`，当前 migration 为 V1 + V2。
 - 所有 profile 使用 Hibernate `validate`，SQL init 关闭。
+- 这些不是可被部署平台随意覆盖的建议默认值：参考实现的 Java
+  `EmailServiceRuntimeGuard` 和 Shell `runtime-guard.sh` 会拒绝 Flyway disable、
+  自动 baseline、clean、validation 或 out-of-order 覆盖，并拒绝 migration
+  location/history/schema、SQL init 和 Hibernate schema-generation 覆盖。兼容实现
+  也必须保持 Flyway 为唯一 schema owner。
 - loopback 监听时 API key 可选；任何非 loopback 监听都必须设置
   `EMAIL_SERVICE_API_KEY`。设置后所有 `/api/email/**` 端点都要求该 header；参考
   服务同样在启动阶段拒绝超过 1024 字符或包含 CR/LF 的值，并在请求阶段拒绝
@@ -221,8 +226,8 @@ base 配置固定 `JSESSIONID`、`HttpOnly=true`、`Path=/`、`SameSite=Lax`；
 
 - Flyway location：`classpath:db/migration/postgresql`
 - history table：`uniauth_flyway_schema_history`
-- 当前版本：V4（V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS +
-  V4 实体约束与索引对齐）
+- 当前版本：V5（V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS +
+  V4 实体约束与索引对齐 + V5 Web3/SIWE challenge message 绑定）
 - `baseline-on-migrate=false`
 - `clean-disabled=true`
 - SQL init：`never`
@@ -244,7 +249,7 @@ Spring Session 两张表已进入 V1，不再由框架或部署脚本旁路创�
 
 ### Migration 目录
 
-Flyway 只扫描 `src/main/resources/db/migration/postgresql/`。旧 V1-V4、V6-V8
+Flyway 只扫描 `src/main/resources/db/migration/postgresql/`。历史 V1-V4、V6-V8
 和四份 SQL init 文件已归档到 `docs/archive/database/legacy-sql/`，不能执行或复制回
 runtime classpath。
 
@@ -252,8 +257,13 @@ V1 来自获准的实际 dev PostgreSQL 8 表结构。V2 加固登录方式时�
 provider/行形状和 primary 唯一性。V3 增加非负的用户级
 `login_methods_revision`，供登录方式删除和 primary 切换使用乐观 CAS。V4 对齐
 users、Web3 nonce、email verification 和 token blacklist 的目标约束/default，
-增加 email repository 索引并删除有等价覆盖的重复索引。后续修复使用 V5+；不得改写
-V1/V2/V3/V4 checksum。
+增加 email repository 索引并删除有等价覆盖的重复索引。
+
+V5 将 `web3_nonces.message` 设为必填，并在写入时保存服务端签发的完整 SIWE message。
+迁移会删除 V1-V4 期间无法安全重建的旧未消费 nonce；此表只保存短期 challenge，
+失效旧 challenge 不改变用户、登录方式或已完成认证数据。生成 nonce 使用 PostgreSQL
+原子 upsert，验证使用 nonce、message 和有效期条件删除，只有一条并发请求可以消费。
+后续结构修复从 V6 开始；不得改写 V1/V2/V3/V4/V5 checksum。
 
 ## Existing-schema baseline
 

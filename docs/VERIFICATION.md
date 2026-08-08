@@ -149,11 +149,11 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 127 tests，0 failures/errors/skips |
-| `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、独立 PostgreSQL、参考邮件服务跨进程模板入队、失败映射 stub、重启、JWT、Web3、email、登录方式 |
-| `scripts/test-flyway-baseline-guard.sh` | 通过 | 13/13；exact schema、V2/V4 初始及 apply 前数据预检、非法 email verification state、post-baseline 失败恢复与其他拒绝/清理路径 |
-| Flyway integration | 通过 | fresh V1→V4、existing baseline V1→V4、V3→V4、Hibernate validate、Session、checksum/failure recovery |
-| 邮件参考服务 | 通过 | 129 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、24 个 Java runtime guard tests；Shell runtime 27/27、HTTP 10/10、Flyway guard 11/11 |
+| `mvn test` | 通过 | 当前工作树完整测试数量以 Surefire 汇总为准，0 failures/errors/skips；Web3 V5 增加完整 SIWE 字段和并发覆盖 |
+| `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、独立 PostgreSQL、参考邮件服务跨进程模板入队、失败映射 stub、重启、JWT、Web3 字段篡改/并发 replay、email、登录方式 |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 13/13；exact schema、V2/V4 初始及 apply 前数据预检、V5 history/message 列、非法 email verification state、post-baseline 失败恢复与其他拒绝/清理路径 |
+| Flyway integration | 通过 | fresh V1→V5、existing baseline V1→V5、V3→V5、Hibernate validate、Session、checksum/failure recovery |
+| 邮件参考服务 | 通过 | 131 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、26 个 Java runtime guard tests；Shell runtime 37/37、HTTP 11/11、Flyway guard 12/12；Flyway schema-owner 覆盖拒绝矩阵通过 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
@@ -172,12 +172,13 @@ disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列�
 参考服务的 `email_queue`；第 12/15、13/15 步骤为获得稳定的 `503/429` 失败夹具
 而重启应用并切换到受控 loopback 邮件 REST stub。它验证：
 
-- Flyway V1/V2/V3/V4 和自定义 history table。
+- Flyway V1/V2/V3/V4/V5 和自定义 history table。
 - 应用重启后的 migration 幂等和用户数据保留。
 - `/api/auth/**` allowlist 与资源服务器拒绝边界。
 - 本地注册/登录、JWT claims、cookie/header 优先级和持久化。
 - refresh rotation 与 access/refresh type confusion。
-- 本地签名 Web3 登录、message tamper、replay 拒绝和钱包绑定。
+- 本地签名 Web3 登录、domain/chain/完整 message 字段 tamper、并发 replay、nonce
+  upsert 覆盖、原子消费和钱包绑定。
 - 登录方式 primary/delete/最后方式拒绝，以及真实并发 mutation 的 `200/409` 和最终
   “至少一个登录方式、恰好一个 primary”不变量。
 - 邮箱注册、动态有效期/cooldown、真实参考服务接受后持久化 challenge、同步拒绝/限流
@@ -558,7 +559,8 @@ tests、文档链接和 patch hygiene。统一入口通过 `NPM_REGISTRY` 固定
 - cookie Secure/HttpOnly/SameSite 在 profile 间一致。
 - 多登录方式 bind/set-primary 并发不变量保持覆盖；补齐删除与 set-primary 等组合
   并发下的“至少一个登录方式且恰好一个 primary”保护。
-- Web3 nonce 一次性、过期、消息绑定和覆盖语义。
+- Web3 V5 nonce 一次性、过期清理、完整 message 绑定和覆盖语义已验证；后续继续
+  关注账户创建与绑定的跨请求并发。
 - `/api/user` 的 provider 和 claim 映射。
 - Python 资源服务器的 `sub`/`username` 契约。
 

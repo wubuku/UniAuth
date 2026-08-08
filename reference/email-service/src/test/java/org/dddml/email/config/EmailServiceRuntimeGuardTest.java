@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 import org.springframework.mock.env.MockEnvironment;
 
+import java.util.Map;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -21,6 +22,45 @@ class EmailServiceRuntimeGuardTest {
         );
 
         assertThatCode(guard::validateRuntime).doesNotThrowAnyException();
+    }
+
+    @Test
+    void rejectsFlywaySchemaMutationOverrides() {
+        Map<String, String> unsafeOverrides = Map.of(
+            "spring.flyway.enabled", "false",
+            "spring.flyway.baseline-on-migrate", "true",
+            "spring.flyway.clean-disabled", "false",
+            "spring.flyway.validate-on-migrate", "false",
+            "spring.flyway.out-of-order", "true"
+        );
+
+        unsafeOverrides.forEach((property, value) ->
+            assertSchemaPropertyRejected(
+                property,
+                value,
+                property.replace('.', '_').replace('-', '_').toUpperCase()
+            )
+        );
+    }
+
+    @Test
+    void rejectsFlywayOwnershipAndSchemaGenerationOverrides() {
+        Map<String, String> unsafeOverrides = Map.of(
+            "spring.flyway.locations", "classpath:db/migration/other",
+            "spring.flyway.table", "flyway_schema_history",
+            "spring.flyway.default-schema", "email",
+            "spring.flyway.schemas", "email",
+            "spring.sql.init.mode", "always",
+            "spring.jpa.hibernate.ddl-auto", "create-drop"
+        );
+
+        unsafeOverrides.forEach((property, value) ->
+            assertSchemaPropertyRejected(
+                property,
+                value,
+                property.replace('.', '_').replace('-', '_').toUpperCase()
+            )
+        );
     }
 
     @Test
@@ -524,9 +564,43 @@ class EmailServiceRuntimeGuardTest {
     private MockEnvironment environment(String... profiles) {
         MockEnvironment environment = new MockEnvironment();
         environment.setActiveProfiles(profiles);
+        environment.setProperty("spring.flyway.enabled", "true");
+        environment.setProperty("spring.flyway.baseline-on-migrate", "false");
+        environment.setProperty("spring.flyway.clean-disabled", "true");
+        environment.setProperty("spring.flyway.validate-on-migrate", "true");
+        environment.setProperty("spring.flyway.out-of-order", "false");
+        environment.setProperty(
+            "spring.flyway.locations",
+            "classpath:db/migration/postgresql"
+        );
+        environment.setProperty(
+            "spring.flyway.table",
+            "email_service_flyway_schema_history"
+        );
+        environment.setProperty("spring.flyway.default-schema", "public");
+        environment.setProperty("spring.flyway.schemas", "public");
+        environment.setProperty("spring.sql.init.mode", "never");
+        environment.setProperty("spring.jpa.hibernate.ddl-auto", "validate");
         environment.setProperty("spring.mail.host", "127.0.0.1");
         environment.setProperty("spring.mail.port", "2525");
         environment.setProperty("spring.mail.properties.mail.smtp.auth", "false");
         return environment;
+    }
+
+    private void assertSchemaPropertyRejected(
+            String property,
+            String value,
+            String environmentVariableName) {
+        EmailServiceRuntimeGuard guard = guard(
+            "test",
+            "jdbc:postgresql://127.0.0.1:5432/email_service_test",
+            "127.0.0.1",
+            "",
+            environment -> environment.setProperty(property, value)
+        );
+
+        assertThatThrownBy(guard::validateRuntime)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining(environmentVariableName);
     }
 }
