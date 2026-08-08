@@ -144,6 +144,12 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - SMTP 首选 `SMTP_*` 和 `EMAIL_FROM_*` 变量；从来源 `.env` 复制的
   `SPRING_MAIL_USERNAME`、`SPRING_MAIL_PASSWORD`、`APP_MAIL_FROM_EMAIL` 仍兼容。
 - 本机 `.env` 被忽略且不得提交；它不替代显式数据库、SMTP host/port 和 TLS 配置。
+- 参考实现的 `scripts/backup-postgres.sh` 不隐式读取 `.env`；它要求显式 profile、
+  `EMAIL_POSTGRES_*` 和绝对 `EMAIL_BACKUP_DIR`，或显式 owner-only env 文件。
+  输出目录不得是符号链接或向 group/other 开放，archive/checksum 为 `0600`。
+- `pg_dump` 和 `pg_restore` major 必须与源 PostgreSQL major 一致；可通过
+  `EMAIL_PG_DUMP_BIN`、`EMAIL_PG_RESTORE_BIN` 选择正确客户端。默认 restore
+  自动化只在 disposable 空库中执行，不覆盖现有数据库。
 - `SMTP_HOST` 只接受最长 255 字符、无 URI 路径/userinfo/query/fragment、无空白或
   控制字符的 host/IP token；不要填写 `smtp://...` URL。`SMTP_PORT` 必须是
   `1..65535` 的十进制整数。Shell 入口和直接 JAR 的 Java guard 校验相同规则。

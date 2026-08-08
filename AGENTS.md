@@ -220,6 +220,10 @@ subject、HTML 和自定义 header token 必须在构造 MIME 前重新校验。
 Flyway V3 约束队列生命周期行形状：终态必须有 `processed_time`，只有 `PENDING`
 可以保留 `next_retry_time`，只有 `FAILED` 可以保留 `error_message`；claim、retry、
 完成和永久失败转换必须维护同一规则。
+邮件 PostgreSQL 备份必须使用 `reference/email-service/scripts/backup-postgres.sh`：
+它只读取显式配置，拒绝共享库、不安全目录和 PostgreSQL client/server major 不一致，
+以临时文件校验后发布 `0600` archive/checksum。默认 restore 自动化只在 disposable
+空库 rehearsal 中执行，不得覆盖现有共享或生产数据库。
 非法队列载荷的失败审计只保留 queue id、通用错误和安全占位字段，不复制恶意
 recipient、subject、HTML 或 header token；非法 `sendMethod` 必须降级为
 `UNKNOWN`，不能让 `email_logs` 写入失败并回滚 retry。
@@ -363,6 +367,11 @@ PYTHON_BIN=python3 scripts/verify.sh
   `chk_email_queue_lifecycle_state`；claim/retry/完成/永久失败维护同一行形状，不改变
   REST、SMTP 或最大重试语义。邮件服务 Maven 138/138、Shell runtime 39/39、
   HTTP 11/11、Flyway guard 15/15。
+- 2026-08-08 邮件参考服务 backup/restore 运维加固增量：只读 custom backup、
+  owner-only 原子 archive/checksum、同 major `pg_dump`/`pg_restore` guard 和
+  disposable 空库 restore rehearsal 10/10 已完成；邮件组件 Maven 138/138、
+  runtime 39/39、HTTP 11/11、Flyway 15/15 和 backup/restore 10/10 已通过，本批
+  组合工作树的完整根统一门禁也已通过。
 - Shell HTTP E2E：15/15；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
 - Flyway baseline guard：13/13。
 - Mock Playwright：21 tests。

@@ -107,10 +107,10 @@ if [ "$(source_fingerprint)" != "$SOURCE_FINGERPRINT" ]; then
     exit 1
 fi
 
-echo "Email verification 1/5: shell syntax"
+echo "Email verification 1/6: shell syntax"
 bash -n "$PROJECT_DIR/start.sh" "$PROJECT_DIR"/scripts/*.sh
 
-echo "Email verification 2/5: compilation and ApplicationContext tests"
+echo "Email verification 2/6: compilation and ApplicationContext tests"
 (
     cd "$PROJECT_DIR"
     mvn clean compile test-compile
@@ -119,18 +119,23 @@ echo "Email verification 2/5: compilation and ApplicationContext tests"
 )
 cp "$PROJECT_DIR/target/email-service-1.0.0.jar" "$APPLICATION_JAR"
 
-echo "Email verification 3/5: runtime guard matrix"
+echo "Email verification 3/6: runtime guard matrix"
 "$PROJECT_DIR/scripts/test-runtime-guard.sh"
 
-echo "Email verification 4/5: real HTTP/PostgreSQL process E2E"
+echo "Email verification 4/6: real HTTP/PostgreSQL process E2E"
 EMAIL_SERVICE_SKIP_BUILD=true \
     EMAIL_SERVICE_JAR_PATH="$APPLICATION_JAR" \
     "$PROJECT_DIR/scripts/test-http-e2e.sh"
 
-echo "Email verification 5/5: Flyway fail-closed guard"
+echo "Email verification 5/6: Flyway fail-closed guard"
 EMAIL_SERVICE_SKIP_BUILD=true \
     EMAIL_SERVICE_JAR_PATH="$APPLICATION_JAR" \
     "$PROJECT_DIR/scripts/test-flyway-baseline-guard.sh"
+
+echo "Email verification 6/6: PostgreSQL backup/restore rehearsal"
+EMAIL_SERVICE_SKIP_BUILD=true \
+    EMAIL_SERVICE_JAR_PATH="$APPLICATION_JAR" \
+    "$PROJECT_DIR/scripts/test-backup-restore-rehearsal.sh"
 
 git -C "$REPOSITORY_ROOT" diff --check -- reference/email-service
 if [ "$(source_fingerprint)" != "$SOURCE_FINGERPRINT" ]; then

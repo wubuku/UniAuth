@@ -36,7 +36,7 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
 | Java | `mvn clean compile test-compile` 和 131 tests 已通过 |
-| 邮件参考服务 | Flyway V1/V2/V3；138 tests；22 个完整 ApplicationContext E2E；5 个 PostgreSQL repository constraint tests；Java runtime guard 27 tests；1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 39/39、HTTP 11/11、Flyway guard 15/15 |
+| 邮件参考服务 | Flyway V1/V2/V3；138 tests；22 个完整 ApplicationContext E2E；5 个 PostgreSQL repository constraint tests；Java runtime guard 27 tests；1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 39/39、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 15/15 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 13/13 已通过 |
 | 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、21 个 Mock Playwright tests 已通过 |

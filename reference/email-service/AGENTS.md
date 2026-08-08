@@ -40,6 +40,13 @@
 - Flyway V3 固定队列生命周期行形状：终态必须有 `processed_time`，只有 `PENDING`
   可以保留 `next_retry_time`，只有 `FAILED` 可以保留 `error_message`。claim、retry、
   完成和永久失败转换必须同步维护这些字段；不得改写已发布的 V1/V2/V3。
+- PostgreSQL 备份使用 `scripts/backup-postgres.sh`：它不得隐式读取 `.env`，只能读取
+  显式环境变量或显式 `EMAIL_SERVICE_ENV_FILE`，并拒绝共享数据库、相对/符号链接/
+  非 owner-only 输出目录，以及和源 PostgreSQL major 不一致的 `pg_dump`/`pg_restore`。
+  archive 与 checksum 必须先在临时文件中完成并验证，再以 `0600` 发布；失败不得留下
+  看似成功的最终文件。
+- 默认 restore 验证只允许 `scripts/test-backup-restore-rehearsal.sh` 在 disposable
+  PostgreSQL 空库中执行；不得把自动恢复接入普通启动或对现有共享/生产库执行覆盖。
 - `dev`、`test`、`prod` 的 datasource URL 都必须是 `jdbc:postgresql:`，且数据库
   必须独立、符合 profile 命名规则；H2 只允许作为负向 guard 输入，不是测试后端。
   Java guard 必须在 Flyway 前拒绝任何非 PostgreSQL URL，并保留 Spring Context
@@ -91,7 +98,8 @@ Flyway 是 PostgreSQL schema owner，history table 是
 前拒绝 schema-owner 配置覆盖；checksum drift 测试必须
 证明失败启动不会自动改写 history，只有显式恢复后才能重新通过验证。E2E 必须经过
 真实 HTTP、Flyway/PostgreSQL、真实 Spring Beans、Thymeleaf、异步事件和
- GreenMail SMTP。不要把该参考实现描述为生产就绪服务。
+GreenMail SMTP；统一门禁还必须完成 owner-only 原子备份和 disposable 空库恢复
+rehearsal 10/10。不要把该参考实现描述为生产就绪服务。
 根项目 `scripts/test-http-e2e.sh` 的正常邮箱注册/重置路径会启动本服务真实 JAR 和
 独立 PostgreSQL，并检查 `email_queue`；根脚本仅在需要稳定制造 `503/429` 失败映射
 时切换到受控 stub。修改根邮件边界文档或脚本时，必须保持这一区分清晰。

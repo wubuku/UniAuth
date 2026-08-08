@@ -278,6 +278,47 @@ V1 创建 `email_queue`、`email_logs`、基础检查约束和查询索引。V2 
 后续 schema 变更必须新增 V4+。邮件服务必须使用独立数据库，不得把该 migration
 指向 UniAuth、`blacksheep_dev` 或其他共享 schema。
 
+### PostgreSQL 备份与恢复演练
+
+`scripts/backup-postgres.sh` 对目标 PostgreSQL 只执行版本查询和 `pg_dump -Fc`。
+它不隐式读取本目录 `.env`；必须显式提供 `SPRING_PROFILES_ACTIVE`、
+`EMAIL_POSTGRES_*` 和绝对路径 `EMAIL_BACKUP_DIR`，或显式设置 owner-only、
+非符号链接的 `EMAIL_SERVICE_ENV_FILE`。示例：
+
+```bash
+cd reference/email-service
+SPRING_PROFILES_ACTIVE=prod \
+EMAIL_SERVICE_ENV_FILE=/secure/email-service.env \
+EMAIL_BACKUP_DIR=/secure/email-service-backups \
+scripts/backup-postgres.sh
+```
+
+脚本拒绝 UniAuth/Blacksheep/系统库和不符合邮件服务命名规则的数据库，拒绝相对路径、
+符号链接或 group/other 可访问的备份目录。`pg_dump` 与用于 archive 校验的
+`pg_restore` major 必须和源 PostgreSQL major 精确一致；机器安装多套客户端时使用
+`EMAIL_PG_DUMP_BIN`、`EMAIL_PG_RESTORE_BIN` 指向正确版本。备份先写进 owner-only
+临时文件，只有非空 custom archive 通过 `pg_restore --list` 和 SHA-256 计算后才发布
+`.dump` 与 `.dump.sha256`，两者权限均为 `0600`。任何失败会清理临时文件和不完整的
+最终文件。
+
+archive 包含收件人、主题、完整 HTML、错误和验证码等敏感数据。脚本只提供完整性与
+本机访问权限基线，不负责静态加密、远端复制、KMS、保留周期或销毁；部署方必须在
+仓库外实现这些策略。`pg_dump` 会取得常规 schema/table 锁，生产计划仍需评估 DDL
+窗口和容量。
+
+默认自动恢复只在 disposable PostgreSQL 空库中演练：
+
+```bash
+cd reference/email-service
+scripts/test-backup-restore-rehearsal.sh
+```
+
+该脚本不读取 `.env`，使用 PostgreSQL 16 容器内同 major 客户端，验证共享库拒绝、
+客户端版本拒绝、连接失败无残留、符号链接目录拒绝、owner-only 原子备份、空库
+`pg_restore --exit-on-error --single-transaction`、队列/日志数据与 Flyway V1-V3
+history/约束一致、恢复后真实 Spring HTTP 写入和重启。仓库不提供覆盖任意现有库的
+自动 restore 命令；真实恢复必须在隔离空库中执行同类步骤并经过独立授权。
+
 ## 构建和测试
 
 纯 service/config 单测可使用 mock 做快速反馈；所有 JPA repository 测试和组件级 E2E
@@ -297,6 +338,8 @@ scripts/verify.sh
 - runtime guard 配置拒绝矩阵。
 - 真实 JAR + HTTP + disposable PostgreSQL Shell E2E。
 - dirty schema、V2 坏数据、V3 生命周期规范化和 forward-fix Flyway guard。
+- owner-only 原子 PostgreSQL backup、客户端 major guard、空库 restore、数据/schema
+  对比和恢复后真实应用启动/写入 rehearsal。
 - 先把所有非忽略源码复制到进程专属临时目录，所有构建和 E2E 都在该快照内执行；
   并行运行不会共享 `target/`，原源码在验证期间变化则失败关闭并要求重跑。
 - 根统一门槛通过仓库外的 `EMAIL_SERVICE_VERIFICATION_ARTIFACTS_DIR` 收集本快照的
@@ -344,6 +387,7 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   1 个 PostgreSQL-only Spring Context 启动 guard test，以及 5 个 PostgreSQL
   repository constraint tests。
 - 本组件 Shell runtime 39/39、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
+- PostgreSQL backup/restore rehearsal 10/10。
 - UniAuth 根项目：Java 131 tests、HTTP 15/15、Flyway 13/13、
   Mock Playwright 21/21、Python 资源服务器 16/16、邮件 REST stub contract 8/8；
   本轮统一门禁的全部功能阶段已通过，但验证期间源码发生并发变化，最终源码快照
@@ -366,6 +410,16 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   和 Flyway guard 共同覆盖 fresh migrate、历史升级、非法行拒绝和真实投递路径。
 - 完整邮件服务门禁通过：Maven 138 tests、Shell runtime 39/39、
   HTTP/PostgreSQL E2E 11/11、Flyway baseline guard 15/15。
+
+2026-08-08 PostgreSQL backup/restore 运维加固增量：
+
+- 新增只读 `scripts/backup-postgres.sh`，固定独立数据库、绝对 owner-only 目录、
+  同 major `pg_dump`/`pg_restore`、custom archive 校验、SHA-256 和失败清理。
+- 新增 disposable PostgreSQL 16 restore rehearsal，覆盖共享库、客户端版本、连接失败、
+  符号链接目录、数据/schema/Flyway history、序列继续写入和恢复后 Spring HTTP 重启。
+- 完整邮件组件门禁已通过：Maven 138/138、Shell runtime 39/39、HTTP 11/11、
+  Flyway guard 15/15、backup/restore rehearsal 10/10；完整根统一门禁也已在本批
+  组合工作树通过。
 
 2026-08-08 Flyway schema-owner 覆盖保护增量：
 
@@ -587,7 +641,8 @@ V3 后数据库同时约束状态元数据：
   stuck 记录被 recovery worker 重新领取，可能再次发送同一 `X-Queue-ID` 邮件。
 - 限流计数保存在单进程内存中，多实例之间不共享。
 - 定时恢复每次最多处理 50 条，没有容量或积压恢复证明。
-- Flyway V1/V2/V3 和失败关闭测试已存在，但没有生产发布、备份或灾难恢复演练。
+- 已有 disposable PostgreSQL backup/restore rehearsal，但尚未完成生产发布、加密备份、
+  外部存储、保留/销毁、跨主机或灾难恢复演练。
 - GreenMail E2E 证明本地 SMTP 协议链，不证明供应商鉴权、TLS 策略、退信处理或
   外部真实收件。
 - 邮件队列和发送日志会保存完整 HTML；验证码清理和数据保留策略尚未实现。
@@ -602,6 +657,7 @@ V3 后数据库同时约束状态元数据：
 - 启用 Flyway V1/V2/V3 作为唯一 schema owner，并让所有 profile 使用
   Hibernate `validate`。
 - 增加 PostgreSQL/Flyway/HTTP/GreenMail 的完整 ApplicationContext E2E。
+- 增加 owner-only PostgreSQL custom backup 和 disposable 空库 restore rehearsal。
 - 增加可选 API key、运行保护、真实进程 HTTP E2E 和 Flyway fail-closed guard。
 - 增加输入、header injection、batch、分页和错误信息边界。
 - 避免配置、实体、事件和请求 DTO 的自动对象字符串暴露 API key 或邮件内容。

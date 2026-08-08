@@ -101,6 +101,9 @@ generation 并幂等释放，因此旧窗口迟到释放不会误释放新窗口
 可以保留下次重试时间，只有 `FAILED` 可以保留最终错误；worker claim 和所有状态转换
 会清除对新状态已无意义的元数据。该约束属于参考实现内部持久化模型，不要求其他兼容
 REST 服务采用相同表结构。
+参考实现另提供只读、owner-only、同 PostgreSQL major 的 custom backup 工具，并在
+disposable 空库中恢复后启动真实 Spring 应用验证 Flyway history、数据、约束和继续写入；
+这属于参考实现运维证据，不构成生产灾难恢复或外部存储/加密承诺。
 
 ### API 认证
 
