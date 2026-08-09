@@ -1,6 +1,6 @@
 # UniAuth 加固阶段最终收尾计划
 
-> 状态：In progress（scope frozen）；F1 已完成，下一批为 F2
+> 状态：F1 completed；F2-F5 scope frozen but deferred，只有后续明确要求才启动
 > 冻结日期：2026-08-09
 > 当前总体进度：约 86%
 > 目标：只加固、修复和验证现有功能；完成本文五个批次后退出加固阶段
@@ -9,7 +9,7 @@
 
 ## 1. 为什么需要最终计划
 
-此前加固工作已经建立 PostgreSQL 16-only、Flyway V1-V5、Testcontainers、Java
+此前加固工作已经建立 PostgreSQL 16-only、Flyway V1-V6、Testcontainers、Java
 集成测试、Shell HTTP/Flyway E2E、Playwright、Python 契约测试和统一门禁，并完成
 登录方式并发、Web3 challenge、refresh replay/logout、Cookie、CORS 与 OAuth2
 redirect 等多批修复。
@@ -22,6 +22,7 @@ redirect 等多批修复。
 3. “加固完成”表示现有工程基线达到本文定义的退出标准，不表示已经获得生产发布、
    容量、多区域、真实 provider 或合规认证证明。
 4. 新功能、架构演进和非阻断改进进入正常 backlog，不再借“继续加固”无限延长。
+5. F1 邮箱批次完成后当前任务自然结束；本文不授权 agent 自动进入 F2。
 
 ## 2. 进度口径校准
 

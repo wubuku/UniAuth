@@ -57,7 +57,7 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - 三个 profile 的 host、port、database、user 和 password 都必须显式提供。
 - Flyway 是唯一 schema owner；当前 runtime migration 链是 PostgreSQL V1 baseline +
   V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束与索引对齐 + V5
-  Web3/SIWE challenge message 绑定。
+  Web3/SIWE challenge message 绑定 + V6 邮箱身份/challenge/outbox/限流/安全事件加固。
 - Hibernate 使用 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 外部邮件服务默认地址：`http://localhost:8095`。
 - UniAuth 主应用只实现邮件服务 HTTP 适配器；真实邮箱注册验证和密码重置需要独立
@@ -198,12 +198,16 @@ JWKS、旧 token 和 Python 资源服务器；真实环境仍需外部密钥管�
 `RestTemplateEmailServiceImpl` 是 UniAuth 到外部邮件服务的唯一生产实现。它要求：
 
 - `GET /api/email/health` 返回 JSON `status=UP`。
-- `POST /api/email/template` 接收 `to`、`subject`、`templateName`、`variables`
-  和 `emailType`，并以 JSON `success=true` 表示已接受或入队。
+- `POST /api/email/template` 接收 `to`、`subject`、`templateName`、`variables`、
+  `emailType` 和 UniAuth challenge 使用的稳定 `idempotencyKey`，并以 JSON
+  `success=true` 和稳定 `queueId` 表示已接受或入队。
+- `GET /api/email/delivery/status?idempotencyKey=...` 返回最小 queue/delivery 状态；
+  相同 key 与相同渲染请求返回同一 queue identity，相同 key 对应不同请求返回 `409`。
 - 外部服务提供 `email/email-verify` 和 `email/password-reset` 模板，使用
   `username`、`verificationCode` 和 `expiryMinutes`，并兼容同时发送的 `code`。
 - `EMAIL_SERVICE_TIMEOUT_MS` 同时约束 connect/read timeout；`EMAIL_SERVICE_API_KEY`
-  非空时，所有 health/template/simple 请求各发送一个 `X-Email-Service-Key`；
+  非空时，所有 UniAuth health/template/delivery-status 请求各发送一个
+  `X-Email-Service-Key`；
   外部服务只能接受恰好一个该 header 且整值精确匹配，不能按首值或末值消解重复
   凭据；缺失、错误或重复同名 header 都必须返回 `401`。密钥最长 1024 字符且不能
   包含 CR/LF。
@@ -569,7 +573,9 @@ PYTHON_BIN=python3 scripts/verify.sh
   数据库只保存带 key id 的 HMAC digest，不再保存明文 code/credential metadata；
   opaque handle、唯一 active challenge、outbox/idempotency、delivery 恢复、统一密码
   策略、JSON-only credential、共享 PostgreSQL 限流和 append-only 安全事件均有
-  Java/Shell/Playwright 覆盖。后续不得重新引入旧 oracle、明文验证码或旁路写路径。
+  Java/Shell/Playwright 覆盖。参考服务的 template idempotency key 对兼容调用方仍是
+  可选字段；不带 key 的 template 请求以及 simple/batch 端点仍可能重复入队，SMTP
+  投递也仍是至少一次语义。后续不得重新引入旧 oracle、明文验证码或旁路写路径。
 - Web3 V5 已严格绑定服务端保存的完整 SIWE message；nonce 生成使用 PostgreSQL
   原子 upsert，验证使用带 message/有效期条件的原子消费，旧 challenge 在迁移时失效。
 - 登录方式并发 bind、set-primary、delete/delete 和 delete/set-primary 已由数据库

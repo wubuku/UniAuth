@@ -91,7 +91,7 @@
 | P1 | 说明参考服务 Flyway schema-owner 配置不可被外部覆盖，并记录 Java/Shell/ApplicationContext/Flyway guard 证据 | 已完成 |
 | P1 | 说明参考服务缺失 migration location 与非法 migration 命名必须 fail closed，并记录覆盖拒绝证据 | 已完成 |
 | P1 | 说明参考服务 JPA repository 测试必须使用 PostgreSQL + Flyway + Hibernate validate，并记录真实约束断言 | 已完成 |
-| P1 | 明确邮件 relation 与 UniAuth V1-V5 无命名冲突，并记录同 public schema 下独立 history、受控 baseline V0、精确 peer history、半成品 peer 拒绝、双启动顺序与选择性备份边界 | 已完成 |
+| P1 | 明确邮件 relation 与 UniAuth V1-V6 无命名冲突，并记录同 public schema 下独立 history、受控 baseline V0、精确 peer history、半成品 peer 拒绝、双启动顺序与选择性备份边界 | 已完成 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -117,14 +117,15 @@
 ## 已知事实与待修复项
 
 - `dev`、`test`、`prod` 已统一为显式 PostgreSQL 16，SQLite runtime 已退役。
-- Flyway V1 baseline + V2 + V3 + V4 + V5 已接管 8 张认证/Session 表，并加固登录
-  方式行形状、primary、集合变更 CAS、其余目标实体约束、email repository 索引以及
-  Web3/SIWE challenge message 绑定和原子消费；旧 SQL 已归档到 runtime classpath 外。
+- Flyway V1 baseline + V2 + V3 + V4 + V5 + V6 已接管 schema，并加固登录方式行形状、
+  primary、集合变更 CAS、其余目标实体约束、Web3/SIWE challenge、canonical email、
+  HMAC challenge、transactional outbox、认证限流和安全事件；旧 SQL 已归档到 runtime
+  classpath 外。
 - Java 已有 PostgreSQL/Testcontainers 集成测试；当前完整 Maven 为
-  151/151，0 failures/errors/skips。
-- HTTP Shell E2E 当前 15/15、Flyway baseline guard 14/14、Mock Playwright
-  27/27、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 18/18、邮件 REST stub
-  contract 9/9；同页面和同源双标签页 refresh 协调、跨标签页 refresh/logout
+  212/212，0 failures/errors/skips。
+- HTTP Shell E2E 当前 16/16、Flyway baseline guard 16/16、Mock Playwright
+  28/28、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 18/18、邮件 REST stub
+  contract 12/12；同页面和同源双标签页 refresh 协调、跨标签页 refresh/logout
   迟到写回拒绝、logout 存储边界、Python `jti` 契约与跨 hostname
   Bearer/Cookie 隔离均已进入统一门禁。
 - 前端严格 `npm ci`、high/critical 依赖审计、lint、typecheck 和生产构建通过；
@@ -134,7 +135,7 @@
   RSC/SSR data-router/外部输入决定目标 URL 路径；后续版本升级继续跟踪。
 - UniAuth 主应用只包含外部邮件服务 HTTP 适配器；仓库已纳入独立参考实现。
   live guides 已明确邮箱注册/重置的运行依赖、端点和模板契约、普通密码登录边界，
-  API key/超时、参考组件自己的 Flyway V1/V2/V3、默认 `dedicated` 与显式
+  API key/超时、参考组件自己的 Flyway V1-V4、默认 `dedicated` 与显式
   `shared-uniauth` 数据库布局、运行保护、完整 ApplicationContext E2E 和 Shell
   进程门禁；URL 结构、恢复开关和敏感对象字符串
   约束也已纳入当前指南。生产 SMTP 的强制 STARTTLS/implicit SSL 二选一、
@@ -149,23 +150,19 @@
   HTTP/Flyway guard 分别达到 10/10 和 11/11，覆盖 queue detail 披露边界、响应
   安全 header、重复鉴权 header，以及 checksum drift 失败关闭、原样保持与显式
   恢复；当前组合计数见下一条。
-- 参考服务当前组合门禁为 Maven 148 tests、Java runtime guard 30 tests、另有 1 个
-  PostgreSQL-only Spring Context 启动 guard test、22 个 PostgreSQL/GreenMail
-  ApplicationContext E2E、1 个 shared-schema ApplicationContext test、6 个
-  shared-schema bootstrap tests、Shell runtime 43/43、HTTP 11/11、Flyway guard
-  15/15、backup/restore rehearsal 10/10；根 shared-schema 双进程 E2E 4/4。所有
-  profile 均拒绝 H2 和
-  其他非 PostgreSQL datasource。
+- 参考服务当前组合门禁为 Maven 150 tests、Shell runtime 44/44、HTTP 11/11、
+  Flyway guard 15/15、backup/restore rehearsal 10/10；根 shared-schema 双进程
+  E2E 4/4。所有 profile 均拒绝 H2 和其他非 PostgreSQL datasource。
   Flyway 唯一 schema owner、缺失 location、migration 命名校验和 datasource 类型的
   固定配置与外部覆盖拒绝已由 Java/Shell/ApplicationContext/Flyway 层共同验证。
 - 根 `scripts/test-http-e2e.sh` 的正常邮箱注册/重置路径已使用真实
   `reference/email-service` JAR、独立 PostgreSQL 和真实 HTTP；仅失败/限流映射路径
   使用受控 stub。参考服务队列中的模板持久化已成为根 E2E 的直接断言。
-- 邮箱验证码发送值已与持久化值一致；同步拒绝/限流/异常不保存 challenge，动态
-  有效期/cooldown、按 challenge id 的正确验证码原子消费、禁止 controller 二次
-  email/purpose 消费和错误重试 CAS 已有 PostgreSQL、HTTP、Playwright 与 Python
-  stub 契约覆盖。外部接受后本地事务失败、异步 delivery 失败、单一 pending
-  challenge、canonical email 和可靠 outbox 状态机仍待修复。
+- 邮箱身份与 challenge 已使用 canonical email、opaque handle、HMAC digest、唯一
+  active challenge 和 transactional outbox；稳定 idempotency key、delivery status
+  reconciliation、同步拒绝/限流、响应丢失、重启和终态失败已有 PostgreSQL、HTTP、
+  Playwright 与 Python stub 契约覆盖。参考邮件服务不带 key 的 template 请求以及
+  simple/batch 端点仍可能重复入队，SMTP 投递仍是至少一次语义。
 - token blacklist 已接入当前格式 access/refresh 校验、refresh 单次消费、logout
   持久撤销和 introspection；仍缺 token family/security version，Python 离线 JWKS
   校验也不能感知数据库撤销。

@@ -9,8 +9,8 @@
 > [配置基线](docs/CONFIGURATION.md)、[开发指南](docs/DEVELOPMENT.md) 和
 > [验证指南](docs/VERIFICATION.md)。真实邮箱注册、登录、资源回跳和跨域 Bearer
 > 验证见[邮箱登录浏览器 E2E](docs/EMAIL_LOGIN_BROWSER_E2E.md)。
-> 剩余加固范围以[加固阶段最终收尾计划](docs/drafts/FINAL_HARDENING_EXIT_PLAN.md)
-> 冻结的 F1-F5 为准，完成后退出加固阶段，不再创建第六批。
+> [加固阶段最终收尾计划](docs/drafts/FINAL_HARDENING_EXIT_PLAN.md)中的 F1 邮箱与身份
+> 完整性批次已经完成；F2-F5 是显式延后的独立批次，不会由当前邮箱任务自动启动。
 > 下文保留了较多设计目标、部署示例和历史说明，包括已经退役的 SQLite 路径。
 > 当前操作只使用上述 live guides；不要执行下文的 SQLite、手工 schema init 或旧域名示例。
 

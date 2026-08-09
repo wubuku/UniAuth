@@ -47,8 +47,8 @@ JavaMailSender 或邮件供应商 SDK 实现；`RestTemplateEmailServiceImpl` �
 客户端连接和读取超时共用 `app.email.service.timeout`，通过
 `EMAIL_SERVICE_TIMEOUT_MS` 设置，默认 `5000` 毫秒，有效范围为 `100..600000`
 毫秒。URL 或 timeout 不符合约束时，Spring ApplicationContext 启动失败。
-`EMAIL_SERVICE_API_KEY` 非空时，health、模板和简单邮件请求都会发送
-一个 `X-Email-Service-Key`；外部服务必须配置相同值，并且只接受恰好一个该
+`EMAIL_SERVICE_API_KEY` 非空时，UniAuth 对 health、模板和 delivery status 请求都会
+发送一个 `X-Email-Service-Key`；外部服务必须配置相同值，并且只接受恰好一个该
 header 且整值精确匹配。缺失、错误或重复同名凭据都必须返回 `401`，不能选择首值
 或末值继续处理。该值最长 1024 字符且不能包含 CR/LF；不符合约束时 UniAuth 会在
 ApplicationContext 启动阶段失败，而不是等到第一次构造 HTTP header 时才失败。
@@ -58,10 +58,12 @@ ApplicationContext 启动阶段失败，而不是等到第一次构造 HTTP head
 | 调用 | UniAuth 的要求 |
 |------|----------------|
 | `GET /api/email/health` | 返回 2xx JSON，且 `status` 精确为 `UP` |
-| `POST /api/email/template` | 接收 `Content-Type: application/json` |
+| `POST /api/email/template` | 接收 `Content-Type: application/json` 和稳定 `idempotencyKey` |
+| `GET /api/email/delivery/status?idempotencyKey=...` | 返回同一幂等请求的最小 queue/delivery 状态 |
 | 模板 | 提供 `email/email-verify` 和 `email/password-reset` |
 | 模板变量 | 支持 `username`、`verificationCode`、`expiryMinutes`；请求还会同时发送 `code` |
-| 成功响应 | 返回 2xx JSON `success=true`；UniAuth 将其解释为 `QUEUED` |
+| 成功响应 | 返回 2xx JSON `success=true` 和稳定 `queueId`；UniAuth 将其解释为已接受/入队 |
+| 幂等冲突 | 相同 key 与相同渲染请求返回同一 queue identity；相同 key 对应不同请求返回 `409` |
 | 服务鉴权 | 可选共享密钥 header `X-Email-Service-Key`；配置后只接受恰好一个 header 且整值精确匹配，缺失、错误或重复同名凭据返回 `401`；值最长 1024 字符且禁止 CR/LF |
 | 超时 | 调用必须在配置的 connect/read timeout 内完成；UniAuth 客户端不自动重试 |
 
@@ -86,7 +88,8 @@ health 响应的最小兼容形状：
     "username": "user@example.com",
     "expiryMinutes": 10
   },
-  "emailType": "VERIFICATION"
+  "emailType": "VERIFICATION",
+  "idempotencyKey": "email-challenge:opaque-handle"
 }
 ```
 
@@ -99,10 +102,11 @@ health 响应的最小兼容形状：
 }
 ```
 
-外部服务可以额外返回 `queueId`、`message` 等字段，但 UniAuth 当前不会保存或跟踪
-这些值。非 2xx、空响应、无法解析的 JSON 或 `success` 不为 `true` 都不会被适配器
-视为已接受。`/api/email/simple` 虽然存在于当前适配器接口中，但邮箱注册和密码重置
-只依赖模板邮件端点。服务 URL 末尾可以有斜杠，客户端会在拼接路径前归一化。
+外部服务可以额外返回 `message` 等字段。UniAuth 会把稳定 `queueId` 保存为 provider
+delivery identity，并在响应丢失或进程重启后通过 delivery status 查询恢复确认状态。
+非 2xx、空响应、无法解析的 JSON 或 `success` 不为 `true` 都不会被适配器视为已接受。
+`/api/email/simple` 虽然存在于当前适配器接口中，但邮箱注册和密码重置只依赖模板邮件
+端点。服务 URL 末尾可以有斜杠，客户端会在拼接路径前归一化。
 
 `success=true` 只表示外部服务接受或入队，不代表 SMTP/供应商已经送达邮件。外部服务
 仍需自行负责模板渲染、队列、重试、SMTP/供应商凭据和投递状态。
@@ -218,6 +222,8 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
   `queueId` 会保存为 delivery identity。
 - 外部服务后续异步投递进入终态失败时，reconciler 会使 challenge 不可验证；但该
   结论仍依赖兼容邮件服务准确提供 delivery status。
+- 参考服务只在 template 请求提供 idempotency key 时执行去重；UniAuth challenge 总是
+  提供稳定 key，但其他不带 key 的 template 调用以及 simple/batch 端点仍可能重复入队。
 - 参考服务的队列恢复是至少一次语义；SMTP 已接受后若数据库提交失败、进程崩溃或
   stuck 记录被 recovery worker 重新领取，可能重复发送同一 queue id 的邮件。
 

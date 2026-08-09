@@ -15,7 +15,7 @@
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
 | [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md) | Live | 真实 PostgreSQL/UniAuth/Vite/Python/邮件 stub 的注册、登录、回跳与跨域 Bearer 复现 |
-| [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；剩余范围固定为 F1-F5，完成后退出加固阶段 |
+| [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；F1 已完成，F2-F5 仅在后续明确要求时作为独立批次启动 |
 | [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 保存完整风险背景；当前执行边界由最终收尾计划控制 |
 | [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Historical | 已完成批次与证据记录；不再驱动开放循环 |
 
@@ -28,17 +28,18 @@
 - Flyway 已接管 schema：V1 来自实际 dev PostgreSQL 的 8 表结构，V2 加固登录方式
   行形状/primary 不变量，V3 增加登录方式集合 revision CAS，V4 对齐其余既有实体
   约束并补齐 email repository 索引，V5 将 Web3 nonce 绑定到服务端完整 SIWE message
-  并原子消费。
+  并原子消费，V6 增加 canonical email、HMAC challenge、transactional outbox、
+  PostgreSQL 认证限流和 append-only security event。
 - Hibernate 只执行 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 邮箱注册验证和密码重置依赖独立邮件服务；UniAuth 主应用只提供 HTTP 客户端适配器，
   仓库另有不纳入根构建的参考实现。依赖契约包括端点、模板、响应语义、可选 API key
   和客户端 URL/超时约束；配置 API key 时只允许恰好一个精确匹配的
   `X-Email-Service-Key`，重复同名凭据必须失败关闭。参考实现还对生产 SMTP
   加密模式、server identity verification 和邮件 API 响应 no-store/nosniff 做
-  失败关闭保护。外部服务同步拒绝、限流或不可用时不保存 challenge；
-  外部已接受后本地事务失败和异步 delivery 失败仍需可靠状态机处理。普通邮箱加密码
-  登录不需要每次发信。根 HTTP E2E 的正常注册/重置请求使用真实参考服务和独立
-  PostgreSQL 验证模板入队；仅 `503/429` 失败映射使用受控 stub。
+  失败关闭保护。UniAuth 使用 transactional outbox、稳定 idempotency key 和受鉴权
+  delivery status 查询恢复外部接受后的响应丢失/重启窗口；终态投递失败会使 challenge
+  不可验证。普通邮箱加密码登录不需要每次发信。根 HTTP E2E 的正常注册/重置请求使用
+  真实参考服务和独立 PostgreSQL 验证模板入队；仅 `503/429` 失败映射使用受控 stub。
 - 已建立 PostgreSQL Java 集成测试、真实 HTTP Shell E2E、Mock Playwright 和
   Python 离线 JWT/JWKS/邮件 stub 契约测试；另有真实五服务邮箱登录 Playwright
   套件，验证资源域无认证 Cookie 且跨 origin 请求使用 Bearer header。ESLint 与
@@ -54,7 +55,7 @@
 |------|------|------|
 | [前端 README](../frontend/README.md) | Needs verification | React/Vite 使用说明；以 `vite.config.ts` 为端口和构建事实 |
 | [Python 资源服务器 README](../python-resource-server/README.md) | Needs verification | Flask 示例说明；以 `app.py` 为端口和 JWT claim 事实 |
-| [邮件服务参考实现](../reference/email-service/README.md) | Reference | 独立 Spring Boot REST/SMTP 组件；Flyway V1/V2/V3、同 public schema 兼容布局、SMTP/限流 guard、PostgreSQL/GreenMail、Shell E2E 与选择性 backup/restore rehearsal |
+| [邮件服务参考实现](../reference/email-service/README.md) | Reference | 独立 Spring Boot REST/SMTP 组件；Flyway V1-V4、幂等投递 identity/status、同 public schema 兼容布局、SMTP/限流 guard、PostgreSQL/GreenMail、Shell E2E 与选择性 backup/restore rehearsal |
 | [异构资源服务器验证记录](../VERIFICATION_CHECKLIST.md) | Historical | 2026-01-25 的历史验证快照，不是当前回归证明 |
 
 ## 契约与集成材料

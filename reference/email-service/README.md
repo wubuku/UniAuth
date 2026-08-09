@@ -685,7 +685,8 @@ V3 后数据库同时约束状态元数据：
 - `health` 始终报告进程存活，不探测 SMTP、供应商或真实投递。
 - HTTP `success=true` 只表示模板已渲染并写入队列。
 - API key 是全服务共享密钥，没有身份分级、轮换协议或端点级权限。
-- 没有 API idempotency key，调用方重试可能创建重复邮件。
+- template API 支持可选 idempotency key；UniAuth challenge 总是提供稳定 key，但不带
+  key 的 template 请求以及 simple/batch 端点仍可能在调用方重试时创建重复邮件。
 - 投递语义是至少一次而不是恰好一次：SMTP 已接受后若数据库提交失败、进程崩溃或
   stuck 记录被 recovery worker 重新领取，可能再次发送同一 `X-Queue-ID` 邮件。
 - 限流计数保存在单进程内存中，多实例之间不共享。
