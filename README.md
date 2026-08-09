@@ -27,7 +27,7 @@
 | Migration | Flyway V1 baseline + V2 + V3 + V4 + V5 + V6 + V7，history `uniauth_flyway_schema_history` |
 | 邮件数据库布局 | 默认独立数据库；显式 `shared-uniauth` 可与 UniAuth 共用 `public` schema，两侧 relation 名无冲突并使用独立 Flyway history |
 | Java 验证 | 219 tests，0 failures/errors/skips |
-| 邮件参考服务 | 150 tests；另有 Shell runtime 44/44、HTTP 11/11、Flyway guard 15/15、backup/restore 10/10 |
+| 邮件参考服务 | 154 tests；另有 Shell runtime 44/44、HTTP 11/11、Flyway guard 15/15、backup/restore 10/10 |
 | Shared-schema E2E | 4/4；UniAuth/邮件服务两种启动顺序、独立 history 和 baseline V0 |
 | HTTP E2E | 16/16；含四条安全链 CORS 矩阵，正常邮箱流程使用真实参考服务，失败映射矩阵使用受控 stub |
 | Flyway baseline guard | 16/16 |
