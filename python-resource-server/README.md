@@ -4,7 +4,9 @@
 > 使用 TLS 默认验证，并优先读取 JWT `username` claim。请先阅读
 > [配置基线](../docs/CONFIGURATION.md) 和 [验证指南](../docs/VERIFICATION.md)。
 
-这是一个 Flask 实现的示例资源服务器，展示了如何验证来自 Spring Boot OAuth2 认证服务器的 JWT Token。
+这是一个 Flask 实现的示例 REST 资源服务器，展示了如何验证来自 Spring Boot
+认证服务器的 JWT。它不提供资源展示页面；当前展示页面是 UniAuth React 前端的
+`/resource-test`，并通过跨 origin Bearer 请求访问本服务。
 
 ## 功能
 
@@ -96,11 +98,18 @@ HTTPS 使用 `requests` 默认 CA 验证，不提供跳过证书验证的配置�
 
 ## Token 验证流程
 
-1. 客户端从认证服务器获取 JWT Token
-2. 客户端在 Authorization 头中发送 Bearer Token 到资源服务器
+1. 当前演示前端从登录/注册 JSON 响应取得 access token
+2. 前端从 localStorage 读取 access token，并在 Authorization 头中发送 Bearer Token
+   到资源服务器；当前资源请求使用 `credentials: omit`，不携带资源 origin Cookie
 3. 资源服务器从认证服务器获取 JWKS（缓存 1 小时）
 4. 资源服务器使用 JWKS 中的公钥验证 Token 签名
 5. 如果验证成功，返回受保护资源
+
+UniAuth 还会写入 HttpOnly access-token Cookie，但 JavaScript 无法读取 HttpOnly
+Cookie，完全不同 host 的资源服务器也不会收到 UniAuth host-only Cookie。因此当前
+跨 origin 流程依赖 JSON/localStorage Bearer token，而不是 Cookie。localStorage
+扩大 XSS 风险，仅用于当前演示；生产 SPA 应优先使用内存 access token +
+HttpOnly refresh cookie，或采用 BFF 让浏览器只持有 HttpOnly session cookie。
 
 ## 安全考虑
 
@@ -140,6 +149,9 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:5002/api/protected
 ```
 
 该联调会依赖已启动的 UniAuth。启动前必须确认所选 profile 和数据库目标安全。
+
+完整的邮箱注册、登录、前端回跳和跨 origin 浏览器验证见
+[邮箱登录浏览器 E2E](../docs/EMAIL_LOGIN_BROWSER_E2E.md)。
 
 ## 生产部署
 

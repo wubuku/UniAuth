@@ -49,6 +49,7 @@ class ResourceServerTest(unittest.TestCase):
             "email": "integration@example.invalid",
             "authorities": ["ROLE_USER"],
             "type": "access",
+            "jti": "integration-token-id",
             "iss": resource_server.JWT_ISSUER,
             "aud": resource_server.JWT_AUDIENCE,
             "iat": now,
@@ -215,6 +216,15 @@ class ResourceServerTest(unittest.TestCase):
         self.assertEqual("Invalid token", result)
 
     @patch.object(resource_server, "get_jwks")
+    def test_token_without_jti_is_rejected(self, get_jwks):
+        get_jwks.return_value = self.jwks
+
+        valid, result = resource_server.validate_token(self.token(jti=None))
+
+        self.assertFalse(valid)
+        self.assertEqual("Invalid token", result)
+
+    @patch.object(resource_server, "get_jwks")
     def test_expired_token_is_rejected(self, get_jwks):
         get_jwks.return_value = self.jwks
 
@@ -237,6 +247,7 @@ class ResourceServerTest(unittest.TestCase):
                 "userId": "rotated-user-id",
                 "username": "rotated-user",
                 "type": "access",
+                "jti": "rotated-token-id",
                 "iss": resource_server.JWT_ISSUER,
                 "aud": resource_server.JWT_AUDIENCE,
                 "iat": now,
@@ -291,6 +302,23 @@ class ResourceServerTest(unittest.TestCase):
             },
             response.get_json(),
         )
+
+    @patch.object(resource_server, "get_jwks")
+    def test_protected_endpoints_accept_case_insensitive_bearer_scheme(self, get_jwks):
+        get_jwks.return_value = self.jwks
+        token = self.token()
+
+        protected_response = self.client.get(
+            "/api/protected",
+            headers={"Authorization": f"bearer {token}"},
+        )
+        info_response = self.client.get(
+            "/api/protected/info",
+            headers={"Authorization": f"bEaReR {token}"},
+        )
+
+        self.assertEqual(200, protected_response.status_code)
+        self.assertEqual(200, info_response.status_code)
 
     def test_protected_info_rejects_missing_bearer_token(self):
         response = self.client.get("/api/protected/info")

@@ -1,6 +1,7 @@
 package org.dddml.uniauth.config;
 
-import org.dddml.uniauth.service.JwtTokenService;
+import org.dddml.uniauth.service.TokenValidationService;
+import org.dddml.uniauth.util.BearerTokenUtils;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -25,7 +26,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class ResourceServerConfig {
 
-    private final JwtTokenService jwtTokenService;
+    private final TokenValidationService tokenValidationService;
 
     /**
      * 自定义Bearer Token解析器，从Cookie中读取Token
@@ -37,8 +38,9 @@ public class ResourceServerConfig {
             public String resolve(HttpServletRequest request) {
                 // 首先尝试从Authorization头读取
                 String authHeader = request.getHeader("Authorization");
-                if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                    return authHeader.substring(7);
+                Optional<String> headerToken = BearerTokenUtils.extract(authHeader);
+                if (headerToken.isPresent()) {
+                    return headerToken.get();
                 }
 
                 // 如果没有Authorization头，从Cookie中读取
@@ -61,7 +63,7 @@ public class ResourceServerConfig {
      */
     @Bean
     public JwtDecoder jwtDecoder() {
-        return jwtTokenService.jwtDecoder();
+        return tokenValidationService.accessTokenDecoder();
     }
 
     /**

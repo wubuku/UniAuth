@@ -42,6 +42,7 @@ import org.springframework.web.client.RestTemplate;
 import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.LoginMethodService;
 import org.dddml.uniauth.service.AuthCookieService;
+import org.dddml.uniauth.service.TokenValidationService;
 import org.springframework.http.*;
 import org.springframework.core.ParameterizedTypeReference;
 import java.util.List;
@@ -88,6 +89,9 @@ public class SecurityConfig {
 
     @Autowired
     private AuthCookieService authCookieService;
+
+    @Autowired
+    private TokenValidationService tokenValidationService;
 
     /**
      * 配置AuthenticationManager用于本地用户认证
@@ -282,7 +286,7 @@ public class SecurityConfig {
 
                     // 尝试提取userId，异常则返回null（不是登录状态）
                     try {
-                        return jwtTokenService.getUserIdFromAccessToken(accessToken);
+                        return tokenValidationService.getUserIdFromAccessToken(accessToken);
                     } catch (RuntimeException e) {
                         log.debug("OAuth2 binding cookie was invalid or expired");
                         return null;

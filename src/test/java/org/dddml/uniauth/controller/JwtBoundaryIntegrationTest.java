@@ -115,6 +115,42 @@ class JwtBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
+    void protectedApiRejectsAccessTokenWithoutJti() throws Exception {
+        UserDto user = registerUser("jwt-missing-jti");
+        Instant now = Instant.now();
+        String token = Jwts.builder()
+                .setClaims(Map.of(
+                        "userId", user.getId(),
+                        "username", user.getUsername(),
+                        "email", user.getEmail(),
+                        "authorities", Set.of("ROLE_USER"),
+                        "type", "access"
+                ))
+                .setSubject(user.getId())
+                .setIssuer(jwtTokenService.getToken().getIssuer())
+                .setAudience(jwtTokenService.getToken().getAudience())
+                .setIssuedAt(Date.from(now.minusSeconds(5)))
+                .setExpiration(Date.from(now.plusSeconds(300)))
+                .setHeaderParam("kid", jwtTokenService.getToken().getKid())
+                .signWith(jwtTokenService.getPrivateKey(), SignatureAlgorithm.RS256)
+                .compact();
+
+        mockMvc.perform(get("/api/user")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void protectedApiAcceptsCaseInsensitiveBearerScheme() throws Exception {
+        UserDto user = registerUser("jwt-lowercase-bearer");
+
+        mockMvc.perform(get("/api/user")
+                        .header("Authorization", "bearer " + accessToken(user)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value(user.getId()));
+    }
+
+    @Test
     void authorizationHeaderTakesPrecedenceOverConflictingAccessTokenCookie()
             throws Exception {
         UserDto headerUser = registerUser("jwt-header");

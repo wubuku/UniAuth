@@ -9,6 +9,7 @@ import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.EmailVerificationCodeService;
 import org.dddml.uniauth.service.AuthCookieService;
+import org.dddml.uniauth.service.AuthenticationLogoutService;
 import org.dddml.uniauth.entity.EmailVerificationCode;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -21,7 +22,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -54,6 +54,7 @@ public class AuthController {
     private final EmailRegistrationProperties emailRegistrationProperties;
     private final EmailVerificationCodeService verificationCodeService;
     private final AuthCookieService authCookieService;
+    private final AuthenticationLogoutService authenticationLogoutService;
 
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
 
@@ -339,27 +340,16 @@ public class AuthController {
         )
     })
     public ResponseEntity<?> logout(HttpServletRequest request, HttpServletResponse response) {
-        try {
-            // 1. 清除Spring Security上下文
-            SecurityContextHolder.clearContext();
-
-            // 2. 使用SecurityContextLogoutHandler处理OAuth2特定的清理
-            new SecurityContextLogoutHandler().logout(request, response, null);
-
-            // 3. 使Session无效（如果存在）
-            if (request.getSession(false) != null) {
-                request.getSession(false).invalidate();
-            }
-
-            // 4. ✅ 关键：清除所有认证Cookies！
-            authCookieService.clearAuthenticationCookies(response);
-
-            log.info("Authentication logout completed");
-            return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
-        } catch (Exception e) {
-            log.warn("Authentication logout encountered an error");
-            return ResponseEntity.status(500).body(Map.of("error", "Logout failed"));
+        AuthenticationLogoutService.LogoutResult result =
+                authenticationLogoutService.logout(request, response);
+        if (!result.revocationComplete()) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of(
+                    "error", "REVOCATION_INCOMPLETE",
+                    "message", "Logged out locally; token revocation is incomplete"
+            ));
         }
+        log.info("Authentication logout completed");
+        return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
     }
 
 }

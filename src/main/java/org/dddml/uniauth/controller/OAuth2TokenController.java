@@ -1,10 +1,9 @@
 package org.dddml.uniauth.controller;
 
 import org.dddml.uniauth.service.JwtTokenService;
+import org.dddml.uniauth.service.TokenValidationService;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.jwk.RSAKey;
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jwts;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -30,6 +29,7 @@ import java.util.*;
 public class OAuth2TokenController {
 
     private final JwtTokenService jwtTokenService;
+    private final TokenValidationService tokenValidationService;
 
     /**
      * JWKS 端点
@@ -127,43 +127,33 @@ public class OAuth2TokenController {
         }
         
         try {
-            // 验证 Token 签名
-            Claims claims = Jwts.parserBuilder()
-                    .setSigningKey(jwtTokenService.getPublicKey())
-                    .build()
-                    .parseClaimsJws(tokenValue)
-                    .getBody();
+            TokenValidationService.IntrospectedToken tokenInfo =
+                    tokenValidationService.introspect(tokenValue);
             
             log.debug("Token introspection succeeded");
             
             // 构造内省响应
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("active", true);
-            response.put("sub", claims.getSubject());
-            response.put("userId", claims.get("userId"));
-            response.put("email", claims.get("email"));
-            response.put("authorities", claims.get("authorities"));
-            response.put("aud", claims.getAudience());
-            response.put("iss", claims.getIssuer());
-            response.put("iat", claims.getIssuedAt() != null ? claims.getIssuedAt().getTime() / 1000 : null);
-            response.put("exp", claims.getExpiration() != null ? claims.getExpiration().getTime() / 1000 : null);
-            response.put("jti", claims.get("jti"));
+            response.put("sub", tokenInfo.subject());
+            response.put("userId", tokenInfo.userId());
+            response.put("username", tokenInfo.username());
+            response.put("email", tokenInfo.email());
+            response.put("authorities", tokenInfo.authorities());
+            response.put("aud", tokenInfo.audience());
+            response.put("iss", tokenInfo.issuer());
+            response.put("iat", tokenInfo.issuedAt() != null
+                    ? tokenInfo.issuedAt().getEpochSecond()
+                    : null);
+            response.put("exp", tokenInfo.expiresAt() != null
+                    ? tokenInfo.expiresAt().getEpochSecond()
+                    : null);
+            response.put("jti", tokenInfo.jti());
+            response.put("type", tokenInfo.type());
             response.put("token_type", "Bearer");
             
             return ResponseEntity.ok(response);
             
-        } catch (io.jsonwebtoken.ExpiredJwtException e) {
-            log.warn("Token expired");
-            return ResponseEntity.ok(Map.of(
-                    "active", false,
-                    "error", "Token expired"
-            ));
-        } catch (io.jsonwebtoken.SignatureException e) {
-            log.warn("Invalid token signature");
-            return ResponseEntity.ok(Map.of(
-                    "active", false,
-                    "error", "Invalid signature"
-            ));
         } catch (Exception e) {
             log.warn("Token introspection failed");
             return ResponseEntity.ok(Map.of(

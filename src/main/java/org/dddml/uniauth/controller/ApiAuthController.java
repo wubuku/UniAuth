@@ -3,6 +3,7 @@ package org.dddml.uniauth.controller;
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.repository.UserRepository;
 import org.dddml.uniauth.service.AuthCookieService;
+import org.dddml.uniauth.service.AuthenticationLogoutService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,6 +28,7 @@ public class ApiAuthController {
 
     private final UserRepository userRepository;
     private final AuthCookieService authCookieService;
+    private final AuthenticationLogoutService authenticationLogoutService;
 
     /**
      * 获取当前用户信息
@@ -109,26 +111,16 @@ public class ApiAuthController {
      */
     @PostMapping("/logout")
     public ResponseEntity<?> logout(HttpServletRequest request, HttpServletResponse response) {
-        try {
-            // 清除Spring Security认证
-            org.springframework.security.core.context.SecurityContextHolder.clearContext();
-
-            // 使当前session无效
-            if (request.getSession(false) != null) {
-                request.getSession(false).invalidate();
-            }
-
-            // 清除cookies
-            authCookieService.clearAuthenticationCookies(response);
-
-            log.info("API logout completed");
-            return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
-        } catch (Exception e) {
-            log.warn("API logout encountered an error");
-            // 即使出错也要尝试清除cookies
-            authCookieService.clearAuthenticationCookies(response);
-            return ResponseEntity.ok(Map.of("message", "Logged out with warnings"));
+        AuthenticationLogoutService.LogoutResult result =
+                authenticationLogoutService.logout(request, response);
+        if (!result.revocationComplete()) {
+            return ResponseEntity.status(503).body(Map.of(
+                    "error", "REVOCATION_INCOMPLETE",
+                    "message", "Logged out locally; token revocation is incomplete"
+            ));
         }
+        log.info("API logout completed");
+        return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
     }
 
     /**

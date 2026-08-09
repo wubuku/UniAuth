@@ -1,7 +1,7 @@
 # UniAuth 验证指南
 
 > 状态：Live
-> 最近基线：2026-08-08
+> 最近基线：2026-08-09
 > 本页是项目交付验收的权威规则，区分静态/构建验证与会启动应用的行为验证。
 
 ## 交付验收硬门槛
@@ -107,6 +107,20 @@ python3 -m unittest -v test_app.py
 - 实际 HTTP 验证必须记录端口、profile、数据库目标、关键环境覆盖和观察到的状态码/响应契约。
 - 不得要求用户先代为完成本可自动化的首轮验收。交付信心必须来自测试证据，而不是 review。
 
+真实邮箱登录跨服务浏览器门禁是：
+
+```bash
+PYTHON_BIN=/path/to/python-with-resource-server-dependencies \
+  scripts/test-email-login-browser-e2e.sh
+```
+
+它启动 disposable PostgreSQL、邮件 REST stub、真实 UniAuth、真实 Vite、真实 Python
+API 和 Chrome。测试从 `/resource-test` 进入邮箱注册，读取 stub 捕获的真实模板变量，
+验证后回跳并用 Bearer token 跨 hostname 获取受保护资源，再清理浏览器状态并验证邮箱
+加密码登录。它必须断言 Python origin 没有 `accessToken` Cookie，避免把 HttpOnly
+Cookie 误当成跨域 Bearer transport。详细复现见
+[邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md)。
+
 ### 收敛检查
 
 三轮实现检查只能在以下基础门槛全部通过后开始：
@@ -147,19 +161,20 @@ while counter < 3:
 
 L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 
-## 2026-08-08 当前加固门禁
+## 2026-08-09 当前加固门禁
 
 > 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1、Batch B2a、
 > Batch B2b、邮件服务边界、邮箱 challenge 投递接受/原子消费、敏感响应、API key
-> 单值鉴权，以及认证 Cookie/浏览器 refresh 存储预备切片；
+> 单值鉴权、认证 Cookie/浏览器 refresh 存储预备切片，以及当前格式 refresh
+> replay/logout 持久撤销切片；
 > 不代表 H1.4-H8、完整认证正确性或生产就绪。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 140/140，0 failures/errors/skips；Web3 V5、Flyway disable 拒绝和 shared-schema bootstrap/ApplicationContext 覆盖通过 |
-| `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、独立 PostgreSQL、参考邮件服务跨进程模板入队、失败映射 stub、重启、JWT、Web3 字段篡改/并发 replay、email、登录方式 |
-| `scripts/test-flyway-baseline-guard.sh` | 通过 | 13/13；exact schema、V2/V4 初始及 apply 前数据预检、V5 history/message 列、非法 email verification state、post-baseline 失败恢复与其他拒绝/清理路径 |
+| `mvn test` | 通过 | 151/151；0 failures/errors/skips |
+| `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、独立 PostgreSQL、refresh replay、logout 后 access/refresh/introspection 拒绝与 blacklist 行形状，以及既有邮件、Web3、JWT、登录方式和重启路径 |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 14/14；新增非法 token blacklist pre-history 拒绝，并覆盖 exact schema、V2/V4 初始及 apply 前数据预检、V5 history/message 列、非法 email state、post-baseline 失败恢复与其他拒绝/清理路径 |
 | Flyway integration | 通过 | fresh V1→V5、existing baseline V1→V5、V3→V5、Hibernate validate、Session、checksum/failure recovery |
 | Shared-schema process E2E | 通过 | 4/4；UniAuth-first 与 email-first 两种启动顺序、独立 history、受控 baseline V0、重启与业务表共存 |
 | 邮件参考服务 | 通过 | 148 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、1 个 shared-schema ApplicationContext test、6 个 shared-schema bootstrap tests、5 个 PostgreSQL repository constraint tests、30 个 Java runtime guard tests、1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 43/43、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；Flyway schema-owner、migration discovery/naming、精确 peer history、半成品 peer、队列生命周期行形状、database layout 和非 PostgreSQL datasource 拒绝矩阵通过 |
@@ -169,9 +184,10 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `npm audit --audit-level=high` | 通过 | 0 high/critical；2 个 React Router moderate advisories 见下文 |
 | `npx tsc --noEmit` | 通过 | 无 TypeScript 错误 |
 | `npm run build` | 通过 | Vite 生产构建成功，保留 chunk warning |
-| `npm run test:e2e` | 通过 | 21/21 Chrome-channel Mock Playwright tests |
-| Python | 通过 | 16/16 离线 RSA/JWKS/Flask tests |
-| 邮件 REST stub contract | 通过 | 8/8；API key 单值/重复 header、health、接受、拒绝、限流、坏请求、chunked client 形状和安全响应 header |
+| `npm run test:e2e` | 通过 | 26/26 Chrome-channel Mock Playwright tests；同页面与同源双标签页只消费一次 refresh，logout 保留无关存储 |
+| 邮箱登录浏览器 E2E | 通过 | 1/1；真实 PostgreSQL/UniAuth/Vite/Python/stub，注册、验证码、同源回跳、跨 hostname Bearer、`credentials: omit`、资源域哨兵 Cookie 不随请求发送、邮箱密码再次登录 |
+| Python | 通过 | 18/18 离线 RSA/JWKS/Flask tests；refresh、缺失 `type`/`jti` 和非法 Bearer 格式失败关闭 |
+| 邮件 REST stub contract | 通过 | 9/9；既有 API key/health/接受/拒绝/限流/坏请求/chunked/header 契约，加上既有文件权限收紧为 `0600` 的临时捕获文件 |
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 | Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
 
@@ -518,6 +534,7 @@ npm run test:e2e
 
 ```bash
 bash -n build-frontend.sh start.sh start-with-frontend.sh scripts/*.sh \
+  scripts/email-login-e2e/*.sh \
   reference/email-service/start.sh reference/email-service/scripts/*.sh
 ```
 
@@ -545,8 +562,9 @@ PYTHON_BIN=python3 scripts/verify.sh
 ```
 
 该命令串行执行 Shell syntax、严格 `npm ci`、high/critical 依赖审计、Java compile/tests、
-HTTP E2E、Flyway baseline guard、frontend lint/type/build/Playwright、Python
-tests、文档链接和 patch hygiene。统一入口通过 `NPM_REGISTRY` 固定 npm registry，
+HTTP E2E、Flyway baseline guard、frontend lint/type/build/Mock Playwright、真实邮箱
+登录浏览器 E2E、Python tests、文档链接和 patch hygiene。统一入口通过
+`NPM_REGISTRY` 固定 npm registry，
 默认使用 `https://registry.npmjs.org/`，避免继承用户级镜像后因缺少 audit API 而误失败。
 网络受限时可同时设置本机代理；脚本会把本地回环地址加入 `NO_PROXY`。
 `.github/workflows/verification.yml` 使用同一入口，避免本地与 CI 漂移。
@@ -611,6 +629,7 @@ tests、文档链接和 patch hygiene。统一入口通过 `NPM_REGISTRY` 固定
 
 - [开发指南](DEVELOPMENT.md)
 - [配置基线](CONFIGURATION.md)
+- [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md)
 - [历史异构资源服务器验证记录](../VERIFICATION_CHECKLIST.md)
 - [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md)
 - [下一轮加固实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md)

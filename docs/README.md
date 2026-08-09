@@ -1,6 +1,6 @@
 # UniAuth 文档导航
 
-> 当前文档基线：2026-08-08
+> 当前文档基线：2026-08-09
 > 本页是项目文档的主入口。代码、配置与本文冲突时，以当前代码和配置为准。
 > `docs/Perplexity/` 和 `docs/drafts/` 中包含大量历史方案，不应直接当作运行手册。
 
@@ -14,6 +14,7 @@
 | [配置基线](CONFIGURATION.md) | Live | 端口、profile、数据库、外部服务和密钥 |
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
+| [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md) | Live | 真实 PostgreSQL/UniAuth/Vite/Python/邮件 stub 的注册、登录、回跳与跨域 Bearer 复现 |
 | [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | In progress | H0.1-H0.3、H1.1-H1.3、H1.4 Batch B1/B2a/B2b 已验证；其余 H1.4-H8 待实施 |
 | [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Draft | Web3/SIWE challenge 加固切片已完成；继续按测试优先切片冻结下一轮 |
 
@@ -38,7 +39,9 @@
   登录不需要每次发信。根 HTTP E2E 的正常注册/重置请求使用真实参考服务和独立
   PostgreSQL 验证模板入队；仅 `503/429` 失败映射使用受控 stub。
 - 已建立 PostgreSQL Java 集成测试、真实 HTTP Shell E2E、Mock Playwright 和
-  Python 离线 JWT/JWKS/邮件 stub 契约测试；ESLint 与统一验证入口已纳入门禁。
+  Python 离线 JWT/JWKS/邮件 stub 契约测试；另有真实五服务邮箱登录 Playwright
+  套件，验证资源域无认证 Cookie 且跨 origin 请求使用 Bearer header。ESLint 与
+  统一验证入口已纳入门禁。
 - `blacksheep_dev` 已通过只读 baseline rehearsal，但尚未执行 baseline apply。
 
 详细证据和操作限制见 [配置基线](CONFIGURATION.md) 与

@@ -411,7 +411,7 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   baseline。
 - migration checksum 失配时失败关闭，并保留已有 migration history 和业务数据。
 
-2026-08-08 当前组合基线：
+2026-08-09 当前组合基线：
 
 - 本组件 Maven：148 tests，0 failures/errors/skips；其中 22 个
   PostgreSQL/GreenMail ApplicationContext E2E、1 个 shared-schema
@@ -420,8 +420,9 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   以及 5 个 PostgreSQL repository constraint tests。
 - 本组件 Shell runtime 43/43、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
 - PostgreSQL backup/restore rehearsal 10/10。
-- UniAuth 根项目：Java 140 tests、shared-schema process E2E 4/4、HTTP 15/15、Flyway 13/13、
-  Mock Playwright 21/21、Python 资源服务器 16/16、邮件 REST stub contract 8/8；
+- UniAuth 根项目：Java 151 tests、shared-schema process E2E 4/4、HTTP 15/15、
+  Flyway 14/14、Mock Playwright 26/26、真实邮箱登录浏览器 E2E 1/1、
+  Python 资源服务器 18/18、邮件 REST stub contract 9/9；
   本轮稳定源码快照的完整根统一门禁已通过；连续三轮无修改检查仍是提交前门槛。
 - 根 Shell HTTP E2E 的正常邮箱路径使用本参考服务真实 JAR、真实 HTTP 和独立
   PostgreSQL，直接断言模板进入 `email_queue`；脚本随后只为 `503/429` 失败映射

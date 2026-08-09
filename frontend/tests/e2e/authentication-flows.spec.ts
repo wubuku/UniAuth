@@ -78,7 +78,7 @@ test('local login surfaces a rejected credential response', async ({ page }) => 
   await expect(page).toHaveURL('/login');
 });
 
-test('email registration sends one code and completes verification', async ({ page }) => {
+test('email registration returns to the requested same-origin resource page', async ({ page }) => {
   const email = 'browser-registration@example.invalid';
   let sendCount = 0;
   let verificationRequest: Record<string, string> | undefined;
@@ -143,7 +143,7 @@ test('email registration sends one code and completes verification', async ({ pa
     });
   });
 
-  await page.goto('/login');
+  await page.goto('/login?returnTo=%2Fresource-test');
   await page.getByRole('button', { name: '注册', exact: true }).first().click();
   await page.getByPlaceholder('用户名').fill(email);
   await page.getByPlaceholder('显示名称').fill('Browser Registration');
@@ -155,7 +155,7 @@ test('email registration sends one code and completes verification', async ({ pa
   await page.getByPlaceholder('请输入6位验证码').fill('123456');
   await page.getByRole('button', { name: '确 定' }).click();
 
-  await expect(page).toHaveURL('/');
+  await expect(page).toHaveURL('/resource-test');
   expect(verificationRequest).toEqual({
     email,
     verificationCode: '123456',
@@ -166,8 +166,44 @@ test('email registration sends one code and completes verification', async ({ pa
     .toBeNull();
   await expect.poll(() => page.evaluate(() => {
     const value = localStorage.getItem('auth_user');
-    return value ? JSON.parse(value).userId : null;
+    return value ? JSON.parse(value).id : null;
   })).toBe('browser-registration-id');
+});
+
+test('resource page sends unauthenticated users through an internal login return path', async ({ page }) => {
+  await page.goto('/resource-test');
+
+  await expect(page).toHaveURL('/login?returnTo=%2Fresource-test');
+});
+
+test('login rejects an external return target', async ({ page }) => {
+  await mockCurrentUser(page);
+  await page.route(/\/api\/auth\/login$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        authenticated: true,
+        user: {
+          id: 'browser-user-id',
+          username: 'browser-user',
+          email: 'browser-user@example.invalid',
+          displayName: 'Browser User',
+          provider: 'local',
+        },
+        accessToken: 'mock.access.token',
+        refreshToken: 'mock.refresh.token',
+        tokenType: 'Bearer',
+      }),
+    });
+  });
+
+  await page.goto('/login?returnTo=https%3A%2F%2Fevil.example%2F');
+  await page.getByPlaceholder('用户名').fill('browser-user');
+  await page.getByPlaceholder('密码').fill('browser-password');
+  await page.locator('form').getByRole('button', { name: '登录' }).click();
+
+  await expect(page).toHaveURL('/');
 });
 
 test('email registration keeps verification open when delivery is rejected', async ({ page }) => {

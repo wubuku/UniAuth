@@ -44,16 +44,9 @@ export function useAuth() {
     setUser(null);
     setError(null);
 
-    // 清除所有可能的用户状态存储
-    localStorage.removeItem('auth_user');
-    localStorage.clear(); // 清除所有localStorage
+    AuthService.clearLocalAuthentication();
 
-    // 清除所有cookies
-    document.cookie.split(";").forEach((c) => {
-      document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
-    });
-
-    console.log('All storage cleared, navigating to login...');
+    console.log('Authentication state cleared, navigating to login...');
 
     // 直接导航到登录页面，避免页面刷新可能带来的缓存问题
     window.location.href = '/login';
@@ -115,17 +108,12 @@ export function useAuth() {
       console.log('Starting token refresh...');
       const result = await AuthService.refreshToken();
       console.log('Token refresh successful');
-      
-      // Access token remains available for the heterogeneous resource-server demo.
-      if (result.accessToken) {
-        localStorage.setItem('accessToken', result.accessToken);
-      }
-      
+
       return result;
     } catch (error) {
       console.error('Token refresh failed:', error);
       // 如果刷新失败，说明refresh token也过期了，需要重新登录
-      logout();
+      await logout();
       throw error;
     }
   }, [logout]);
@@ -143,11 +131,6 @@ export function useAuth() {
         const result = await AuthService.refreshToken();
         console.log('Token refresh successful');
 
-        // Access token remains available for the heterogeneous resource-server demo.
-        if (result.accessToken) {
-          localStorage.setItem('accessToken', result.accessToken);
-        }
-
         // 刷新token后，获取用户信息（但不调用checkAuth避免循环）
         try {
           const userData = await AuthService.getCurrentUser();
@@ -159,7 +142,7 @@ export function useAuth() {
       } catch (error) {
         console.error('Auto token refresh failed:', error);
         // 刷新失败，清除用户状态并跳转到登录页
-        logout();
+        await logout();
       }
     }
   }, [isTokenExpiring, logout]);

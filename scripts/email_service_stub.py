@@ -4,6 +4,7 @@ import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+from pathlib import Path
 import secrets
 import threading
 from typing import Any
@@ -13,16 +14,50 @@ MAX_REQUEST_BYTES = 64 * 1024
 
 
 class EmailStubServer(ThreadingHTTPServer):
-    def __init__(self, address: tuple[str, int], api_key: str):
+    def __init__(
+        self,
+        address: tuple[str, int],
+        api_key: str,
+        capture_file: Path | None = None,
+    ):
         super().__init__(address, EmailStubHandler)
         self.api_key = api_key
+        self.capture_file = capture_file
         self._queue_id = 0
         self._queue_lock = threading.Lock()
+        self._capture_lock = threading.Lock()
+
+        if self.capture_file is not None:
+            self.capture_file.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(
+                self.capture_file,
+                os.O_CREAT | os.O_WRONLY | os.O_TRUNC,
+                0o600,
+            )
+            os.close(descriptor)
+            os.chmod(self.capture_file, 0o600)
 
     def next_queue_id(self) -> int:
         with self._queue_lock:
             self._queue_id += 1
             return self._queue_id
+
+    def capture(self, payload: dict[str, Any], queue_id: int) -> None:
+        if self.capture_file is None:
+            return
+
+        captured = {
+            "queueId": queue_id,
+            "to": payload.get("to"),
+            "subject": payload.get("subject"),
+            "templateName": payload.get("templateName"),
+            "variables": payload.get("variables"),
+            "emailType": payload.get("emailType"),
+        }
+        line = json.dumps(captured, separators=(",", ":"))
+        with self._capture_lock:
+            with self.capture_file.open("a", encoding="utf-8") as capture_stream:
+                capture_stream.write(f"{line}\n")
 
 
 class EmailStubHandler(BaseHTTPRequestHandler):
@@ -58,10 +93,9 @@ class EmailStubHandler(BaseHTTPRequestHandler):
             self._json_response(503, {"success": False, "error": "REJECTED"})
             return
 
-        self._json_response(
-            200,
-            {"success": True, "queueId": self.server.next_queue_id()},
-        )
+        queue_id = self.server.next_queue_id()
+        self.server.capture(payload, queue_id)
+        self._json_response(200, {"success": True, "queueId": queue_id})
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -167,20 +201,31 @@ class EmailStubHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def build_server(host: str, port: int, api_key: str) -> EmailStubServer:
+def build_server(
+    host: str,
+    port: int,
+    api_key: str,
+    capture_file: Path | None = None,
+) -> EmailStubServer:
     if not api_key:
         raise ValueError("api_key must not be empty")
-    return EmailStubServer((host, port), api_key)
+    return EmailStubServer((host, port), api_key, capture_file)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Disposable email REST contract stub")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", required=True, type=int)
+    parser.add_argument("--capture-file", type=Path)
     arguments = parser.parse_args()
 
     api_key = os.environ.get("EMAIL_STUB_API_KEY", "")
-    server = build_server(arguments.host, arguments.port, api_key)
+    server = build_server(
+        arguments.host,
+        arguments.port,
+        api_key,
+        arguments.capture_file,
+    )
     print(f"READY {server.server_address[0]}:{server.server_address[1]}", flush=True)
     server.serve_forever()
 

@@ -7,7 +7,8 @@
 > schema owner，演示数据默认关闭且不执行全表清理。
 > 开始开发或启动前，请先阅读 [文档导航](docs/README.md)、
 > [配置基线](docs/CONFIGURATION.md)、[开发指南](docs/DEVELOPMENT.md) 和
-> [验证指南](docs/VERIFICATION.md)。
+> [验证指南](docs/VERIFICATION.md)。真实邮箱注册、登录、资源回跳和跨域 Bearer
+> 验证见[邮箱登录浏览器 E2E](docs/EMAIL_LOGIN_BROWSER_E2E.md)。
 > 下文保留了较多设计目标、部署示例和历史说明，包括已经退役的 SQLite 路径。
 > 当前操作只使用上述 live guides；不要执行下文的 SQLite、手工 schema init 或旧域名示例。
 
@@ -22,13 +23,13 @@
 | 数据库 | PostgreSQL 16-only |
 | Migration | Flyway V1 baseline + V2 + V3 + V4 + V5，history `uniauth_flyway_schema_history` |
 | 邮件数据库布局 | 默认独立数据库；显式 `shared-uniauth` 可与 UniAuth 共用 `public` schema，两侧 relation 名无冲突并使用独立 Flyway history |
-| Java 验证 | 140 tests |
+| Java 验证 | 151 tests，0 failures/errors/skips |
 | 邮件参考服务 | 148 tests；其中 22 个 PostgreSQL/GreenMail E2E、1 个 shared-schema ApplicationContext test、6 个 shared-schema bootstrap tests；另有 Shell runtime 43/43、HTTP 11/11、Flyway guard 15/15、backup/restore 10/10 |
 | Shared-schema E2E | 4/4；UniAuth/邮件服务两种启动顺序、独立 history 和 baseline V0 |
 | HTTP E2E | 15/15；正常邮箱流程使用真实参考服务，失败映射矩阵使用受控 stub |
-| Flyway baseline guard | 13/13 |
-| Playwright | 21 tests |
-| Python | 16 个资源服务器测试 + 8 个邮件 REST stub 契约测试 |
+| Flyway baseline guard | 14/14 |
+| Playwright | 26 个 Mock 浏览器测试 + 1 个真实邮箱登录跨服务 E2E |
+| Python | 18 个资源服务器测试 + 9 个邮件 REST stub 契约测试 |
 | 前端 lint/type/build | 通过 |
 
 安全启动、测试和 baseline 操作见 [开发指南](docs/DEVELOPMENT.md) 与
@@ -91,6 +92,13 @@ nosniff 安全 header，避免队列、日志或错误响应被缓存或 MIME �
 因此该门禁验证的是 UniAuth 到兼容邮件服务的真实跨进程闭环，同时保留失败语义的
 可重复测试；它不连接真实 SMTP，也不证明最终收件。
 
+`scripts/test-email-login-browser-e2e.sh` 进一步启动真实 Vite、UniAuth、Python
+资源 API、disposable PostgreSQL 和无投递邮件 stub，由 Chrome 从 `/resource-test`
+完成邮箱注册、验证、回跳、跨 hostname Bearer 访问和邮箱密码再次登录。当前跨 origin
+资源请求依赖登录 JSON 返回并由前端暂存于 localStorage 的 access token，不依赖
+HttpOnly Cookie；该演示 transport 的生产安全边界见
+[专项 E2E 指南](docs/EMAIL_LOGIN_BROWSER_E2E.md#access-token-边界)。
+
 | 属性 | 说明 |
 |------|------|
 | **项目名称** | UniAuth |
@@ -126,7 +134,13 @@ nosniff 安全 header，避免队列、日志或错误响应被缓存或 MIME �
 
 ### JWT 令牌管理
 
-自定义 `JwtTokenService` 使用 RSA-2048/RS256 签发 access token 和 refresh token，并通过 JWKS 暴露公钥。当前 access token 已验证时间、issuer、audience 和 type；blacklist、logout 撤销和 refresh replay detection 尚未完成。默认密钥文件位于 ignored 的 `.local/uniauth/rsa-keys.ser`，仍不是生产密钥库。
+自定义 `JwtTokenService` 使用 RSA-2048/RS256 签发 access token 和 refresh token，
+并通过 JWKS 暴露公钥。当前 access token 验证时间、issuer、audience、type、
+`kid`、`jti`、用户身份和 enabled 状态；refresh token 轮换以 PostgreSQL 唯一 `jti`
+写入实现单次消费，logout 会持久撤销当前可验证的 access/refresh token，Resource
+Server 与 introspection 共用 blacklist 结论。当前尚无 token family/security version，
+也仍在 JSON 中返回 refresh token。默认密钥文件位于 ignored 的
+`.local/uniauth/rsa-keys.ser`，仍不是生产密钥库。
 
 ### 会话持久化
 
@@ -318,19 +332,22 @@ uni-auth/
 
 系统使用以下数据库表存储用户认证和会话数据：
 
-| 表名 | 说明 | 自动创建 |
-|------|------|----------|
-| `users` | 用户基本信息表 | 需手动执行 schema 脚本 |
-| `user_login_methods` | 用户登录方式表（支持多登录方式） | 需手动执行 schema 脚本 |
-| `user_authorities` | 用户权限关联表 | 需手动执行 schema 脚本 |
-| `token_blacklist` | JWT 令牌黑名单表 | 需手动执行 schema 脚本 |
-| `spring_session` | Spring Session 会话表 | Spring Session 自动创建 |
-| `spring_session_attributes` | Spring Session 属性表 | Spring Session 自动创建 |
+| 表名 | 说明 | Schema owner |
+|------|------|--------------|
+| `users` | 用户基本信息表 | Flyway |
+| `user_login_methods` | 用户登录方式表（支持多登录方式） | Flyway |
+| `user_authorities` | 用户权限关联表 | Flyway |
+| `token_blacklist` | JWT 令牌黑名单表 | Flyway |
+| `spring_session` | Spring Session 会话表 | Flyway |
+| `spring_session_attributes` | Spring Session 属性表 | Flyway |
 
 **注意**：
-- `users`、`user_login_methods`、`user_authorities`、`token_blacklist` 由 `schema-postgresql.sql` 脚本创建
-- `spring_session`、`spring_session_attributes` 由 Spring Session JDBC 模块在应用启动时自动创建（`initialize-schema: always`）
-- 生产环境需手动执行 schema 脚本，并设置 `initialize-schema: never`
+- 当前仅支持 PostgreSQL 16；Flyway
+  `db/migration/postgresql/V1__baseline_uniauth_auth_schema.sql` 到 V5 是唯一 runtime
+  schema 写入链。
+- Hibernate 使用 `validate`，SQL init 和 Spring Session 自动建表均关闭。
+- 旧 `schema-postgresql.sql` 等脚本只作为历史材料保存在 `docs/archive/database/`，
+  不得用于当前环境初始化。
 
 **历史遗留表说明**：
 - `jwt_keys` 表：早期设计遗留，当前版本未使用，可安全忽略或删除

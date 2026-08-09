@@ -1,7 +1,7 @@
 # UniAuth 文档体系建设计划
 
 > 状态：Live maintenance；首版体系已建立，随加固 batch 持续校准
-> 首版基线：2026-08-07；最近校准：2026-08-08
+> 首版基线：2026-08-07；最近校准：2026-08-09
 > 原则：已有文档不移动；新文档链接已有内容；当前事实以代码、配置和可执行验证为准。
 
 ## 目标
@@ -39,7 +39,7 @@
 | API 行为 | controller、service、repository 和 entity |
 | 前端端口、代理、构建输出 | `frontend/vite.config.ts`、`frontend/package.json` |
 | Python 示例行为 | `python-resource-server/app.py` |
-| 可执行验证状态 | `scripts/verify.sh` 与 `docs/VERIFICATION.md` 记录的 2026-08-08 完整门禁 |
+| 可执行验证状态 | `scripts/verify.sh` 与 `docs/VERIFICATION.md` 记录的 2026-08-09 完整门禁 |
 
 现有 prose 与这些来源冲突时，不把 prose 视为当前事实。
 
@@ -120,12 +120,12 @@
 - Flyway V1 baseline + V2 + V3 + V4 + V5 已接管 8 张认证/Session 表，并加固登录
   方式行形状、primary、集合变更 CAS、其余目标实体约束、email repository 索引以及
   Web3/SIWE challenge message 绑定和原子消费；旧 SQL 已归档到 runtime classpath 外。
-- Java 已有 PostgreSQL/Testcontainers 集成测试；当前完整门禁为 140/140，
-  Web3 V5 slice 另增字段绑定、并发 upsert/consume 覆盖，shared-schema slice
-  增加两侧 bootstrap/ApplicationContext 与双进程启动顺序覆盖。
-- HTTP Shell E2E 当前 15/15，Flyway baseline guard 13/13，
-  Mock Playwright 21 tests，Python 资源服务器 16 tests，邮件 REST stub contract
-  8 tests。
+- Java 已有 PostgreSQL/Testcontainers 集成测试；当前完整 Maven 为
+  151/151，0 failures/errors/skips。
+- HTTP Shell E2E 当前 15/15、Flyway baseline guard 14/14、Mock Playwright
+  26/26、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 18/18、邮件 REST stub
+  contract 9/9；同页面和同源双标签页 refresh 协调、logout 存储边界、
+  Python `jti` 契约与跨 hostname Bearer/Cookie 隔离均已进入统一门禁。
 - 前端严格 `npm ci`、high/critical 依赖审计、lint、typecheck 和生产构建通过；
   `scripts/verify.sh` 与 GitHub Actions 使用统一验证入口。
 - npm audit 仍有 2 个 React Router moderate advisories；当前客户端路由 pathname
@@ -165,7 +165,9 @@
   email/purpose 消费和错误重试 CAS 已有 PostgreSQL、HTTP、Playwright 与 Python
   stub 契约覆盖。外部接受后本地事务失败、异步 delivery 失败、单一 pending
   challenge、canonical email 和可靠 outbox 状态机仍待修复。
-- token blacklist 尚未接入验证、刷新和登出流程。
+- token blacklist 已接入当前格式 access/refresh 校验、refresh 单次消费、logout
+  持久撤销和 introspection；仍缺 token family/security version，Python 离线 JWKS
+  校验也不能感知数据库撤销。
 - Web3 的 `isNewUser`、bind 返回处理、EIP-191 字节长度、完整 SIWE message 绑定、
   PostgreSQL nonce 原子 upsert、带 message/有效期条件的原子消费和并发重放均已
   修复并由 V5、Java 集成测试和真实 HTTP E2E 覆盖；后续只在新的固定范围中继续
@@ -202,3 +204,18 @@ git diff --check
 - 详细 API 文档随下一阶段加固实现和测试补齐后再校准。
 - 不把根 E2E 的受控 stub 描述成完整邮件服务实现；它只负责参考服务不自然产生的
   `503/429` 失败响应矩阵。
+
+## 2026-08-09 邮箱登录浏览器 E2E 文档增量
+
+| 优先级 | 内容 | 状态 |
+|--------|------|------|
+| P0 | 建立真实邮箱注册/登录、资源回跳和跨 origin Bearer 的 Live 复现指南 | 已完成 |
+| P0 | 记录 Python 资源服务器是纯 REST API，展示页属于 React `/resource-test` | 已完成 |
+| P0 | 明确 JSON/localStorage Bearer 与 HttpOnly Cookie 的双重传递和安全边界 | 已完成 |
+| P1 | 索引五个独立服务启动脚本、聚合器、Playwright 配置和故障排查 | 已完成 |
+| P1 | 将真实浏览器套件纳入统一门禁与 Agent 快速命令 | 已完成 |
+| P2 | 独立资源前端域的 OAuth/OIDC Code+PKCE 或 BFF 设计 | 延后，属于新功能 |
+
+本增量保留所有既有文档原路径。权威入口是
+[邮箱登录浏览器 E2E](../EMAIL_LOGIN_BROWSER_E2E.md)，组件 README 和 live guides
+只保留必要摘要并链接该入口。

@@ -34,9 +34,7 @@ const OAuth2CallbackPage = () => {
 
         try {
           const refreshResponse = await AuthService.refreshToken();
-          if (refreshResponse.accessToken) {
-            localStorage.setItem('accessToken', refreshResponse.accessToken);
-          } else {
+          if (!refreshResponse.accessToken) {
             throw new Error('刷新token失败：响应中没有accessToken');
           }
         } catch (error) {

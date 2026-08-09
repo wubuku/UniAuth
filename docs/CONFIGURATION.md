@@ -1,7 +1,7 @@
 # UniAuth 配置基线
 
 > 状态：Live
-> 核验日期：2026-08-08
+> 核验日期：2026-08-09
 > 重要：不要在未确认数据库目标和数据可丢弃前启动 Spring 应用。
 
 ## 当前默认拓扑
@@ -385,7 +385,12 @@ CORS 来源目前由多处共同定义：
 Vite：
 
 - 开发端口 `5173`。
-- `/api`、`/oauth2` 代理到 `http://localhost:8081`。
+- `/api`、`/oauth2` 默认代理到 `http://localhost:8081`，可通过
+  `VITE_DEV_PROXY_TARGET` 覆盖。
+- dev proxy 将请求 `Origin` 重写为实际 backend origin，使动态 Vite 端口保持同源
+  代理语义；不要以接受任意随机 origin 的方式放宽生产 CORS。
+- `VITE_RESOURCE_SERVER_URL` 控制 `/resource-test` 调用的 Python API，默认
+  `http://localhost:5002`。
 - build 输出到 `../src/main/resources/static`。
 - build 会清空并重建输出目录。
 
@@ -396,12 +401,20 @@ Vite：
 当前代码：
 
 - 监听 `5002`。
+- 只提供 REST API；资源展示页面是 React `/resource-test`，不由 Flask 提供。
 - `AUTH_SERVER_URL` 默认 `http://localhost:8081`，可用 `JWKS_URL` 覆盖 JWKS。
 - HTTPS 使用 `requests` 默认的证书验证。
 - `JWT_ISSUER`、`JWT_AUDIENCE`、`RESOURCE_SERVER_PORT` 和 CORS origins 均可由环境变量覆盖。
 - JWT 只接受 RS256，并要求精确匹配 `kid`。
 
-详细运行和离线测试命令见组件 README。
+当前跨 origin 演示依赖登录/注册 JSON 中返回的 access token。前端把它写入
+localStorage 并构造 Bearer header；HttpOnly access-token Cookie 不能被 JavaScript
+读取，也不会在不同 host 的 Python API 上替代该 header。该 localStorage 路径会扩大
+XSS 风险，不是生产最佳实践。生产 SPA 应优先把 access token 仅保存在内存并使用
+HttpOnly refresh cookie；或采用 BFF，使浏览器只持有 HttpOnly session cookie。
+
+详细运行和离线测试命令见组件 README；真实跨服务邮箱登录验证见
+[邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md)。
 
 ## 配置优先级
 

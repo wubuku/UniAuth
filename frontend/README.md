@@ -102,7 +102,8 @@ npm run preview
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8081
-VITE_OAUTH_REDIRECT_URL=http://localhost:5173/oauth2/callback
+VITE_DEV_PROXY_TARGET=http://localhost:8081
+VITE_RESOURCE_SERVER_URL=http://localhost:5002
 npm run dev
 ```
 
@@ -115,6 +116,17 @@ npm run test:e2e
 ```
 
 该命令启动隔离 Vite server，并使用 Mock API 覆盖核心账户页面。
+
+真实邮箱注册、登录、回跳和跨 origin Python API 验证由仓库根聚合器运行：
+
+```bash
+PYTHON_BIN=/path/to/python-with-resource-server-dependencies \
+  scripts/test-email-login-browser-e2e.sh
+```
+
+底层 Vite 脚本是 `scripts/email-login-e2e/start-frontend.sh`。完整服务拓扑与
+Access Token/HttpOnly Cookie 边界见
+[邮箱登录浏览器 E2E](../docs/EMAIL_LOGIN_BROWSER_E2E.md)。
 
 ## API接口
 

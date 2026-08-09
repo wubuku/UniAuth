@@ -2,6 +2,7 @@ package org.dddml.uniauth.controller;
 
 import org.dddml.uniauth.service.TokenRefreshService;
 import org.dddml.uniauth.service.AuthCookieService;
+import org.dddml.uniauth.service.TokenRejectedException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -13,6 +14,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.dao.DataAccessException;
+import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -104,10 +107,20 @@ public class TokenController {
             ));
 
 
-        } catch (Exception e) {
-            log.error("Token refresh failed");
+        } catch (TokenRejectedException | JwtException exception) {
+            log.warn("Token refresh rejected");
             return ResponseEntity.status(401).body(
-                Map.of("error", "Token refresh failed", "details", e.getMessage())
+                Map.of("error", "Token refresh failed")
+            );
+        } catch (DataAccessException exception) {
+            log.error("Token refresh persistence failed");
+            return ResponseEntity.status(503).body(
+                Map.of("error", "TOKEN_REFRESH_UNAVAILABLE")
+            );
+        } catch (Exception exception) {
+            log.error("Token refresh failed");
+            return ResponseEntity.status(503).body(
+                Map.of("error", "TOKEN_REFRESH_UNAVAILABLE")
             );
         }
     }

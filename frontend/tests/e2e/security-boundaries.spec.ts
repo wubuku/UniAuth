@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page, type Route } from '@playwright/test';
 
 const walletAddress = '0x1111111111111111111111111111111111111111';
 const walletSignature = `0x${'ab'.repeat(65)}`;
@@ -236,6 +236,314 @@ test('one protected 401 refreshes once and retries with the new access token', a
     .toBeNull();
 });
 
+test('concurrent protected 401 responses share one refresh request', async ({ page }) => {
+  let refreshCalls = 0;
+  let expiredProtectedCalls = 0;
+  let refreshedCurrentUserCalls = 0;
+  let refreshedLoginMethodCalls = 0;
+  let releaseExpiredProtectedCalls!: () => void;
+  const concurrentExpiredCallsStarted = new Promise<void>((resolve) => {
+    releaseExpiredProtectedCalls = resolve;
+  });
+
+  const rejectExpiredToken = async (route: Route) => {
+    expiredProtectedCalls += 1;
+    if (expiredProtectedCalls === 2) {
+      releaseExpiredProtectedCalls();
+    }
+    await concurrentExpiredCallsStarted;
+    await route.fulfill({
+      status: 401,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'expired' }),
+    });
+  };
+
+  await page.goto('/login');
+  await page.evaluate(() => {
+    localStorage.setItem('auth_user', JSON.stringify({
+      authenticated: true,
+      provider: 'local',
+      userName: 'concurrent-refresh-user',
+      userEmail: 'concurrent-refresh-user@example.invalid',
+      userId: 'concurrent-refresh-user-id',
+    }));
+    localStorage.setItem('accessToken', 'concurrent.expired.access.token');
+  });
+  await page.route(/\/api\/user(?:\?.*)?$/, async (route) => {
+    const authorization = route.request().headers().authorization;
+    if (authorization === 'Bearer concurrent.expired.access.token') {
+      await rejectExpiredToken(route);
+      return;
+    }
+    expect(authorization).toBe('Bearer concurrent.refreshed.access.token');
+    refreshedCurrentUserCalls += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        authenticated: true,
+        provider: 'local',
+        userName: 'concurrent-refresh-user',
+        userEmail: 'concurrent-refresh-user@example.invalid',
+        userId: 'concurrent-refresh-user-id',
+      }),
+    });
+  });
+  await page.route(/\/api\/user\/login-methods$/, async (route) => {
+    const authorization = route.request().headers().authorization;
+    if (authorization === 'Bearer concurrent.expired.access.token') {
+      await rejectExpiredToken(route);
+      return;
+    }
+    expect(authorization).toBe('Bearer concurrent.refreshed.access.token');
+    refreshedLoginMethodCalls += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ loginMethods: [], count: 0 }),
+    });
+  });
+  await page.route(/\/api\/auth\/refresh$/, async (route) => {
+    refreshCalls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        accessToken: 'concurrent.refreshed.access.token',
+        refreshToken: 'concurrent.refreshed.refresh.token',
+        tokenType: 'Bearer',
+      }),
+    });
+  });
+
+  await page.goto('/test');
+
+  await expect(page.getByText('已绑定的登录方式 (0)')).toBeVisible();
+  await expect.poll(() => refreshedCurrentUserCalls).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => refreshedLoginMethodCalls).toBeGreaterThanOrEqual(1);
+  expect(refreshCalls).toBe(1);
+});
+
+test('same-origin tabs coordinate refresh through one cookie rotation', async ({
+  context,
+  page,
+}) => {
+  let refreshCalls = 0;
+  const expiredPages = new Set<Page>();
+  const refreshedPages = new Set<Page>();
+  let releaseExpiredCalls!: () => void;
+  const bothTabsRequestedWithExpiredToken = new Promise<void>((resolve) => {
+    releaseExpiredCalls = resolve;
+  });
+
+  await context.addInitScript(() => {
+    localStorage.setItem('auth_user', JSON.stringify({
+      authenticated: true,
+      provider: 'local',
+      userName: 'cross-tab-refresh-user',
+      userEmail: 'cross-tab-refresh-user@example.invalid',
+      userId: 'cross-tab-refresh-user-id',
+    }));
+    localStorage.setItem('accessToken', 'cross-tab.expired.access.token');
+  });
+  await context.route(/\/api\/user(?:\?.*)?$/, async (route) => {
+    const authorization = route.request().headers().authorization;
+    if (authorization === 'Bearer cross-tab.expired.access.token') {
+      expiredPages.add(route.request().frame().page());
+      if (expiredPages.size === 2) {
+        releaseExpiredCalls();
+      }
+      await bothTabsRequestedWithExpiredToken;
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'expired' }),
+      });
+      return;
+    }
+    expect(authorization).toBe('Bearer cross-tab.refreshed.access.token');
+    refreshedPages.add(route.request().frame().page());
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        authenticated: true,
+        provider: 'local',
+        userName: 'cross-tab-refresh-user',
+        userEmail: 'cross-tab-refresh-user@example.invalid',
+        userId: 'cross-tab-refresh-user-id',
+      }),
+    });
+  });
+  await context.route(/\/api\/user\/login-methods$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ loginMethods: [], count: 0 }),
+    });
+  });
+  await context.route(/\/api\/auth\/refresh$/, async (route) => {
+    refreshCalls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        accessToken: 'cross-tab.refreshed.access.token',
+        refreshToken: 'cross-tab.refreshed.refresh.token',
+        tokenType: 'Bearer',
+      }),
+    });
+  });
+
+  const secondPage = await context.newPage();
+  await Promise.all([
+    page.goto('/test'),
+    secondPage.goto('/test'),
+  ]);
+
+  await expect(page.getByText('已绑定的登录方式 (0)')).toBeVisible();
+  await expect(secondPage.getByText('已绑定的登录方式 (0)')).toBeVisible();
+  await expect.poll(() => refreshedPages.size).toBe(2);
+  expect(refreshCalls).toBe(1);
+  await expect.poll(async () => Promise.all([
+    page.evaluate(() => localStorage.getItem('accessToken')),
+    secondPage.evaluate(() => localStorage.getItem('accessToken')),
+  ])).toEqual([
+    'cross-tab.refreshed.access.token',
+    'cross-tab.refreshed.access.token',
+  ]);
+});
+
+test('cross-tab logout cannot be undone by a late refresh continuation', async ({
+  context,
+  page,
+}) => {
+  let refreshCalls = 0;
+  let logoutCalls = 0;
+  let markRefreshStarted!: () => void;
+  let releaseRefresh!: () => void;
+  const refreshStarted = new Promise<void>((resolve) => {
+    markRefreshStarted = resolve;
+  });
+  const refreshCanFinish = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+
+  await page.addInitScript(() => {
+    const originalSetItem = Storage.prototype.setItem;
+    let refreshedAccessTokenWrites = 0;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (key === 'accessToken' && value === 'cross-tab-logout.refreshed.access.token') {
+        refreshedAccessTokenWrites += 1;
+        if (refreshedAccessTokenWrites > 1) {
+          window.setTimeout(() => originalSetItem.call(this, key, value), 250);
+          return;
+        }
+      }
+      originalSetItem.call(this, key, value);
+    };
+  });
+
+  const secondPage = await context.newPage();
+  await Promise.all([
+    page.goto('/login'),
+    secondPage.goto('/login'),
+  ]);
+  await page.evaluate(() => {
+    localStorage.setItem('auth_user', JSON.stringify({
+      authenticated: true,
+      provider: 'local',
+      userName: 'cross-tab-logout-user',
+      userEmail: 'cross-tab-logout-user@example.invalid',
+      userId: 'cross-tab-logout-user-id',
+    }));
+    localStorage.setItem('accessToken', 'cross-tab-logout.old.access.token');
+  });
+
+  await context.route(/\/api\/user(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        authenticated: true,
+        provider: 'local',
+        userName: 'cross-tab-logout-user',
+        userEmail: 'cross-tab-logout-user@example.invalid',
+        userId: 'cross-tab-logout-user-id',
+      }),
+    });
+  });
+  await context.route(/\/api\/user\/login-methods$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ loginMethods: [], count: 0 }),
+    });
+  });
+  await context.route(/\/api\/auth\/refresh$/, async (route) => {
+    refreshCalls += 1;
+    markRefreshStarted();
+    await refreshCanFinish;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        message: 'Token refresh successful',
+        accessToken: 'cross-tab-logout.refreshed.access.token',
+        refreshToken: 'cross-tab-logout.refreshed.refresh.token',
+        accessTokenExpiresIn: 3600,
+        refreshTokenExpiresIn: 604800,
+        tokenType: 'Bearer',
+      }),
+    });
+  });
+  await context.route(/\/api\/auth\/logout$/, async (route) => {
+    logoutCalls += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ message: 'Logged out successfully' }),
+    });
+  });
+
+  await Promise.all([
+    page.goto('/test'),
+    secondPage.goto('/test'),
+  ]);
+  await expect(page.getByText('已绑定的登录方式 (0)')).toBeVisible();
+  await expect(secondPage.getByText('已绑定的登录方式 (0)')).toBeVisible();
+
+  await page.getByRole('button', { name: '刷新Token' }).click();
+  await refreshStarted;
+  await secondPage.getByRole('button', { name: '登出' }).click();
+  expect(logoutCalls).toBe(0);
+
+  releaseRefresh();
+
+  await expect(secondPage).toHaveURL('/login');
+  await page.waitForTimeout(400);
+  expect(refreshCalls).toBe(1);
+  expect(logoutCalls).toBe(1);
+  await expect.poll(async () => Promise.all([
+    page.evaluate(() => ({
+      user: localStorage.getItem('auth_user'),
+      access: localStorage.getItem('accessToken'),
+      refresh: localStorage.getItem('refreshToken'),
+    })),
+    secondPage.evaluate(() => ({
+      user: localStorage.getItem('auth_user'),
+      access: localStorage.getItem('accessToken'),
+      refresh: localStorage.getItem('refreshToken'),
+    })),
+  ])).toEqual([
+    { user: null, access: null, refresh: null },
+    { user: null, access: null, refresh: null },
+  ]);
+});
+
 test('application startup removes only the legacy refresh-token key', async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem('refreshToken', 'legacy.refresh.token');
@@ -327,7 +635,8 @@ test('logout calls the backend once and clears application authentication state'
     }));
     localStorage.setItem('accessToken', 'logout.access.token');
     localStorage.setItem('refreshToken', 'logout.refresh.token');
-    localStorage.setItem('unrelated-preference', 'preserve-in-a-later-hardening-batch');
+    localStorage.setItem('unrelated-preference', 'keep-me');
+    document.cookie = 'unrelated-cookie=keep-me; path=/';
   });
   await page.route(/\/api\/user(?:\?.*)?$/, async (route) => {
     await route.fulfill({
@@ -381,7 +690,116 @@ test('logout calls the backend once and clears application authentication state'
     user: localStorage.getItem('auth_user'),
     access: localStorage.getItem('accessToken'),
     refresh: localStorage.getItem('refreshToken'),
-  }))).toEqual({ user: null, access: null, refresh: null });
+    unrelated: localStorage.getItem('unrelated-preference'),
+    cookie: document.cookie,
+  }))).toEqual({
+    user: null,
+    access: null,
+    refresh: null,
+    unrelated: 'keep-me',
+    cookie: 'unrelated-cookie=keep-me',
+  });
+});
+
+test('logout waits for an in-flight refresh and leaves authentication state cleared', async ({
+  page,
+}) => {
+  const requestOrder: string[] = [];
+  let logoutCalls = 0;
+  let releaseRefresh!: () => void;
+  let markRefreshStarted!: () => void;
+  const refreshStarted = new Promise<void>((resolve) => {
+    markRefreshStarted = resolve;
+  });
+  const refreshCanFinish = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+
+  await page.goto('/login');
+  await page.evaluate(() => {
+    localStorage.setItem('auth_user', JSON.stringify({
+      authenticated: true,
+      provider: 'local',
+      userName: 'refresh-logout-user',
+      userEmail: 'refresh-logout-user@example.invalid',
+      userId: 'refresh-logout-user-id',
+    }));
+    localStorage.setItem('accessToken', 'refresh-logout.old.access.token');
+    localStorage.setItem('refreshToken', 'legacy.refresh.token');
+    localStorage.setItem('unrelated-preference', 'keep-me');
+  });
+  await page.route(/\/api\/user(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        authenticated: true,
+        provider: 'local',
+        userName: 'refresh-logout-user',
+        userEmail: 'refresh-logout-user@example.invalid',
+        userId: 'refresh-logout-user-id',
+      }),
+    });
+  });
+  await page.route(/\/api\/user\/login-methods$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ loginMethods: [], count: 0 }),
+    });
+  });
+  await page.route(/\/api\/auth\/refresh$/, async (route) => {
+    requestOrder.push('refresh-start');
+    markRefreshStarted();
+    await refreshCanFinish;
+    requestOrder.push('refresh-finish');
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        message: 'Token refresh successful',
+        accessToken: 'refresh-logout.new.access.token',
+        refreshToken: 'refresh-logout.new.refresh.token',
+        accessTokenExpiresIn: 3600,
+        refreshTokenExpiresIn: 604800,
+        tokenType: 'Bearer',
+      }),
+    });
+  });
+  await page.route(/\/api\/auth\/logout$/, async (route) => {
+    logoutCalls += 1;
+    requestOrder.push('logout');
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ message: 'Logged out successfully' }),
+    });
+  });
+
+  await page.goto('/test');
+  await expect(page.getByText('已绑定的登录方式 (0)')).toBeVisible();
+
+  await page.getByRole('button', { name: '刷新Token' }).click();
+  await refreshStarted;
+  await page.getByRole('button', { name: '登出' }).click();
+
+  expect(logoutCalls).toBe(0);
+  releaseRefresh();
+
+  await expect(page).toHaveURL('/login');
+  expect(logoutCalls).toBe(1);
+  expect(requestOrder).toEqual(['refresh-start', 'refresh-finish', 'logout']);
+  await expect.poll(() => page.evaluate(() => ({
+    user: localStorage.getItem('auth_user'),
+    access: localStorage.getItem('accessToken'),
+    refresh: localStorage.getItem('refreshToken'),
+    unrelated: localStorage.getItem('unrelated-preference'),
+  }))).toEqual({
+    user: null,
+    access: null,
+    refresh: null,
+    unrelated: 'keep-me',
+  });
 });
 
 test('login-method conflicts remain visible and do not mutate the list', async ({ page }) => {

@@ -4,6 +4,7 @@ from http.client import HTTPConnection
 import json
 from pathlib import Path
 import sys
+import tempfile
 import threading
 import unittest
 
@@ -124,6 +125,52 @@ class EmailServiceStubContractTest(unittest.TestCase):
         self.assertIsInstance(body["queueId"], int)
         self.assertNotIn("variables", body)
         self.assertNotIn("verificationCode", json.dumps(body))
+
+    def test_optional_capture_file_records_an_accepted_template_request(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            capture_file = Path(directory) / "mailbox.jsonl"
+            capture_file.write_text("stale data\n", encoding="utf-8")
+            capture_file.chmod(0o644)
+            server = build_server(
+                "127.0.0.1",
+                0,
+                self.api_key,
+                capture_file,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            host, port = server.server_address
+            previous_host, previous_port = self.host, self.port
+            self.host, self.port = host, port
+            try:
+                status, body = self.request(
+                    "POST",
+                    "/api/email/template",
+                    {
+                        "to": "capture@example.test",
+                        "subject": "Verify",
+                        "templateName": "email/email-verify",
+                        "variables": {"verificationCode": "654321"},
+                        "emailType": "VERIFICATION",
+                    },
+                    self.api_key,
+                )
+            finally:
+                self.host, self.port = previous_host, previous_port
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+            self.assertEqual(200, status)
+            captured = json.loads(capture_file.read_text(encoding="utf-8"))
+            self.assertEqual(body["queueId"], captured["queueId"])
+            self.assertEqual("capture@example.test", captured["to"])
+            self.assertEqual("email/email-verify", captured["templateName"])
+            self.assertEqual(
+                "654321",
+                captured["variables"]["verificationCode"],
+            )
+            self.assertEqual(0o600, capture_file.stat().st_mode & 0o777)
 
     def test_rejected_recipient_returns_a_failed_acceptance(self) -> None:
         status, body = self.request(

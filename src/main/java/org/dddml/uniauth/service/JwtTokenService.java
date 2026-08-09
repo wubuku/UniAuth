@@ -1,6 +1,8 @@
 package org.dddml.uniauth.service;
 
 import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.SignatureAlgorithm;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -348,16 +350,21 @@ public class JwtTokenService {
      */
     public boolean validateRefreshToken(String token) {
         try {
-            var claims = Jwts.parserBuilder()
-                    .setSigningKey(publicKey)
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
+            var claims = parseSignedToken(token).getBody();
             return "refresh".equals(claims.get("type", String.class))
-                    && this.token.getIssuer().equals(claims.getIssuer());
+                    && this.token.getIssuer().equals(claims.getIssuer())
+                    && claims.getId() != null
+                    && !claims.getId().isBlank();
         } catch (Exception e) {
             return false;
         }
+    }
+
+    public Jws<Claims> parseSignedToken(String tokenValue) {
+        return Jwts.parserBuilder()
+                .setSigningKey(publicKey)
+                .build()
+                .parseClaimsJws(tokenValue);
     }
 
     /**
@@ -405,23 +412,16 @@ public class JwtTokenService {
         }
     }
 
-    public String getUserIdFromAccessToken(String tokenValue) {
-        Jwt jwt = jwtDecoder().decode(tokenValue);
-        String userId = jwt.getClaimAsString("userId");
-        if (userId == null || userId.isBlank()) {
-            userId = jwt.getSubject();
-        }
-        if (userId == null || userId.isBlank()) {
-            throw new JwtException("Access token does not identify a user");
-        }
-        return userId;
-    }
-
     /**
      * 获取 JWT 解码器
      * 用于 OAuth2 资源服务器验证 JWT Token
      */
     public org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder() {
+        return jwtDecoder(jwt -> OAuth2TokenValidatorResult.success());
+    }
+
+    public org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder(
+            OAuth2TokenValidator<Jwt> additionalValidator) {
         NimbusJwtDecoder decoder =
                 NimbusJwtDecoder.withPublicKey((java.security.interfaces.RSAPublicKey) publicKey)
                         .build();
@@ -449,11 +449,54 @@ public class JwtTokenService {
                     null
             ));
         };
+        OAuth2TokenValidator<Jwt> headerValidator = jwt -> {
+            Object algorithm = jwt.getHeaders().get("alg");
+            Object kid = jwt.getHeaders().get("kid");
+            if ("RS256".equals(algorithm) && token.getKid().equals(kid)) {
+                return OAuth2TokenValidatorResult.success();
+            }
+            return OAuth2TokenValidatorResult.failure(new OAuth2Error(
+                    "invalid_token",
+                    "Token header is invalid",
+                    null
+            ));
+        };
+        OAuth2TokenValidator<Jwt> identityValidator = jwt -> {
+            String subject = jwt.getSubject();
+            String userId = jwt.getClaimAsString("userId");
+            String username = jwt.getClaimAsString("username");
+            if (subject != null
+                    && !subject.isBlank()
+                    && subject.equals(userId)
+                    && username != null
+                    && !username.isBlank()) {
+                return OAuth2TokenValidatorResult.success();
+            }
+            return OAuth2TokenValidatorResult.failure(new OAuth2Error(
+                    "invalid_token",
+                    "Token identity claims are invalid",
+                    null
+            ));
+        };
+        OAuth2TokenValidator<Jwt> jtiValidator = jwt -> {
+            if (jwt.getId() != null && !jwt.getId().isBlank()) {
+                return OAuth2TokenValidatorResult.success();
+            }
+            return OAuth2TokenValidatorResult.failure(new OAuth2Error(
+                    "invalid_token",
+                    "Token jti is missing",
+                    null
+            ));
+        };
 
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
                 issuerValidator,
                 audienceValidator,
-                accessTypeValidator
+                accessTypeValidator,
+                headerValidator,
+                identityValidator,
+                jtiValidator,
+                additionalValidator
         ));
         return decoder;
     }

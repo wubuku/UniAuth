@@ -17,7 +17,9 @@ import org.dddml.uniauth.dto.web3.Web3NonceResponse;
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.AuthCookieService;
+import org.dddml.uniauth.service.TokenValidationService;
 import org.dddml.uniauth.service.Web3AuthService;
+import org.dddml.uniauth.util.BearerTokenUtils;
 import org.dddml.uniauth.util.Web3SignatureUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -36,6 +38,7 @@ public class Web3AuthController {
     private final Web3AuthService web3AuthService;
     private final JwtTokenService jwtTokenService;
     private final AuthCookieService authCookieService;
+    private final TokenValidationService tokenValidationService;
 
     @GetMapping("/nonce/{walletAddress}")
     @Operation(summary = "Get nonce for wallet authentication",
@@ -160,7 +163,8 @@ public class Web3AuthController {
             @RequestHeader(value = "Authorization", required = false) String authHeader,
             @Valid @RequestBody Web3LoginRequest request) {
         try {
-            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            var bearerToken = BearerTokenUtils.extract(authHeader);
+            if (bearerToken.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                         .body(ErrorResponse.builder()
                                 .status(401)
@@ -170,8 +174,9 @@ public class Web3AuthController {
                                 .build());
             }
 
-            String token = authHeader.substring(7);
-            String userId = jwtTokenService.getUserIdFromAccessToken(token);
+            String userId = tokenValidationService.getUserIdFromAccessToken(
+                    bearerToken.orElseThrow()
+            );
 
             String normalizedAddress = Web3SignatureUtils.normalizeAddress(request.getWalletAddress());
 

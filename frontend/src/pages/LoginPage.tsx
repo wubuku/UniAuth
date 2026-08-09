@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth';
 import { AuthService } from '../services/authService';
 import Web3LoginButton from '../components/Web3LoginButton';
 import { ForgotPasswordModal } from '../components/ForgotPasswordModal';
+import { resolveLoginReturnPath } from '../utils/loginReturnPath';
 
 interface VerificationModalProps {
   email: string;
@@ -146,6 +147,10 @@ interface RegisterResponse {
 export default function LoginPage() {
   const { user, oauthLogin, localLogin, web3Login, loading, error } = useAuth();
   const navigate = useNavigate();
+  const loginReturnPath = resolveLoginReturnPath(
+    window.location.search,
+    window.location.origin,
+  );
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [web3Error, setWeb3Error] = useState<string | null>(null);
@@ -176,9 +181,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (user) {
-      navigate('/');
+      navigate(loginReturnPath, { replace: true });
     }
-  }, [user, navigate]);
+  }, [user, navigate, loginReturnPath]);
 
   const isValidEmail = (value: string): boolean => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -276,7 +281,7 @@ export default function LoginPage() {
           provider: 'local' as const
         };
         localStorage.setItem('auth_user', JSON.stringify(userData));
-        window.location.href = '/';
+        window.location.href = loginReturnPath;
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : '验证码验证失败';

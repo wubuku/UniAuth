@@ -5,7 +5,8 @@
 > schema-owner 覆盖保护、Flyway migration discovery/naming fail-closed、邮件队列
 > 生命周期行形状、Batch C
 > 认证 Cookie/浏览器 refresh 存储预备切片和 Web3/SIWE challenge 加固切片已完成；
-> 下一轮待重新探索并冻结
+> 五轮收敛第 2 轮的 refresh replay/logout blacklist 切片实现与统一门禁已完成，
+> 第一次检查发现 Bearer scheme 大小写解析缺口并已修复，完整门禁重新执行中
 > 事实基线：2026-08-07；邮件 SMTP、持久化投递和限流异常路径增量：2026-08-08
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
 > 前置成果：PostgreSQL 16-only、Flyway V1 baseline + V2 + V3 + V4 + V5、Testcontainers、
@@ -895,20 +896,110 @@ H2.5、H3.1 或 H3.2，也不改变现有公开业务流程。
   129 tests、Mock Playwright 21/21、Python 资源服务器 16/16、邮件 stub 8/8，
   前端 lint/type/build 和文档检查通过。
 
-1. 建立单一严格 token validator，统一 Resource Server、Web3 bind、
-   OAuth2 绑定 cookie、introspection 和 refresh。
-2. refresh token rotation 使用 token family、单次消费和 replay detection。
-3. 接入 `token_blacklist` 或其替代持久撤销模型。
-4. logout 撤销当前 token/family，而不只是清 cookie。
-5. introspection 返回与实际资源服务器一致的 active 结论。
-6. 统一 token transport：
+#### Refresh replay 与 logout 持久撤销切片
+
+##### 2026-08-08 固定实施范围
+
+重新核对代码和既有门禁后确认，登录方式 `delete/delete`、`delete/set-primary`
+组合竞态已在 Batch B2a 通过用户级 revision CAS、PostgreSQL 集成测试和 Shell HTTP
+E2E 完成；此前 `AGENTS.md` 将其继续列为待修复属于文档漂移。本轮不重复修改该实现，
+改为关闭当前 token 生命周期中已经具备 schema 但尚未接线的撤销缺口。
+
+纳入范围：
+
+1. 保持现有 access/refresh token 格式和签发入口不变，建立统一的当前格式 token
+   校验边界，要求签名、issuer、type、有效期、`jti`、`sub/userId` 和用户 enabled
+   状态有效；access 继续要求既有 audience。
+2. 接通现有 PostgreSQL `token_blacklist`：
+   - refresh 在同一事务中以唯一 `jti` 条件插入完成单次消费；
+   - 同一个 refresh 的串行或并发 replay 只有一个请求可以成功；
+   - 事务失败不得留下已消费旧 token 但没有返回新 token 的部分状态。
+3. `/api/auth/logout` 和兼容的 `/api/logout` 复用同一撤销/清理服务，持久撤销请求中
+   可验证的 access/refresh token，再清理 Session 与认证 Cookie；撤销持久化失败时
+   仍清理本地状态，但不得以成功语义掩盖全局撤销未完成。
+4. Resource Server、Web3/OAuth2 绑定使用的 access 校验和 introspection 查询同一
+   blacklist 结论；logout 后旧 access 立即被 UniAuth API 和 introspection 拒绝，
+   旧 refresh 不能再轮换。
+5. 前端 refresh 入口使用单 JavaScript runtime 共享 Promise，并在支持 Web Locks 的
+   浏览器中用 origin-wide 锁协调同源标签页；等待者复用已更新的 access token，避免
+   正常并发 401 把同一个 refresh cookie 重放。
+6. 前端 logout 只清理 `auth_user`、`accessToken` 和历史 `refreshToken`，不调用
+   `localStorage.clear()`，也不尝试用 JavaScript 清除 HttpOnly 或无关 Cookie。
+7. Python 离线资源服务器与 Java 当前 token 契约同步要求非空 `jti`；文档明确纯
+   JWKS 离线验证无法感知 PostgreSQL blacklist，只能依赖 access token 剩余 TTL。
+
+明确非目标：
+
+- 不在本轮引入 `sid`、token family/generation、security version、`auth_time` 或新的
+  token claim schema；发现旧 refresh replay 时只拒绝该 `jti`，不宣称撤销未知后继。
+- 不移除 JSON 中的 refresh token，不切换 `__Host-` Cookie，不移除当前 dev/demo
+  access-token localStorage 路径；这些仍属于后续 transport 原子切换。
+- 不修改 CSRF、CORS、OAuth2 redirect/state、Authorization Server 或 introspection
+  客户端鉴权模型。
+- 不新增用户功能，不连接共享开发库，不调用真实 OAuth、SMTP 或外部模型。
+- 不使用悲观锁或 JPA `@Version`；refresh 并发消费依赖 PostgreSQL 唯一约束和条件插入。
+
+##### 测试与退出条件
+
+1. PostgreSQL/ApplicationContext：
+   - 正常 refresh 写入一条 `REFRESH` blacklist row，旧 refresh replay 返回 `401`。
+   - 两个并发 refresh 只有一个 `200`、一个 `401`，且旧 `jti` 只持久化一次。
+   - disabled/missing user、blacklisted access/refresh 和缺失关键 claim 失败关闭。
+   - logout 持久化 access/refresh 撤销；旧 access 在资源 API/introspection 立即失效。
+   - blacklist 写入失败时响应明确失败，同时 Session/Cookie 本地清理仍执行。
+2. Shell HTTP E2E：
+   - 使用真实应用和 disposable PostgreSQL 验证 refresh replay、logout 后 access/
+     refresh/introspection 拒绝和 blacklist 最终行形状。
+   - Flyway guard 增加非法 token blacklist 数据的 pre-history 拒绝夹具；本切片不新增
+     无意义 migration。
+3. Playwright：
+   - 同页面并发 `401` 只提交一次 refresh 并让等待请求复用结果。
+   - 同源两个标签页通过 Web Locks 串行 refresh，等待标签页复用已更新的 access
+     token，只消费一次 refresh cookie。
+   - logout 保留无关 localStorage 和普通 Cookie，只删除应用认证状态。
+4. Python：
+   - 合法 access token 继续通过，缺少/空 `jti` 的 token 失败关闭。
+5. 完整 `scripts/verify.sh` 通过后，执行连续三轮固定范围无修改检查；任何实质修改
+   都将计数归零并重跑受影响门禁。
+
+##### 实施结果与当前验证状态
+
+2026-08-08 本切片实现已完成：
+
+- 建立统一当前格式 token 校验边界；Resource Server、Web3/OAuth2 绑定、
+  introspection 和 refresh 统一检查签名、header、issuer、type、时间、`jti`、
+  `sub/userId`、用户存在/enabled 状态，access 继续检查 audience。
+- refresh 在签发新 token 的同一事务中通过 PostgreSQL `ON CONFLICT DO NOTHING`
+  单次消费旧 `jti`；串行和并发 replay 均稳定拒绝，未引入悲观锁或 JPA `@Version`。
+- `/api/auth/logout` 与 `/api/logout` 复用同一服务，持久撤销当前可验证的
+  access/refresh token；数据库失败时仍清 Session/Cookie，但返回 `503` 而非伪成功。
+- Resource Server 和 introspection 已拒绝 blacklist token；Python 离线资源服务器
+  同步要求非空 `jti`，并保留其无法感知 PostgreSQL blacklist 的明确边界。
+- 前端同一 runtime 共享 refresh Promise，支持浏览器使用 Web Locks 协调同源标签页；
+  logout/refresh failure 只清理应用认证 key，不删除无关 localStorage 或普通 Cookie。
+- Resource Server、logout 和 Web3 bind 复用大小写不敏感的严格 Bearer header
+  提取器，避免 lowercase scheme 被拒绝或 logout 伪成功而未撤销 access token。
+- Shell HTTP E2E 增加 refresh replay、logout 后 access/refresh/introspection 拒绝及
+  blacklist 最终行形状；Flyway guard 增加非法 token blacklist pre-history 拒绝。
+- 定向证据：PostgreSQL/JWT 集成测试 17/17、security-boundaries Playwright
+  10/10、前端 ESLint 与 TypeScript 通过。
+- Bearer 修复前的完整统一门禁为根 Java 149/149、shared-schema 4/4、HTTP E2E
+  15/15、Flyway guard 14/14、邮件参考服务 148/148、Mock Playwright 23/23、
+  Python 资源服务器 17/17、邮件 stub 8/8；实现发生变化后该结果不再继承，
+  新的完整 `scripts/verify.sh` 正在重跑。
+
+##### Batch C 剩余范围
+
+1. 引入 token family/generation 或 security version，使 replay detection 能撤销
+   已签发的后继 token，而不只拒绝被消费的旧 `jti`。
+2. 统一 token transport：
    - refresh token 不进入 JSON/localStorage。
    - 明确 access token 是 cookie 还是 bearer 的主路径。
    - 消除 header/cookie 身份歧义。
-7. 集中 cookie factory，按 profile 配置 Secure、HttpOnly、SameSite、Path 和 Max-Age。
-8. 对 cookie 认证的写请求启用并测试 CSRF。
-9. CORS 收敛为一个配置来源。
-10. OAuth2 redirect 和绑定意图使用服务端 allowlist 与一次性状态，不信任任意 Referer/state URI。
+3. 对 cookie 认证的写请求启用并测试 CSRF。
+4. CORS 收敛为一个配置来源。
+5. OAuth2 redirect 和绑定意图使用服务端 allowlist 与一次性状态，不信任任意
+   Referer/state URI。
 
 ### Batch D：Email/password 与 Web3/SIWE
 
@@ -1219,8 +1310,8 @@ while counter < 3:
 | 轮次 | 目标区间 | 收敛主题 |
 |------|----------|----------|
 | 第 1 轮 | `88%` -> `90%-91%` | PostgreSQL 16 shared-schema/Flyway 共存、邮件 database layout、选择性备份和跨进程 E2E |
-| 第 2 轮 | `90%-91%` -> `92%-94%` | 核心鉴权与 PostgreSQL 数据一致性，优先关闭登录方式集合并发不变量 |
-| 第 3 轮 | `92%-94%` -> `95%-96%` | token 生命周期、refresh replay、logout/blacklist 与 HTTP transport 边界 |
+| 第 2 轮 | `90%-91%` -> `92%-94%` | 复核核心鉴权与 PostgreSQL 一致性；确认登录方式集合并发已完成后，关闭当前格式 refresh replay、logout/blacklist 撤销闭环 |
+| 第 3 轮 | `92%-94%` -> `95%-96%` | token family/security version 与 HTTP transport、CSRF/CORS/redirect 边界 |
 | 第 4 轮 | `95%-96%` -> `97%-98%` | email/password challenge 一致性、canonical email、并发创建和失败状态 |
 | 第 5 轮 | `97%-98%` -> `100%` | 跨组件非 Mock 验证、运维/恢复边界、剩余高风险缺口和最终证据收口 |
 

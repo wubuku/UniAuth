@@ -1,10 +1,17 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+
+const resourceServerUrl = (
+  (import.meta as any).env?.VITE_RESOURCE_SERVER_URL
+  || 'http://localhost:5002'
+).replace(/\/+$/, '');
 
 /**
  * 异构资源服务器集成测试页面
  * 测试从 Python 资源服务器获取受保护资源
  */
 const ResourceTestPage: React.FC = () => {
+  const navigate = useNavigate();
   const [resourceData, setResourceData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -29,25 +36,21 @@ const ResourceTestPage: React.FC = () => {
 
   // 监听 access token 变化
   useEffect(() => {
-    console.log('=== 开始检查token状态 ===');
-    // 从localStorage获取token（仅在需要访问不同域资源服务器时使用）
     const token = localStorage.getItem('accessToken');
-    console.log('从localStorage获取的token:', token ? 'Present' : 'Missing');
-    console.log('最终设置的token:', token ? 'Present' : 'Missing');
+    if (!token) {
+      navigate('/login?returnTo=%2Fresource-test', { replace: true });
+      return;
+    }
     
-    // 定期检查 token 变化
     const interval = setInterval(() => {
-      console.log('=== 定期检查token变化 ===');
       const updatedToken = localStorage.getItem('accessToken');
-      console.log('从localStorage获取的updatedToken:', updatedToken ? 'Present' : 'Missing');
       if (updatedToken !== accessToken) {
-        console.log('token发生变化，更新状态');
         setAccessToken(updatedToken);
       }
-    }, 1000); // 每1秒检查一次
+    }, 1000);
     
     return () => clearInterval(interval);
-  }, [accessToken]);
+  }, [accessToken, navigate]);
 
   const fetchProtectedResource = async () => {
     setActiveTest('protected-resource');
@@ -67,29 +70,13 @@ const ResourceTestPage: React.FC = () => {
         return;
       }
 
-      console.log('📤 从 Python 服务器获取受保护资源...');
-      console.log('使用的令牌:', token);
-      console.log('令牌长度:', token.length);
-      
-      // 解析令牌头，检查 kid
-      try {
-        const tokenParts = token.split('.');
-        const headerPart = tokenParts[0];
-        const header = JSON.parse(atob(headerPart));
-        console.log('令牌头:', header);
-        console.log('令牌 kid:', header.kid);
-      } catch (e) {
-        console.error('解析令牌头失败:', e);
-      }
-
-      // 调用 Python 资源服务器
-      const response = await fetch('http://localhost:5002/api/protected', {
+      const response = await fetch(`${resourceServerUrl}/api/protected`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        credentials: 'include',
+        credentials: 'omit',
       });
 
       if (!response.ok) {
@@ -98,7 +85,6 @@ const ResourceTestPage: React.FC = () => {
       }
 
       const data = await response.json();
-      console.log('✅ 成功获取受保护资源:', data);
       setResourceData(data);
       setTestStatus('success');
     } catch (err: any) {
@@ -120,15 +106,13 @@ const ResourceTestPage: React.FC = () => {
     setTestStatus('testing');
 
     try {
-      console.log('🏥 测试资源服务器健康状态...');
-      const response = await fetch('http://localhost:5002/health');
+      const response = await fetch(`${resourceServerUrl}/health`);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
       const data = await response.json();
-      console.log('✅ 健康检查通过:', data);
       setResourceData(data);
       setTestStatus('success');
     } catch (err: any) {
@@ -430,7 +414,7 @@ const ResourceTestPage: React.FC = () => {
                 <div className="flex-shrink-0 w-10 h-10 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold shadow-md z-10">2</div>
                 <div className="flex-1 bg-blue-50 rounded-lg p-5">
                   <h3 className="font-semibold text-blue-900 text-lg mb-2">Token 存储</h3>
-                  <p className="text-gray-700">Token 安全存储在浏览器 localStorage 中</p>
+                  <p className="text-gray-700">演示前端从登录响应取得 access token，并暂存于 localStorage 以构造跨域 Bearer 请求</p>
                 </div>
               </div>
 

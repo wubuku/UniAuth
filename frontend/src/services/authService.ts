@@ -4,6 +4,11 @@ import { User } from '../types';
 
 // API基础URL - 使用相对路径，Vite代理会处理开发环境
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '';
+const AUTH_STORAGE_KEYS = ['auth_user', 'accessToken', 'refreshToken'] as const;
+const REFRESH_LOCK_NAME = 'uniauth-token-refresh';
+let refreshTokenRequest: Promise<TokenRefreshResult> | null = null;
+let logoutRequest: Promise<void> | null = null;
+let logoutInProgress = false;
 
 localStorage.removeItem('refreshToken');
 
@@ -11,6 +16,10 @@ localStorage.removeItem('refreshToken');
  * 认证相关API服务
  */
 export class AuthService {
+
+  static clearLocalAuthentication(): void {
+    AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+  }
 
   /**
    * 用户注册
@@ -85,7 +94,67 @@ export class AuthService {
   /**
    * 刷新JWT Token
    */
-  static async refreshToken(): Promise<TokenRefreshResult> {
+  static refreshToken(
+    observedAccessToken = localStorage.getItem('accessToken')
+  ): Promise<TokenRefreshResult> {
+    if (logoutInProgress) {
+      return Promise.reject(new Error('Logout is in progress'));
+    }
+
+    if (!refreshTokenRequest) {
+      refreshTokenRequest = this.coordinateTokenRefresh(observedAccessToken)
+        .finally(() => {
+          refreshTokenRequest = null;
+        });
+    }
+    return refreshTokenRequest;
+  }
+
+  private static async coordinateTokenRefresh(
+    observedAccessToken: string | null
+  ): Promise<TokenRefreshResult> {
+    const lockManager = (
+      navigator as Navigator & {
+        locks?: {
+          request<T>(
+            name: string,
+            callback: () => Promise<T>
+          ): Promise<T>;
+        };
+      }
+    ).locks;
+    const result = lockManager
+      ? await lockManager.request(REFRESH_LOCK_NAME, async () => {
+        if (logoutInProgress) {
+          throw new Error('Logout is in progress');
+        }
+
+        const currentAccessToken = localStorage.getItem('accessToken');
+        if (currentAccessToken !== observedAccessToken) {
+          if (!currentAccessToken) {
+            throw new Error('Authentication state changed before token refresh');
+          }
+          return {
+            message: 'Token refresh completed in another browser context',
+            accessToken: currentAccessToken,
+            refreshToken: '',
+            accessTokenExpiresIn: 0,
+            refreshTokenExpiresIn: 0,
+            tokenType: 'Bearer',
+          };
+        }
+        return this.requestTokenRefresh();
+      })
+      : await this.requestTokenRefresh();
+
+    if (!result.accessToken
+        || localStorage.getItem('accessToken') !== result.accessToken) {
+      throw new Error('Authentication state changed during token refresh');
+    }
+    return result;
+  }
+
+  private static async requestTokenRefresh(): Promise<TokenRefreshResult> {
     try {
       const response = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {}, {
         withCredentials: true,
@@ -106,7 +175,47 @@ export class AuthService {
   /**
    * 用户登出
    */
-  static async logout(): Promise<void> {
+  static logout(): Promise<void> {
+    if (!logoutRequest) {
+      logoutInProgress = true;
+      logoutRequest = this.coordinateLogout()
+        .finally(() => {
+          this.clearLocalAuthentication();
+          logoutInProgress = false;
+          logoutRequest = null;
+        });
+    }
+    return logoutRequest;
+  }
+
+  private static async coordinateLogout(): Promise<void> {
+    const inFlightRefresh = refreshTokenRequest;
+    if (inFlightRefresh) {
+      try {
+        await inFlightRefresh;
+      } catch {
+        // Logout must still revoke cookies after a failed refresh.
+      }
+    }
+
+    const lockManager = (
+      navigator as Navigator & {
+        locks?: {
+          request<T>(
+            name: string,
+            callback: () => Promise<T>
+          ): Promise<T>;
+        };
+      }
+    ).locks;
+    if (!lockManager) {
+      return this.requestLogout();
+    }
+
+    return lockManager.request(REFRESH_LOCK_NAME, () => this.requestLogout());
+  }
+
+  private static async requestLogout(): Promise<void> {
     try {
       await axios.post(`${API_BASE_URL}/api/auth/logout`, {}, {
         withCredentials: true
@@ -446,34 +555,26 @@ axios.interceptors.response.use(
       // 尝试刷新token
       try {
         console.log('Token过期，尝试刷新...');
-        const refreshResponse = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {}, {
-          withCredentials: true,
-          headers: {
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
-          }
-        });
+        const authorization = error.config?.headers?.Authorization
+          ?? error.config?.headers?.authorization;
+        const observedAccessToken = typeof authorization === 'string'
+          && authorization.startsWith('Bearer ')
+          ? authorization.substring(7)
+          : localStorage.getItem('accessToken');
+        const refreshResponse = await AuthService.refreshToken(observedAccessToken);
         
-        if (refreshResponse.data && refreshResponse.data.accessToken) {
+        if (refreshResponse.accessToken) {
           console.log('Token刷新成功，重新发起请求...');
-          // Access token remains available for the heterogeneous resource-server demo.
-          localStorage.setItem('accessToken', refreshResponse.data.accessToken);
-          if (refreshResponse.data.user) {
-            localStorage.setItem('auth_user', JSON.stringify(refreshResponse.data.user));
-          }
-          
+
           // 重新发起失败的请求
           const originalRequest = error.config;
-          originalRequest.headers['Authorization'] = `Bearer ${refreshResponse.data.accessToken}`;
+          originalRequest.headers['Authorization'] = `Bearer ${refreshResponse.accessToken}`;
           return axios(originalRequest);
         }
       } catch (refreshError) {
         console.error('Token刷新失败:', refreshError);
         // 不再自动跳转登录页，避免循环
-        // 清除localStorage中的用户状态
-        localStorage.removeItem('auth_user');
-        localStorage.removeItem('accessToken');
-        localStorage.removeItem('refreshToken');
+        AuthService.clearLocalAuthentication();
       }
     }
     return Promise.reject(error);

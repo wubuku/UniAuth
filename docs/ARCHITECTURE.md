@@ -1,7 +1,7 @@
 # UniAuth 当前架构
 
 > 状态：Live
-> 核验日期：2026-08-08
+> 核验日期：2026-08-09
 > 主要来源：`pom.xml`、`src/main/java/`、`src/main/resources/`、`frontend/`、
 > `python-resource-server/app.py`
 
@@ -127,6 +127,31 @@ UniAuth 用户/认证表；disposable 空库恢复后会启动真实 Spring 应�
 4. `/api/user` 和其他 `/api/**` 受资源服务器链保护。
 
 ### Python 资源服务器
+
+Python 组件是纯 REST API，不提供资源展示页面；当前资源页面是 React
+`/resource-test`。该页面与 UniAuth 登录页面属于同一个前端 origin，但 Python API
+可以部署在另一个 origin。
+
+当前 UniAuth 对 access token 采用双重传递：后端写入 HttpOnly Cookie，同时在登录和
+注册 JSON 响应中返回 token。前端把 JSON token 暂存于 localStorage，并在访问 Python
+API 时构造 `Authorization: Bearer <token>`，并使用 `credentials: omit` 禁止资源请求
+携带 Cookie。因此该跨 origin 演示依赖 JSON/localStorage 中的 Bearer token，而不是
+HttpOnly Cookie；后者主要供 UniAuth 自身同站请求使用。这条 localStorage 路径会扩大
+XSS 风险，只是当前演示兼容方案，不是生产最佳实践。
+
+生产部署通常选择以下一种边界：
+
+1. SPA 直接调用跨域 API：SPA 持有 access token，优先只保存在内存；refresh token
+   使用 HttpOnly Cookie。
+2. BFF：浏览器只持有 HttpOnly session cookie，由同域 BFF 在服务器端持有或交换
+   Bearer token 并调用资源 API。
+
+如果资源展示页面本身也位于独立域，则它不能读取 UniAuth 域的 localStorage 或
+host-only Cookie；应使用 OAuth/OIDC Authorization Code + PKCE 或 BFF，而不是复制
+当前演示 transport。完整拓扑、脚本和浏览器断言见
+[邮箱登录跨服务浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md)。
+
+Python API 的验证步骤：
 
 1. Flask 从 Authorization header 获取 bearer token。
 2. 从 UniAuth `/oauth2/jwks` 获取并缓存公钥。

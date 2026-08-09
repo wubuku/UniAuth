@@ -7,6 +7,7 @@ The service validates UniAuth access tokens against the configured JWKS endpoint
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime
 
@@ -125,6 +126,10 @@ def validate_token(token):
         if decoded.get("type") != "access":
             logger.warning("Token type validation failed")
             return False, "Invalid token"
+        jti = decoded.get("jti")
+        if not isinstance(jti, str) or not jti.strip():
+            logger.warning("Token identifier validation failed")
+            return False, "Invalid token"
         logger.info("Token validation succeeded")
         return True, decoded
     except jwt.ExpiredSignatureError:
@@ -133,6 +138,14 @@ def validate_token(token):
     except (jwt.InvalidTokenError, ValueError, TypeError):
         logger.warning("Token validation failed")
         return False, "Invalid token"
+
+
+def extract_bearer_token(authorization_header):
+    """Extract a bearer credential while treating the auth scheme case-insensitively."""
+    if not isinstance(authorization_header, str):
+        return None
+    match = re.fullmatch(r"Bearer ([^\s]+)", authorization_header, re.IGNORECASE)
+    return match.group(1) if match else None
 
 
 @app.route("/health", methods=["GET"])
@@ -147,10 +160,11 @@ def protected_resource():
     auth_header = request.headers.get("Authorization")
     if not auth_header:
         return jsonify({"error": "Authorization header required"}), 401
-    if not auth_header.startswith("Bearer "):
+    bearer_token = extract_bearer_token(auth_header)
+    if bearer_token is None:
         return jsonify({"error": "Invalid Authorization header format"}), 401
 
-    valid, result = validate_token(auth_header[7:])
+    valid, result = validate_token(bearer_token)
     if not valid:
         return jsonify({"error": "Invalid token"}), 401
 
@@ -176,11 +190,11 @@ def protected_resource():
 @app.route("/api/protected/info", methods=["GET"])
 def protected_info():
     """Return non-sensitive metadata about the protected resource."""
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
+    bearer_token = extract_bearer_token(request.headers.get("Authorization"))
+    if bearer_token is None:
         return jsonify({"error": "Unauthorized"}), 401
 
-    valid, _ = validate_token(auth_header[7:])
+    valid, _ = validate_token(bearer_token)
     if not valid:
         return jsonify({"error": "Invalid token"}), 401
 

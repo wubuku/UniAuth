@@ -1,6 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const devProxyTarget = process.env.VITE_DEV_PROXY_TARGET || 'http://localhost:8081'
+const devProxyOrigin = new URL(devProxyTarget).origin
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
@@ -10,14 +13,20 @@ export default defineConfig({
     proxy: {
       // 开发环境代理API请求到后端
       '/api': {
-        target: 'http://localhost:8081',
+        target: devProxyTarget,
         changeOrigin: true,
         secure: false,
+        headers: {
+          Origin: devProxyOrigin,
+        },
       },
       '/oauth2': {
-        target: 'http://localhost:8081',
+        target: devProxyTarget,
         changeOrigin: true,
         secure: false,
+        headers: {
+          Origin: devProxyOrigin,
+        },
       }
     }
   },

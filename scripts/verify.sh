@@ -189,36 +189,37 @@ fi
 
 cd "$PROJECT_DIR"
 
-echo "Verification 1/11: shell syntax"
+echo "Verification 1/12: shell syntax"
 bash -n \
     build-frontend.sh \
     start.sh \
     start-with-frontend.sh \
     scripts/*.sh \
+    scripts/email-login-e2e/*.sh \
     reference/email-service/start.sh \
     reference/email-service/scripts/*.sh
 bash scripts/test-verification-artifacts-guard.sh
 
-echo "Verification 2/11: frontend clean dependency install"
+echo "Verification 2/12: frontend clean dependency install"
 (
     cd frontend
     npm ci --registry="$NPM_REGISTRY"
 )
 
-echo "Verification 3/11: frontend dependency audit"
+echo "Verification 3/12: frontend dependency audit"
 (
     cd frontend
     npm audit --registry="$NPM_REGISTRY" --audit-level=high
 )
 
-echo "Verification 4/11: Java compilation and test compilation"
+echo "Verification 4/12: Java compilation and test compilation"
 mvn clean compile test-compile
 
-echo "Verification 5/11: Java integration tests"
+echo "Verification 5/12: Java integration tests"
 mvn test
 capture_root_surefire_reports
 
-echo "Verification 6/11: reference email-service compilation and integration tests"
+echo "Verification 6/12: reference email-service compilation and integration tests"
 EMAIL_SERVICE_ARTIFACTS_DIR=""
 if [ "$VERIFICATION_ARTIFACTS_ENABLED" = "true" ]; then
     EMAIL_SERVICE_ARTIFACTS_DIR="$VERIFICATION_ARTIFACTS_DIR/$RUN_ID/email-service"
@@ -248,12 +249,12 @@ if [ "$VERIFICATION_ARTIFACTS_ENABLED" = "true" ]; then
         || { echo "ERROR: email Surefire report artifact is missing" >&2; exit 1; }
 fi
 
-echo "Verification 7/11: HTTP and Flyway shell E2E"
+echo "Verification 7/12: HTTP and Flyway shell E2E"
 scripts/test-email-shared-schema-e2e.sh
 scripts/test-http-e2e.sh
 scripts/test-flyway-baseline-guard.sh
 
-echo "Verification 8/11: frontend lint, typecheck, and production build"
+echo "Verification 8/12: frontend lint, typecheck, and production build"
 (
     cd frontend
     npm run lint
@@ -261,7 +262,7 @@ echo "Verification 8/11: frontend lint, typecheck, and production build"
     npm run build
 )
 
-echo "Verification 9/11: Mock Playwright"
+echo "Verification 9/12: Mock Playwright"
 (
     cd frontend
     PLAYWRIGHT_PORT="$(
@@ -277,14 +278,17 @@ PY
     npm run test:e2e
 )
 
-echo "Verification 10/11: Python contracts"
+echo "Verification 10/12: real email-login browser E2E"
+PYTHON_BIN="$PYTHON_BIN" scripts/test-email-login-browser-e2e.sh
+
+echo "Verification 11/12: Python contracts"
 "$PYTHON_BIN" scripts/test_email_service_stub.py
 (
     cd python-resource-server
     "$PYTHON_BIN" -m unittest -v
 )
 
-echo "Verification 11/11: documentation links and patch hygiene"
+echo "Verification 12/12: documentation links and patch hygiene"
 "$PYTHON_BIN" .agents/skills/project-docs/scripts/check_relative_links.py \
     README.md \
     AGENTS.md \

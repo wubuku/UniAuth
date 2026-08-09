@@ -1,7 +1,7 @@
 # UniAuth 开发指南
 
 > 状态：Live
-> 核验日期：2026-08-08
+> 核验日期：2026-08-09
 > 本指南优先保护数据和密钥；启动前先阅读 [配置基线](CONFIGURATION.md)。
 
 ## 前置条件
@@ -46,8 +46,9 @@ npm run test:e2e
 构建会重建 Spring Boot 静态资源目录。
 
 完整仓库门禁使用一次性 PostgreSQL、真实参考邮件服务及其独立 PostgreSQL、真实后端
-HTTP E2E、Flyway guard、Mock Playwright 和离线 Python 测试，并先通过无宽松参数的
-`npm ci` 安装前端依赖。根 HTTP E2E 的正常邮箱流程直接调用
+HTTP E2E、Flyway guard、Mock Playwright、真实五服务邮箱登录 Playwright 和离线
+Python 测试，并先通过无宽松参数的 `npm ci` 安装前端依赖。根 HTTP E2E 的正常邮箱
+流程直接调用
 `reference/email-service/`；参考实现无法自然产生的拒绝/限流映射另在同一脚本中
 显式切换到受控 loopback stub：
 
@@ -85,6 +86,16 @@ npm run dev
 
 Vite 使用 `5173`，并把 `/api` 与 `/oauth2` 代理到 `8081`。后端未启动时，
 UI 可以加载，但认证 API 会失败。
+
+动态联调端口使用：
+
+```bash
+VITE_DEV_PROXY_TARGET=http://127.0.0.1:8081 \
+VITE_RESOURCE_SERVER_URL=http://localhost:5002 \
+npm run dev
+```
+
+proxy 会把 `Origin` 重写为 backend origin，以保持开发代理的同源语义。
 
 ## Spring 应用启动
 
@@ -130,6 +141,19 @@ SPRING_PROFILES_ACTIVE=dev \
 2. 保持 issuer、audience、claim 和 JWKS 契约与后端一致。
 3. 运行 Python 语法检查和 `python3 -m unittest -v test_app.py`。
 4. 外部网络集成测试必须使用显式 URL 和有效 TLS。
+
+### 邮箱登录跨服务浏览器 E2E
+
+需要验证真实前后端、邮件 stub、JWT/JWKS 和 Python API 的完整链路时运行：
+
+```bash
+PYTHON_BIN=/path/to/python-with-resource-server-dependencies \
+  scripts/test-email-login-browser-e2e.sh
+```
+
+该入口只使用 disposable PostgreSQL 和本地无投递 stub。服务启动脚本保持独立，
+聚合器只管理端口、生命周期和 Playwright。完整拓扑、token 安全边界、底层脚本与
+故障排查见[邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md)。
 
 ### 数据库
 
@@ -240,4 +264,5 @@ live 测试脚本默认使用当前端口和一次性数据库；历史脚本/�
 - [当前架构](ARCHITECTURE.md)
 - [配置基线](CONFIGURATION.md)
 - [验证指南](VERIFICATION.md)
+- [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md)
 - [前后端契约历史材料](FRONTEND_BACKEND_CONTRACT.md)

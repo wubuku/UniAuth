@@ -802,6 +802,21 @@ new_refresh_token="$(jq -er '.refreshToken' <<<"$refresh_response")"
     || fail "refresh did not rotate the refresh token"
 assert_auth_cookie_headers "$refresh_headers" 3600 604800
 
+refresh_replay_status="$(
+    curl -sS -o "$TEMP_DIR/refresh-replay.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/refresh" \
+        -H "Cookie: refreshToken=$refresh_token"
+)"
+[ "$refresh_replay_status" = "401" ] \
+    || fail "a consumed refresh token was accepted for replay"
+[ "$(db_value "
+    SELECT count(*)
+    FROM token_blacklist
+    WHERE user_id = '$local_user_id'
+      AND token_type = 'REFRESH'
+      AND reason = 'REFRESH_ROTATED';
+")" = "1" ] || fail "refresh rotation was not persisted in the token blacklist"
+
 refresh_as_bearer_status="$(
     curl -sS -o /dev/null -w '%{http_code}' \
         -H "Authorization: Bearer $refresh_token" \
@@ -1336,6 +1351,35 @@ grep -qi 'set-cookie: refreshToken=.*Max-Age=0' "$logout_headers" \
     || fail "logout did not clear the refresh-token cookie"
 assert_auth_cookie_headers "$logout_headers" 0 0
 
+revoked_access_status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -H "Authorization: Bearer $new_access_token" \
+        "${BASE_URL}/api/user"
+)"
+[ "$revoked_access_status" = "401" ] \
+    || fail "logout did not revoke the current access token"
+revoked_refresh_status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/refresh" \
+        -H "Cookie: refreshToken=$new_refresh_token"
+)"
+[ "$revoked_refresh_status" = "401" ] \
+    || fail "logout did not revoke the current refresh token"
+revoked_introspection="$(
+    curl -sS -X POST "${BASE_URL}/oauth2/introspect" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        --data-urlencode "token=$new_access_token"
+)"
+[ "$(jq -er '.active' <<<"$revoked_introspection")" = "false" ] \
+    || fail "introspection reported a logged-out access token as active"
+[ "$(db_value "
+    SELECT count(*)
+    FROM token_blacklist
+    WHERE user_id = '$local_user_id'
+      AND reason = 'LOGOUT'
+      AND token_type IN ('ACCESS', 'REFRESH');
+")" = "2" ] || fail "logout did not persist both token revocations"
+
 echo "15/15 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
     || fail "the E2E harness connected to an unexpected database"
@@ -1362,5 +1406,14 @@ echo "15/15 Verify final database invariants"
         HAVING count(*) FILTER (WHERE is_primary = true) <> 1
     ) invalid_primary_users;
 ")" = "0" ] || fail "one or more users ended without exactly one primary login method"
+[ "$(db_value "
+    SELECT count(*)
+    FROM token_blacklist
+    WHERE user_id = '$local_user_id'
+      AND (
+        (token_type = 'REFRESH' AND reason = 'REFRESH_ROTATED')
+        OR reason = 'LOGOUT'
+      );
+")" = "3" ] || fail "final token revocation history was incomplete"
 
 echo "PASS: HTTP/PostgreSQL/Flyway/Web3/email end-to-end checks completed"

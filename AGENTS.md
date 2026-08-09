@@ -9,7 +9,9 @@
 - `docs/ARCHITECTURE.md`: 当前模块、安全链、身份和 JWT 模型。
 - `docs/CONFIGURATION.md`: 端口、profile、数据库、回调、CORS 和密钥基线。
 - `docs/DEVELOPMENT.md`: 安全构建、启动前检查和日常工作流。
-- `docs/VERIFICATION.md`: 权威交付门槛、验证层级、2026-08-08 基线和测试缺口。
+- `docs/VERIFICATION.md`: 权威交付门槛、验证层级、2026-08-09 基线和测试缺口。
+- `docs/EMAIL_LOGIN_BROWSER_E2E.md`: 真实邮箱注册/登录、前端回跳、跨 origin
+  Python API Bearer 访问和独立服务脚本。
 - `docs/drafts/README.md`: 既有计划、调查和历史记录索引。
 - `docs/drafts/DOCUMENTATION_PLAN.md`: 文档体系建设计划。
 - `docs/drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md`: 下一轮测试优先实施切片。
@@ -42,6 +44,10 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - Vite 开发端口：`5173`，`/api` 和 `/oauth2` 代理到 `http://localhost:8081`。
 - 前端 lint/build 要求 Node.js `20.19+`、`22.13+` 或 `24+`；CI 使用 Node `20.19`。
 - Python 示例与组件 README 当前统一使用：`5002`。
+- Python 组件是纯 REST API；资源展示页是 React `/resource-test`。当前跨 origin
+  演示读取登录/注册 JSON 中的 access token，写入 localStorage 后构造 Bearer
+  header；HttpOnly Cookie 不能替代该跨 host header。该路径仅用于演示，不是生产
+  token 存储建议。独立资源前端域需要 OAuth/OIDC Code+PKCE 或 BFF。
 - 默认不激活任何 Spring profile；启动者必须显式选择 `dev`、`test` 或 `prod`。
 - `dev`、`test`、`prod` 只支持 PostgreSQL 16；当前不维护 PostgreSQL 15 或
   SQLite 兼容路径。
@@ -331,9 +337,11 @@ mvn clean compile test-compile
 mvn test
 cd frontend && npm run lint && npx tsc --noEmit && npm run build && npm run test:e2e
 bash -n build-frontend.sh start.sh start-with-frontend.sh scripts/*.sh \
+  scripts/email-login-e2e/*.sh \
   reference/email-service/start.sh reference/email-service/scripts/*.sh
 python3 -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") for root in ("python-resource-server", "scripts") for p in Path(root).glob("*.py")]'
 (cd python-resource-server && python3 -m unittest -v test_app.py)
+PYTHON_BIN=python3 scripts/test-email-login-browser-e2e.sh
 ```
 
 完整仓库门禁会启动 disposable PostgreSQL、真实 Spring 应用和 Mock 浏览器，不读取
@@ -343,9 +351,16 @@ python3 -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") fo
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-当前验证基线（2026-08-08 工作树；每次后续变更仍须重跑）：
+当前验证基线（2026-08-09 工作树；每次后续变更仍须重跑）：
 
-- Maven：140 tests，0 failures/errors/skips。
+- 当前根统一门禁：Maven 151 tests、shared-schema process E2E 4/4、
+  HTTP 15/15、Flyway baseline guard 14/14、Mock Playwright 26/26、
+  真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 18/18、邮件 REST stub
+  contract 9/9；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
+  patch hygiene 均通过。
+- 当前邮件参考服务：148 tests，0 failures/errors/skips；Shell runtime 43/43、
+  HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10。
+- 以下 2026-08-08 条目保留为加固增量历史，不替代上述当前基线。
 - 邮件参考服务初始纳入基线：94 tests，0 failures/errors/skips；另有 runtime guard 15/15、
   Shell HTTP 8/8 和 Flyway guard 8/8。
 - 2026-08-08 SMTP transport 加固增量：邮件参考服务 101 tests，
@@ -407,10 +422,17 @@ PYTHON_BIN=python3 scripts/verify.sh
   shared-uniauth 使用独立 Flyway history、受控 baseline V0 和共同 advisory lock。
   根 Java 140/140、shared-schema 双进程 E2E 4/4；邮件组件 Maven 148/148、
   Shell runtime 43/43、HTTP 11/11、Flyway 15/15、backup/restore 10/10。
+- 2026-08-08 refresh replay/logout 持久撤销增量：当前格式 access/refresh token
+  使用统一严格校验，refresh `jti` 在签发新 token 的同一事务中单次消费，两个 logout
+  路由持久撤销当前 token；Resource Server/introspection/Web3/OAuth2 绑定共用
+  blacklist 和 disabled-user 结论。前端同 runtime single-flight 与 Web Locks 覆盖
+  同页面/同源标签页，Python 同步要求 `jti`。随后发现并修复 Bearer auth scheme
+  大小写解析漂移，Resource Server/logout/Web3 bind 已复用同一提取器，定向
+  PostgreSQL/JWT 测试 17/17 通过；修复后的完整根 Maven 为 151/151，统一门禁通过。
 - Shell HTTP E2E：15/15；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
-- Flyway baseline guard：13/13。
-- Mock Playwright：21 tests。
-- Python 资源服务器：16 tests；邮件 REST stub contract：8 tests。
+- Flyway baseline guard：14/14。
+- Mock Playwright：26/26；真实邮箱登录浏览器 E2E：1/1。
+- Python 资源服务器：18/18；邮件 REST stub contract：9/9。
 - 前端 ESLint、TypeScript 和生产构建通过。
 - 每个未提交批次仍必须在完整门禁后重新执行连续三轮无修改检查；无问题轮次只记录在
   当次工作报告，不为留痕修改仓库文件。
@@ -501,9 +523,14 @@ PYTHON_BIN=python3 scripts/verify.sh
 
 在依赖相关功能前先验证这些已知风险：
 
-- token blacklist 有 entity/repository/schema，但没有接入 token 验证或登出撤销流程。
+- token blacklist 已接入当前格式 access/refresh 校验、refresh 单次消费、两个 logout
+  路由和 introspection；当前 replay 只拒绝已消费 `jti`，尚无 token family/security
+  version，不能撤销未知后继 token。Python 离线资源服务器也无法感知 PostgreSQL
+  blacklist，只能依赖 access token 剩余 TTL。
 - refresh token 仍出现在 JSON；access token 仍为演示目的写入 localStorage，
-  header/cookie token 来源也可能冲突。彻底收敛 transport 属于 Batch C 原子切换。
+  header/cookie token 来源也可能冲突。前端已用 runtime single-flight 和支持浏览器的
+  Web Locks 避免正常同页面/同源标签页重复 refresh；彻底收敛 transport 仍属于
+  Batch C 原子切换。
 - CORS 有 YAML 和多个 Java 配置来源；OAuth2 redirect/Referer 缺少统一 allowlist。
 - `ApiAuthController` 对 JWT 用户把 provider 默认标成 `local`，不能反映真实主登录方式。
 - 邮件同步接受失败和 challenge 消费并发已经失败关闭/原子化；外部接受后本地事务
@@ -511,8 +538,9 @@ PYTHON_BIN=python3 scripts/verify.sh
   outbox/补偿状态机仍未解决。
 - Web3 V5 已严格绑定服务端保存的完整 SIWE message；nonce 生成使用 PostgreSQL
   原子 upsert，验证使用带 message/有效期条件的原子消费，旧 challenge 在迁移时失效。
-- 登录方式并发 bind 与 set-primary 已由数据库约束和稳定冲突映射加固；删除与
-  其他登录方式变更并发时仍可能产生零登录方式或零 primary，归下一批处理。
+- 登录方式并发 bind、set-primary、delete/delete 和 delete/set-primary 已由数据库
+  约束、用户级 revision CAS 和稳定 `409` 冲突映射加固；PostgreSQL 集成测试与
+  Shell HTTP E2E 持续断言最终至少一个登录方式且恰好一个 primary。
 - live 端口已统一到后端 `8081`、Python `5002`；部署域名仍需外部化。
 
 这些条目是工作提示，不代替针对当前任务的代码阅读和测试。

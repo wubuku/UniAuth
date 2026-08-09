@@ -150,6 +150,7 @@ for database in \
     baseline_invalid_login_methods_test \
     baseline_invalid_entity_schema_test \
     baseline_invalid_email_state_test \
+    baseline_invalid_token_blacklist_test \
     baseline_apply_test \
     baseline_apply_data_race_test \
     baseline_apply_entity_race_test \
@@ -158,7 +159,7 @@ for database in \
     create_source_database "$database"
 done
 
-echo "1/13 Accept an exact approved schema in rehearsal mode"
+echo "1/14 Accept an exact approved schema in rehearsal mode"
 valid_output="$TEMP_DIR/valid.log"
 config_capture_bin="$TEMP_DIR/config-capture-bin"
 config_capture_file="$TEMP_DIR/flyway-config-paths.txt"
@@ -230,7 +231,7 @@ grep -Fq "fresh_web3_message_column=text:NO" \
 valid_fingerprint="$(awk '/^Schema fingerprint: / {print $3}' "$valid_output")"
 [ -n "$valid_fingerprint" ] || fail "rehearsal did not report a schema fingerprint"
 
-echo "2/13 Reject a source missing one managed table"
+echo "2/14 Reject a source missing one managed table"
 source_psql "$SOURCE_PORT" baseline_missing_test \
     -c "DROP TABLE token_blacklist;" >/dev/null
 expect_guard_failure \
@@ -239,7 +240,7 @@ expect_guard_failure \
     missing-table \
     "source database does not contain all eight approved UniAuth tables"
 
-echo "3/13 Reject additional structure inside a managed auth table"
+echo "3/14 Reject additional structure inside a managed auth table"
 source_psql "$SOURCE_PORT" baseline_extra_test \
     -c "ALTER TABLE users ADD COLUMN unexpected_auth_state text;" >/dev/null
 expect_guard_failure \
@@ -248,7 +249,7 @@ expect_guard_failure \
     extra-auth-structure \
     "baselined and fresh migrated schema fingerprints differ"
 
-echo "4/13 Reject a source that already has Flyway history"
+echo "4/14 Reject a source that already has Flyway history"
 source_psql "$SOURCE_PORT" baseline_history_test \
     -c "CREATE TABLE uniauth_flyway_schema_history (installed_rank integer);" >/dev/null
 expect_guard_failure \
@@ -257,7 +258,7 @@ expect_guard_failure \
     existing-history \
     "a Flyway history table already exists"
 
-echo "5/13 Reject source data that cannot satisfy Flyway V2"
+echo "5/14 Reject source data that cannot satisfy Flyway V2"
 source_psql "$SOURCE_PORT" baseline_invalid_login_methods_test \
     -c "
         INSERT INTO users (id, username, email)
@@ -288,7 +289,7 @@ expect_guard_failure \
     invalid-login-method-data \
     "source data is not compatible with pending login-method migration: users_without_exactly_one_primary"
 
-echo "6/13 Reject source data that cannot satisfy Flyway V4"
+echo "6/14 Reject source data that cannot satisfy Flyway V4"
 source_psql "$SOURCE_PORT" baseline_invalid_entity_schema_test \
     -c "
         INSERT INTO users (
@@ -327,7 +328,7 @@ expect_guard_failure \
     -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "V4 preflight failure created Flyway history"
 
-echo "7/13 Reject invalid email verification state before Flyway history"
+echo "7/14 Reject invalid email verification state before Flyway history"
 source_psql "$SOURCE_PORT" baseline_invalid_email_state_test \
     -c "
         INSERT INTO email_verification_codes (
@@ -364,7 +365,38 @@ expect_guard_failure \
     -c "SELECT retry_count FROM email_verification_codes WHERE id = '00000000-0000-0000-0000-000000000051';")" = "-1" ] \
     || fail "email verification preflight changed source data"
 
-echo "8/13 Reject PostgreSQL versions outside the approved major"
+echo "8/14 Reject invalid token blacklist state before Flyway history"
+source_psql "$SOURCE_PORT" baseline_invalid_token_blacklist_test \
+    -c "
+        INSERT INTO token_blacklist (
+            id,
+            jti,
+            token_type,
+            expires_at,
+            blacklisted_at,
+            reason
+        ) VALUES (
+            '00000000-0000-0000-0000-000000000061',
+            'invalid-token-blacklist-state',
+            'UNKNOWN',
+            CURRENT_TIMESTAMP + INTERVAL '10 minutes',
+            CURRENT_TIMESTAMP,
+            'BASELINE_GUARD_TEST'
+        );
+    " >/dev/null
+expect_guard_failure \
+    baseline_invalid_token_blacklist_test \
+    rehearse \
+    invalid-token-blacklist-state \
+    "source data is not compatible with pending entity-schema migration: invalid_token_blacklist_state"
+[ "$(source_psql "$SOURCE_PORT" baseline_invalid_token_blacklist_test -qAt \
+    -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
+    || fail "invalid token blacklist state created Flyway history"
+[ "$(source_psql "$SOURCE_PORT" baseline_invalid_token_blacklist_test -qAt \
+    -c "SELECT token_type FROM token_blacklist WHERE id = '00000000-0000-0000-0000-000000000061';")" = "UNKNOWN" ] \
+    || fail "token blacklist preflight changed source data"
+
+echo "9/14 Reject PostgreSQL versions outside the approved major"
 fake_version_bin="$TEMP_DIR/fake-version-bin"
 real_psql="$(command -v psql)"
 mkdir -p "$fake_version_bin"
@@ -387,7 +419,7 @@ expect_guard_failure \
     PATH="$fake_version_bin:$PATH" \
     UNIAUTH_REAL_PSQL="$real_psql"
 
-echo "9/13 Require the exact confirmation token before apply"
+echo "10/14 Require the exact confirmation token before apply"
 expect_guard_failure \
     baseline_apply_test \
     apply \
@@ -397,7 +429,7 @@ expect_guard_failure \
     -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "apply without confirmation created Flyway history"
 
-echo "10/13 Recheck login-method data immediately before apply"
+echo "11/14 Recheck login-method data immediately before apply"
 race_bin="$TEMP_DIR/race-bin"
 race_counter="$TEMP_DIR/race-mvn-count.txt"
 real_psql="$(command -v psql)"
@@ -467,7 +499,7 @@ expect_guard_failure \
     -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "apply created Flyway history after source data changed during rehearsal"
 
-echo "11/13 Recheck entity-schema data immediately before apply"
+echo "12/14 Recheck entity-schema data immediately before apply"
 entity_race_bin="$TEMP_DIR/entity-race-bin"
 entity_race_counter="$TEMP_DIR/entity-race-mvn-count.txt"
 mkdir -p "$entity_race_bin"
@@ -541,7 +573,7 @@ expect_guard_failure \
     -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "apply created Flyway history after entity-schema data changed during rehearsal"
 
-echo "12/13 Remove incomplete baseline history if V2 rejects a later data race"
+echo "13/14 Remove incomplete baseline history if V2 rejects a later data race"
 migration_race_bin="$TEMP_DIR/migration-race-bin"
 migration_race_counter="$TEMP_DIR/migration-race-mvn-count.txt"
 mkdir -p "$migration_race_bin"
@@ -613,7 +645,7 @@ expect_guard_failure \
     -c "SELECT count(*) FROM users WHERE username = 'migration-data-race';")" = "1" ] \
     || fail "migration race fixture did not reach the post-baseline window"
 
-echo "13/13 Remove temporary Flyway credentials after Maven failure"
+echo "14/14 Remove temporary Flyway credentials after Maven failure"
 fake_bin="$TEMP_DIR/fake-bin"
 capture_file="$TEMP_DIR/flyway-config-path.txt"
 mkdir -p "$fake_bin"

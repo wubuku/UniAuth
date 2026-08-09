@@ -5,6 +5,7 @@ import org.dddml.uniauth.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * JWT Token刷新服务
@@ -17,6 +18,8 @@ public class TokenRefreshService {
 
     private final UserRepository userRepository;
     private final JwtTokenService jwtTokenService;
+    private final TokenValidationService tokenValidationService;
+    private final TokenRevocationService tokenRevocationService;
 
     /**
      * 刷新用户的JWT Token
@@ -24,49 +27,29 @@ public class TokenRefreshService {
      * @param refreshTokenValue refresh token字符串
      * @return 新的TokenPair
      */
+    @Transactional
     public TokenPair refreshUserTokens(String refreshTokenValue) {
-        try {
-            // 1. 验证refresh token
-            if (!jwtTokenService.validateRefreshToken(refreshTokenValue)) {
-                throw new RuntimeException("无效的refresh token");
-            }
-
-            // 2. 从refresh token中提取用户信息
-            String username = jwtTokenService.extractUsername(refreshTokenValue);
-            String userId = jwtTokenService.getUserIdFromToken(refreshTokenValue);
-
-            // 3. 验证提取的信息不为空
-            if (userId == null || userId.trim().isEmpty()) {
-                throw new RuntimeException("无法从token中提取用户ID");
-            }
-            if (username == null || username.trim().isEmpty()) {
-                throw new RuntimeException("无法从token中提取用户名");
-            }
-
-            // 4. 验证用户存在
-            UserEntity user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("用户不存在"));
-
-            // 5. 验证用户名匹配
-            if (user.getUsername() == null || !username.equals(user.getUsername())) {
-                throw new RuntimeException("Token用户名不匹配");
-            }
-
-            // 6. 生成新的Token对
-            String newAccessToken = jwtTokenService.generateAccessToken(
-                user.getUsername(), user.getEmail(), user.getId(), user.getAuthorities()
-            );
-            String newRefreshToken = jwtTokenService.generateRefreshToken(
-                user.getUsername(), user.getId()
-            );
-
-            log.info("Token refresh completed");
-            return new TokenPair(newAccessToken, newRefreshToken);
-
-        } catch (Exception e) {
-            log.warn("Token refresh failed");
-            throw new RuntimeException("Token刷新失败: " + e.getMessage(), e);
+        TokenValidationService.ValidatedToken refreshToken =
+                tokenValidationService.decodeRefreshToken(refreshTokenValue);
+        UserEntity user = userRepository.findById(refreshToken.userId())
+                .orElseThrow(() -> new TokenRejectedException("Token user does not exist"));
+        if (!user.isEnabled()
+                || user.getUsername() == null
+                || !user.getUsername().equals(refreshToken.username())) {
+            throw new TokenRejectedException("Token user state is invalid");
         }
+
+        tokenRevocationService.consumeRefreshToken(refreshToken);
+
+        String newAccessToken = jwtTokenService.generateAccessToken(
+            user.getUsername(), user.getEmail(), user.getId(), user.getAuthorities()
+        );
+        String newRefreshToken = jwtTokenService.generateRefreshToken(
+            user.getUsername(), user.getId()
+        );
+
+        log.info("Token refresh completed");
+        return new TokenPair(newAccessToken, newRefreshToken);
     }
 
     /**
