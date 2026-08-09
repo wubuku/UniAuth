@@ -276,6 +276,17 @@ PY
     )"
     export PLAYWRIGHT_PORT
     npm run test:e2e
+    PLAYWRIGHT_PORT="$(
+        "$PYTHON_BIN" - <<'PY'
+import socket
+
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+    )"
+    export PLAYWRIGHT_PORT
+    npm run test:e2e:production
 )
 
 echo "Verification 10/12: real email-login browser E2E"

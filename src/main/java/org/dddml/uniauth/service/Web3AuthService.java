@@ -28,7 +28,7 @@ public class Web3AuthService {
     private final UserRepository userRepository;
     private final UserLoginMethodRepository loginMethodRepository;
     private final Web3NonceService web3NonceService;
-    private final JwtTokenService jwtTokenService;
+    private final TokenSessionTransactionService tokenSessionTransactionService;
     
     @Value("${app.web3.domain:localhost}")
     private String domain;
@@ -213,6 +213,10 @@ public class Web3AuthService {
                 .linkedAt(Instant.now())
                 .build();
         loginMethodRepository.save(newMethod);
+        tokenSessionTransactionService.incrementSecurityVersionAndRevoke(
+                userId,
+                "WEB3_CREDENTIAL_ADDED"
+        );
         
         log.info("Web3 wallet binding completed");
         

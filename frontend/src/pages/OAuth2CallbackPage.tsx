@@ -34,7 +34,8 @@ const OAuth2CallbackPage = () => {
 
         try {
           const refreshResponse = await AuthService.refreshToken();
-          if (!refreshResponse.accessToken) {
+          if (AuthService.diagnosticsEnabled()
+              && !refreshResponse.accessToken) {
             throw new Error('刷新token失败：响应中没有accessToken');
           }
         } catch (error) {

@@ -49,9 +49,9 @@ class FlywayExistingSchemaBaselineIntegrationTest extends PostgreSqlIntegrationT
                 .load();
 
         adoptionFlyway.baseline();
-        assertThat(adoptionFlyway.migrate().migrationsExecuted).isEqualTo(5);
+        assertThat(adoptionFlyway.migrate().migrationsExecuted).isEqualTo(6);
         assertThat(adoptionFlyway.info().current()).isNotNull();
-        assertThat(adoptionFlyway.info().current().getVersion().toString()).isEqualTo("6");
+        assertThat(adoptionFlyway.info().current().getVersion().toString()).isEqualTo("7");
 
         JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
         assertThat(jdbcTemplate.queryForObject(
@@ -86,6 +86,10 @@ class FlywayExistingSchemaBaselineIntegrationTest extends PostgreSqlIntegrationT
                 "SELECT to_regclass('public.idx_email_challenge_handle_lookup')",
                 String.class
         )).isEqualTo("idx_email_challenge_handle_lookup");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT to_regclass('public.token_families')",
+                String.class
+        )).isEqualTo("token_families");
 
         Path keyDirectory = Files.createTempDirectory("uniauth-existing-schema-key-");
         Path keyFile = keyDirectory.resolve("signing-key.ser");
@@ -96,7 +100,7 @@ class FlywayExistingSchemaBaselineIntegrationTest extends PostgreSqlIntegrationT
             Flyway runtimeFlyway = context.getBean(Flyway.class);
             assertThat(runtimeFlyway.migrate().migrationsExecuted).isZero();
             assertThat(runtimeFlyway.info().current()).isNotNull();
-            assertThat(runtimeFlyway.info().current().getVersion().toString()).isEqualTo("6");
+            assertThat(runtimeFlyway.info().current().getVersion().toString()).isEqualTo("7");
             assertThat(context.getBean(JdbcTemplate.class)
                     .queryForObject("SELECT count(*) FROM users", Long.class))
                     .isZero();

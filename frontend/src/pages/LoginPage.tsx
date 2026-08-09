@@ -275,14 +275,16 @@ export default function LoginPage() {
         verificationCode
       });
 
-      if (response.success && response.accessToken) {
+      if (response.success) {
         setShowVerificationModal(false);
         setVerificationCode('');
         setVerificationChallengeHandle('');
         setRegistrationData(null);
         setSuccessMessage('邮箱验证成功！');
 
-        localStorage.setItem('accessToken', response.accessToken);
+        if (AuthService.diagnosticsEnabled() && response.accessToken) {
+          localStorage.setItem('accessToken', response.accessToken);
+        }
 
         const userData = {
           id: response.user.id,

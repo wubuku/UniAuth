@@ -1,9 +1,12 @@
+import { Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage';
-import TestPage from './pages/TestPage';
-import ResourceTestPage from './pages/ResourceTestPage';
 import OAuth2CallbackPage from './pages/OAuth2CallbackPage';
+import {
+  ResourceTestPage,
+  TestPage,
+} from 'virtual:diagnostics-routes';
 import './App.css';
 
 function AppContent() {
@@ -15,8 +18,10 @@ function AppContent() {
         <Route path="/login" element={<LoginPage />} />
 
         {/* 受保护路由 */}
-        <Route path="/test" element={<TestPage />} />
-        <Route path="/resource-test" element={<ResourceTestPage />} />
+        {TestPage && <Route path="/test" element={<TestPage />} />}
+        {ResourceTestPage && (
+          <Route path="/resource-test" element={<ResourceTestPage />} />
+        )}
 
         {/* OAuth2回调路由 */}
         <Route path="/oauth2/callback" element={<OAuth2CallbackPage />} />
@@ -31,7 +36,9 @@ function AppContent() {
 function App() {
   return (
     <Router>
-      <AppContent />
+      <Suspense fallback={null}>
+        <AppContent />
+      </Suspense>
     </Router>
   );
 }

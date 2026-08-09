@@ -113,8 +113,10 @@ public class EmailAuthController {
         Map<String, Object> body = new LinkedHashMap<>(
                 tokenIssuanceFacade.issue(
                         user,
+                        httpRequest,
                         response,
-                        "Email verified successfully"
+                        "Email verified successfully",
+                        java.time.Instant.now()
                 )
         );
         body.put("success", true);

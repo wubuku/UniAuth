@@ -1,12 +1,16 @@
 package org.dddml.uniauth.controller;
 
+import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import jakarta.servlet.http.Cookie;
 import org.dddml.uniauth.dto.RegisterRequest;
 import org.dddml.uniauth.dto.UserDto;
 import org.dddml.uniauth.service.JwtTokenService;
+import org.dddml.uniauth.service.TokenIssuanceFacade;
+import org.dddml.uniauth.service.TokenSessionTransactionService;
 import org.dddml.uniauth.service.UserService;
+import org.dddml.uniauth.support.AuthIntegrationTestSupport.IssuedTokens;
 import org.dddml.uniauth.support.PostgreSqlIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -14,6 +18,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -23,6 +28,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.issueTokens;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -40,6 +46,12 @@ class JwtBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
 
     @Autowired
     private UserService userService;
+
+    @Autowired
+    private TokenSessionTransactionService tokenSessionTransactionService;
+
+    @Autowired
+    private TokenIssuanceFacade tokenIssuanceFacade;
 
     @ParameterizedTest
     @ValueSource(strings = {
@@ -118,13 +130,18 @@ class JwtBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
     void protectedApiRejectsAccessTokenWithoutJti() throws Exception {
         UserDto user = registerUser("jwt-missing-jti");
         Instant now = Instant.now();
+        Claims validClaims = claims(accessToken(user));
         String token = Jwts.builder()
                 .setClaims(Map.of(
                         "userId", user.getId(),
                         "username", user.getUsername(),
                         "email", user.getEmail(),
                         "authorities", Set.of("ROLE_USER"),
-                        "type", "access"
+                        "type", "access",
+                        "sid", validClaims.get("sid", String.class),
+                        "generation", validClaims.get("generation", Number.class),
+                        "ver", validClaims.get("ver", Number.class),
+                        "auth_time", validClaims.get("auth_time", Number.class)
                 ))
                 .setSubject(user.getId())
                 .setIssuer(jwtTokenService.getToken().getIssuer())
@@ -151,7 +168,7 @@ class JwtBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
-    void authorizationHeaderTakesPrecedenceOverConflictingAccessTokenCookie()
+    void conflictingAuthorizationHeaderAndAccessTokenCookieAreRejected()
             throws Exception {
         UserDto headerUser = registerUser("jwt-header");
         UserDto cookieUser = registerUser("jwt-cookie");
@@ -161,15 +178,54 @@ class JwtBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
         mockMvc.perform(get("/api/user")
                         .header("Authorization", "Bearer " + headerToken)
                         .cookie(new Cookie("accessToken", cookieToken)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.userId").value(headerUser.getId()))
-                .andExpect(jsonPath("$.userName").value(headerUser.getUsername()));
+                .andExpect(status().isUnauthorized());
 
         mockMvc.perform(get("/api/user")
                         .cookie(new Cookie("accessToken", cookieToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userId").value(cookieUser.getId()))
                 .andExpect(jsonPath("$.userName").value(cookieUser.getUsername()));
+    }
+
+    @Test
+    void matchingAuthorizationHeaderAndAccessTokenCookieAreAccepted()
+            throws Exception {
+        UserDto user = registerUser("jwt-matching-credential");
+        String accessToken = accessToken(user);
+
+        mockMvc.perform(get("/api/user")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .cookie(new Cookie("accessToken", accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value(user.getId()));
+    }
+
+    @Test
+    void duplicateAuthorizationHeadersAreRejected() throws Exception {
+        UserDto user = registerUser("jwt-duplicate-header");
+        String accessToken = accessToken(user);
+
+        mockMvc.perform(get("/api/user")
+                        .header(
+                                HttpHeaders.AUTHORIZATION,
+                                "Bearer " + accessToken,
+                                "Bearer " + accessToken
+                        ))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void duplicateAccessTokenCookiesAreRejected() throws Exception {
+        UserDto user = registerUser("jwt-duplicate-cookie");
+        String accessToken = accessToken(user);
+
+        mockMvc.perform(get("/api/user")
+                        .header(
+                                HttpHeaders.COOKIE,
+                                "accessToken=" + accessToken
+                                        + "; accessToken=" + accessToken
+                        ))
+                .andExpect(status().isUnauthorized());
     }
 
     private UserDto registerUser(String prefix) {
@@ -186,12 +242,11 @@ class JwtBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     private String accessToken(UserDto user) {
-        return jwtTokenService.generateAccessToken(
-                user.getUsername(),
-                user.getEmail(),
-                user.getId(),
-                user.getAuthorities()
-        );
+        return issueTokens(
+                tokenSessionTransactionService,
+                tokenIssuanceFacade,
+                user.getId()
+        ).accessToken();
     }
 
     private String signedToken(
@@ -201,6 +256,12 @@ class JwtBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
             String type,
             Instant issuedAt,
             Instant expiresAt) {
+        IssuedTokens issuedTokens = issueTokens(
+                tokenSessionTransactionService,
+                tokenIssuanceFacade,
+                user.getId()
+        );
+        Claims sessionClaims = claims(issuedTokens.accessToken());
         return Jwts.builder()
                 .setClaims(Map.of(
                         "userId", user.getId(),
@@ -208,7 +269,11 @@ class JwtBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
                         "email", user.getEmail(),
                         "authorities", Set.of("ROLE_USER"),
                         "type", type,
-                        "jti", UUID.randomUUID().toString()
+                        "jti", UUID.randomUUID().toString(),
+                        "sid", sessionClaims.get("sid", String.class),
+                        "generation", sessionClaims.get("generation", Number.class),
+                        "ver", sessionClaims.get("ver", Number.class),
+                        "auth_time", sessionClaims.get("auth_time", Number.class)
                 ))
                 .setSubject(user.getId())
                 .setIssuer(issuer)
@@ -218,5 +283,13 @@ class JwtBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
                 .setHeaderParam("kid", jwtTokenService.getToken().getKid())
                 .signWith(jwtTokenService.getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
+    }
+
+    private Claims claims(String token) {
+        return Jwts.parserBuilder()
+                .setSigningKey(jwtTokenService.getPublicKey())
+                .build()
+                .parseClaimsJws(token)
+                .getBody();
     }
 }

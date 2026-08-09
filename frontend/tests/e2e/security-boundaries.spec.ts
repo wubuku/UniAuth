@@ -1,9 +1,14 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { mockCsrfBootstrap } from './csrf';
 
 const walletAddress = '0x1111111111111111111111111111111111111111';
 const walletSignature = `0x${'ab'.repeat(65)}`;
 
 type WalletMode = 'success' | 'reject-connect' | 'reject-sign';
+
+test.beforeEach(async ({ page }) => {
+  await mockCsrfBootstrap(page);
+});
 
 async function installWallet(
   page: Parameters<typeof test>[0]['page'],
@@ -94,7 +99,6 @@ test('mock EIP-1193 wallet completes the Web3 login contract', async ({ page }) 
       contentType: 'application/json',
       body: JSON.stringify({
         accessToken: 'wallet.access.token',
-        refreshToken: 'wallet.refresh.token',
         tokenType: 'Bearer',
         expiresIn: 3600,
         walletAddress,
@@ -202,7 +206,6 @@ test('one protected 401 refreshes once and retries with the new access token', a
       contentType: 'application/json',
       body: JSON.stringify({
         accessToken: 'refreshed.access.token',
-        refreshToken: 'refreshed.refresh.token',
         tokenType: 'Bearer',
       }),
     });
@@ -312,7 +315,6 @@ test('concurrent protected 401 responses share one refresh request', async ({ pa
       contentType: 'application/json',
       body: JSON.stringify({
         accessToken: 'concurrent.refreshed.access.token',
-        refreshToken: 'concurrent.refreshed.refresh.token',
         tokenType: 'Bearer',
       }),
     });
@@ -392,7 +394,6 @@ test('same-origin tabs coordinate refresh through one cookie rotation', async ({
       contentType: 'application/json',
       body: JSON.stringify({
         accessToken: 'cross-tab.refreshed.access.token',
-        refreshToken: 'cross-tab.refreshed.refresh.token',
         tokenType: 'Bearer',
       }),
     });
@@ -493,7 +494,6 @@ test('cross-tab logout cannot be undone by a late refresh continuation', async (
       body: JSON.stringify({
         message: 'Token refresh successful',
         accessToken: 'cross-tab-logout.refreshed.access.token',
-        refreshToken: 'cross-tab-logout.refreshed.refresh.token',
         accessTokenExpiresIn: 3600,
         refreshTokenExpiresIn: 604800,
         tokenType: 'Bearer',
@@ -759,7 +759,6 @@ test('logout waits for an in-flight refresh and leaves authentication state clea
       body: JSON.stringify({
         message: 'Token refresh successful',
         accessToken: 'refresh-logout.new.access.token',
-        refreshToken: 'refresh-logout.new.refresh.token',
         accessTokenExpiresIn: 3600,
         refreshTokenExpiresIn: 604800,
         tokenType: 'Bearer',

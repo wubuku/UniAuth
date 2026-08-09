@@ -5,13 +5,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import jakarta.servlet.http.Cookie;
-import org.dddml.uniauth.entity.TokenBlacklistEntity;
+import org.dddml.uniauth.config.IntrospectionProperties;
+import org.dddml.uniauth.entity.TokenFamilyEntity;
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.entity.UserLoginMethod;
-import org.dddml.uniauth.repository.TokenBlacklistRepository;
+import org.dddml.uniauth.repository.TokenFamilyRepository;
 import org.dddml.uniauth.repository.UserRepository;
 import org.dddml.uniauth.service.JwtTokenService;
+import org.dddml.uniauth.support.AuthIntegrationTestSupport.CsrfContext;
 import org.dddml.uniauth.support.PostgreSqlIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -27,8 +31,10 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -40,6 +46,10 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.authenticatedIntrospection;
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.bootstrapCsrf;
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.responseCookie;
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.withCsrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
@@ -51,8 +61,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
 
-    private static final String FAILURE_TRIGGER = "test_reject_token_blacklist_insert";
-    private static final String FAILURE_FUNCTION = "test_reject_token_blacklist_insert";
+    private static final String FAILURE_TRIGGER = "test_reject_token_family_revoke";
+    private static final String FAILURE_FUNCTION = "test_reject_token_family_revoke";
 
     @Autowired
     private MockMvc mockMvc;
@@ -64,7 +74,7 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
     private UserRepository userRepository;
 
     @Autowired
-    private TokenBlacklistRepository tokenBlacklistRepository;
+    private TokenFamilyRepository tokenFamilyRepository;
 
     @Autowired
     private JwtTokenService jwtTokenService;
@@ -75,10 +85,16 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    @Autowired
+    private IntrospectionProperties introspectionProperties;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
     @AfterEach
     void removeFailureTrigger() {
         jdbcTemplate.execute(
-                "DROP TRIGGER IF EXISTS " + FAILURE_TRIGGER + " ON token_blacklist"
+                "DROP TRIGGER IF EXISTS " + FAILURE_TRIGGER + " ON token_families"
         );
         jdbcTemplate.execute("DROP FUNCTION IF EXISTS " + FAILURE_FUNCTION + "()");
     }
@@ -86,54 +102,85 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
     @Test
     void refreshConsumesThePresentedTokenAndRejectsReplay() throws Exception {
         LoginTokens login = registerAndLogin("refresh-replay");
-        String oldRefreshJti = claims(login.refreshToken()).getId();
 
-        MvcResult firstRefresh = refresh(login.refreshToken());
+        MvcResult firstRefresh = refresh(login);
         assertThat(firstRefresh.getResponse().getStatus()).isEqualTo(200);
         JsonNode firstBody = responseJson(firstRefresh);
-        assertThat(firstBody.path("refreshToken").asText())
-                .isNotBlank()
+        assertThat(firstBody.has("refreshToken")).isFalse();
+        String rotatedRefreshToken = responseCookie(
+                firstRefresh,
+                "refreshToken"
+        );
+        assertThat(rotatedRefreshToken)
                 .isNotEqualTo(login.refreshToken());
 
-        TokenBlacklistEntity consumed = tokenBlacklistRepository
-                .findByJti(oldRefreshJti)
-                .orElseThrow();
-        assertThat(consumed.getTokenType())
-                .isEqualTo(TokenBlacklistEntity.TokenType.REFRESH);
-        assertThat(consumed.getUserId()).isEqualTo(login.userId());
-        assertThat(consumed.getReason()).isEqualTo("REFRESH_ROTATED");
+        TokenFamilyEntity rotated = tokenFamily(login.familyId());
+        assertThat(rotated.getCurrentGeneration()).isEqualTo(1);
+        assertThat(rotated.getRevokedAt()).isNull();
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .cookie(new Cookie("refreshToken", login.refreshToken())))
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        login.refreshToken()
+                                )),
+                        login.csrf()
+                ))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("Token refresh failed"));
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .cookie(new Cookie(
-                                "refreshToken",
-                                firstBody.path("refreshToken").asText()
-                        )))
-                .andExpect(status().isOk());
+        TokenFamilyEntity replayRevoked = tokenFamily(login.familyId());
+        assertThat(replayRevoked.getCurrentGeneration()).isEqualTo(1);
+        assertThat(replayRevoked.getRevokedAt()).isNotNull();
+        assertThat(replayRevoked.getRevokeReason()).isEqualTo("REFRESH_REPLAY");
+
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        rotatedRefreshToken
+                                )),
+                        login.csrf()
+                ))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/user")
+                        .header(
+                                "Authorization",
+                                "Bearer " + firstBody.path("accessToken").asText()
+                        ))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
     void concurrentRefreshAllowsOneRotationAndRejectsOneReplay() throws Exception {
         LoginTokens login = registerAndLogin("refresh-concurrent");
-        String oldRefreshJti = claims(login.refreshToken()).getId();
 
         List<MvcResult> results = runConcurrently(
-                () -> refresh(login.refreshToken()),
-                () -> refresh(login.refreshToken())
+                () -> refresh(login),
+                () -> refresh(login)
         );
 
         assertThat(results)
                 .extracting(result -> result.getResponse().getStatus())
                 .containsExactlyInAnyOrder(200, 401);
-        assertThat(tokenBlacklistRepository.findAll())
-                .filteredOn(entry -> oldRefreshJti.equals(entry.getJti()))
-                .singleElement()
-                .extracting(TokenBlacklistEntity::getTokenType)
-                .isEqualTo(TokenBlacklistEntity.TokenType.REFRESH);
+        TokenFamilyEntity family = tokenFamily(login.familyId());
+        assertThat(family.getCurrentGeneration()).isEqualTo(1);
+        assertThat(family.getRevokedAt()).isNotNull();
+        assertThat(family.getRevokeReason()).isEqualTo("REFRESH_REPLAY");
+
+        MvcResult successful = results.stream()
+                .filter(result -> result.getResponse().getStatus() == 200)
+                .findFirst()
+                .orElseThrow();
+        mockMvc.perform(get("/api/user")
+                        .header(
+                                "Authorization",
+                                "Bearer "
+                                        + responseJson(successful)
+                                                .path("accessToken")
+                                                .asText()
+                        ))
+                .andExpect(status().isUnauthorized());
     }
 
     @ParameterizedTest
@@ -141,41 +188,47 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
     void logoutRevokesCurrentTokensAcrossBothSupportedRoutes(String logoutPath)
             throws Exception {
         LoginTokens login = registerAndLogin("logout-route");
-        String accessJti = claims(login.accessToken()).getId();
-        String refreshJti = claims(login.refreshToken()).getId();
 
-        mockMvc.perform(post(logoutPath)
-                        .cookie(
-                                new Cookie("accessToken", login.accessToken()),
-                                new Cookie("refreshToken", login.refreshToken())
-                        ))
+        mockMvc.perform(withCsrf(
+                        post(logoutPath)
+                                .cookie(
+                                        new Cookie(
+                                                "accessToken",
+                                                login.accessToken()
+                                        ),
+                                        new Cookie(
+                                                "refreshToken",
+                                                login.refreshToken()
+                                        )
+                                ),
+                        login.csrf()
+                ))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("Logged out successfully"))
                 .andExpect(cookie().maxAge("accessToken", 0))
                 .andExpect(cookie().maxAge("refreshToken", 0));
 
-        assertBlacklistEntry(
-                accessJti,
-                login.userId(),
-                TokenBlacklistEntity.TokenType.ACCESS,
-                "LOGOUT"
-        );
-        assertBlacklistEntry(
-                refreshJti,
-                login.userId(),
-                TokenBlacklistEntity.TokenType.REFRESH,
-                "LOGOUT"
-        );
+        assertRevokedFamily(login.familyId(), login.userId(), "LOGOUT");
 
         mockMvc.perform(get("/api/user")
                         .header("Authorization", "Bearer " + login.accessToken()))
                 .andExpect(status().isUnauthorized());
-        mockMvc.perform(post("/api/auth/refresh")
-                        .cookie(new Cookie("refreshToken", login.refreshToken())))
+        CsrfContext postLogoutCsrf = bootstrapCsrf(mockMvc, objectMapper);
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        login.refreshToken()
+                                )),
+                        postLogoutCsrf
+                ))
                 .andExpect(status().isUnauthorized());
-        mockMvc.perform(post("/oauth2/introspect")
-                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                        .param("token", login.accessToken()))
+        mockMvc.perform(authenticatedIntrospection(
+                        post("/oauth2/introspect")
+                                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                                .param("token", login.accessToken()),
+                        introspectionProperties
+                ))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.active").value(false));
     }
@@ -183,26 +236,22 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
     @Test
     void logoutRevokesAccessTokenFromCaseInsensitiveBearerScheme() throws Exception {
         LoginTokens login = registerAndLogin("logout-lowercase-bearer");
-        String accessJti = claims(login.accessToken()).getId();
-        String refreshJti = claims(login.refreshToken()).getId();
 
-        mockMvc.perform(post("/api/auth/logout")
-                        .header("Authorization", "bearer " + login.accessToken())
-                        .cookie(new Cookie("refreshToken", login.refreshToken())))
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/logout")
+                                .header(
+                                        "Authorization",
+                                        "bearer " + login.accessToken()
+                                )
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        login.refreshToken()
+                                )),
+                        login.csrf()
+                ))
                 .andExpect(status().isOk());
 
-        assertBlacklistEntry(
-                accessJti,
-                login.userId(),
-                TokenBlacklistEntity.TokenType.ACCESS,
-                "LOGOUT"
-        );
-        assertBlacklistEntry(
-                refreshJti,
-                login.userId(),
-                TokenBlacklistEntity.TokenType.REFRESH,
-                "LOGOUT"
-        );
+        assertRevokedFamily(login.familyId(), login.userId(), "LOGOUT");
     }
 
     @Test
@@ -215,12 +264,21 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
         mockMvc.perform(get("/api/user")
                         .header("Authorization", "Bearer " + login.accessToken()))
                 .andExpect(status().isUnauthorized());
-        mockMvc.perform(post("/api/auth/refresh")
-                        .cookie(new Cookie("refreshToken", login.refreshToken())))
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        login.refreshToken()
+                                )),
+                        login.csrf()
+                ))
                 .andExpect(status().isUnauthorized());
-        mockMvc.perform(post("/oauth2/introspect")
-                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                        .param("token", login.accessToken()))
+        mockMvc.perform(authenticatedIntrospection(
+                        post("/oauth2/introspect")
+                                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                                .param("token", login.accessToken()),
+                        introspectionProperties
+                ))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.active").value(false));
     }
@@ -236,16 +294,26 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
                 Set.of("ROLE_USER")
         );
         String refreshToken = jwtTokenService.generateRefreshToken(username, userId);
+        CsrfContext csrf = bootstrapCsrf(mockMvc, objectMapper);
 
         mockMvc.perform(get("/api/user")
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isUnauthorized());
-        mockMvc.perform(post("/api/auth/refresh")
-                        .cookie(new Cookie("refreshToken", refreshToken)))
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        refreshToken
+                                )),
+                        csrf
+                ))
                 .andExpect(status().isUnauthorized());
-        mockMvc.perform(post("/oauth2/introspect")
-                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                        .param("token", accessToken))
+        mockMvc.perform(authenticatedIntrospection(
+                        post("/oauth2/introspect")
+                                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                                .param("token", accessToken),
+                        introspectionProperties
+                ))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.active").value(false));
     }
@@ -254,13 +322,18 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
     void refreshTokenWithoutJtiIsRejected() throws Exception {
         LoginTokens login = registerAndLogin("refresh-missing-jti");
         String username = userRepository.findById(login.userId()).orElseThrow().getUsername();
+        Claims validClaims = claims(login.refreshToken());
         var now = java.time.Instant.now();
         String refreshToken = Jwts.builder()
                 .setClaims(Map.of(
                         "userId", login.userId(),
                         "username", username,
                         "type", "refresh",
-                        "iss", jwtTokenService.getToken().getIssuer()
+                        "iss", jwtTokenService.getToken().getIssuer(),
+                        "sid", validClaims.get("sid", String.class),
+                        "generation", validClaims.get("generation", Number.class),
+                        "ver", validClaims.get("ver", Number.class),
+                        "auth_time", validClaims.get("auth_time", Number.class)
                 ))
                 .setSubject(login.userId())
                 .setIssuedAt(Date.from(now.minusSeconds(5)))
@@ -269,8 +342,14 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
                 .signWith(jwtTokenService.getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .cookie(new Cookie("refreshToken", refreshToken)))
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        refreshToken
+                                )),
+                        login.csrf()
+                ))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("Token refresh failed"));
     }
@@ -281,18 +360,104 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
         LoginTokens login = registerAndLogin("logout-database-failure");
         installFailureTrigger();
 
-        mockMvc.perform(post("/api/auth/logout")
-                        .header("Authorization", "Bearer " + login.accessToken())
-                        .cookie(new Cookie("refreshToken", login.refreshToken())))
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/logout")
+                                .header(
+                                        "Authorization",
+                                        "Bearer " + login.accessToken()
+                                )
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        login.refreshToken()
+                                )),
+                        login.csrf()
+                ))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.error").value("REVOCATION_INCOMPLETE"))
                 .andExpect(cookie().maxAge("accessToken", 0))
                 .andExpect(cookie().maxAge("refreshToken", 0));
 
-        assertThat(tokenBlacklistRepository.findByJti(claims(login.accessToken()).getId()))
-                .isEmpty();
-        assertThat(tokenBlacklistRepository.findByJti(claims(login.refreshToken()).getId()))
-                .isEmpty();
+        TokenFamilyEntity family = tokenFamily(login.familyId());
+        assertThat(family.getRevokedAt()).isNull();
+        assertThat(family.getRevokeReason()).isNull();
+    }
+
+    @Test
+    void cookieAuthenticatedRefreshRequiresOneExactCsrfHeader()
+            throws Exception {
+        LoginTokens login = registerAndLogin("refresh-csrf");
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .cookie(new Cookie(
+                                "refreshToken",
+                                login.refreshToken()
+                        )))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("CSRF_TOKEN_INVALID"));
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .cookie(
+                                login.csrf().sessionCookie(),
+                                new Cookie(
+                                        "refreshToken",
+                                        login.refreshToken()
+                                )
+                        )
+                        .header(login.csrf().headerName(), "wrong-token"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("CSRF_TOKEN_INVALID"));
+
+        mockMvc.perform(post("/api/auth/refresh")
+                        .cookie(
+                                login.csrf().sessionCookie(),
+                                new Cookie(
+                                        "refreshToken",
+                                        login.refreshToken()
+                                )
+                        )
+                        .header(
+                                login.csrf().headerName(),
+                                login.csrf().token(),
+                                login.csrf().token()
+                        ))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("CSRF_TOKEN_INVALID"));
+
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        login.refreshToken()
+                                )),
+                        login.csrf()
+                ))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void logoutUsesValidRefreshWhenAccessTokenIsExpired() throws Exception {
+        LoginTokens login = registerAndLogin("logout-expired-access");
+        String expiredAccessToken = expiredAccessToken(login);
+
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/logout")
+                                .cookie(
+                                        new Cookie(
+                                                "accessToken",
+                                                expiredAccessToken
+                                        ),
+                                        new Cookie(
+                                                "refreshToken",
+                                                login.refreshToken()
+                                        )
+                                ),
+                        login.csrf()
+                ))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message")
+                        .value("Logged out successfully"));
+
+        assertRevokedFamily(login.familyId(), login.userId(), "LOGOUT");
     }
 
     private LoginTokens registerAndLogin(String prefix) throws Exception {
@@ -314,10 +479,15 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(status().isOk())
                 .andReturn();
         JsonNode body = responseJson(result);
+        String accessToken = body.path("accessToken").asText();
+        String refreshToken = responseCookie(result, "refreshToken");
+        Claims accessClaims = claims(accessToken);
         return new LoginTokens(
                 user.getId(),
-                body.path("accessToken").asText(),
-                body.path("refreshToken").asText()
+                accessToken,
+                refreshToken,
+                accessClaims.get("sid", String.class),
+                bootstrapCsrf(mockMvc, objectMapper)
         );
     }
 
@@ -348,9 +518,15 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
         return userRepository.saveAndFlush(user);
     }
 
-    private MvcResult refresh(String refreshToken) throws Exception {
-        return mockMvc.perform(post("/api/auth/refresh")
-                        .cookie(new Cookie("refreshToken", refreshToken)))
+    private MvcResult refresh(LoginTokens login) throws Exception {
+        return mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        login.refreshToken()
+                                )),
+                        login.csrf()
+                ))
                 .andReturn();
     }
 
@@ -362,21 +538,41 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
                 .getBody();
     }
 
+    private String expiredAccessToken(LoginTokens login) {
+        Claims current = claims(login.accessToken());
+        Map<String, Object> expiredClaims = new HashMap<>(current);
+        expiredClaims.remove("iat");
+        expiredClaims.remove("exp");
+        Instant now = Instant.now();
+        return Jwts.builder()
+                .setClaims(expiredClaims)
+                .setIssuedAt(Date.from(now.minusSeconds(120)))
+                .setExpiration(Date.from(now.minusSeconds(60)))
+                .setHeaderParam("kid", jwtTokenService.getToken().getKid())
+                .signWith(
+                        jwtTokenService.getPrivateKey(),
+                        SignatureAlgorithm.RS256
+                )
+                .compact();
+    }
+
     private JsonNode responseJson(MvcResult result) throws Exception {
         return objectMapper.readTree(result.getResponse().getContentAsByteArray());
     }
 
-    private void assertBlacklistEntry(
-            String jti,
+    private void assertRevokedFamily(
+            String familyId,
             String userId,
-            TokenBlacklistEntity.TokenType type,
             String reason) {
-        TokenBlacklistEntity entry = tokenBlacklistRepository.findByJti(jti).orElseThrow();
-        assertThat(entry.getUserId()).isEqualTo(userId);
-        assertThat(entry.getTokenType()).isEqualTo(type);
-        assertThat(entry.getReason()).isEqualTo(reason);
-        assertThat(entry.getExpiresAt()).isNotNull();
-        assertThat(entry.getBlacklistedAt()).isNotNull();
+        TokenFamilyEntity family = tokenFamily(familyId);
+        assertThat(family.getUserId()).isEqualTo(userId);
+        assertThat(family.getRevokeReason()).isEqualTo(reason);
+        assertThat(family.getRevokedAt()).isNotNull();
+    }
+
+    private TokenFamilyEntity tokenFamily(String familyId) {
+        entityManager.clear();
+        return tokenFamilyRepository.findById(familyId).orElseThrow();
     }
 
     private void installFailureTrigger() {
@@ -385,8 +581,8 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
                 LANGUAGE plpgsql
                 AS $$
                 BEGIN
-                    IF NEW.token_type = 'REFRESH' THEN
-                        RAISE EXCEPTION 'injected token blacklist failure';
+                    IF OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL THEN
+                        RAISE EXCEPTION 'injected token family failure';
                     END IF;
                     RETURN NEW;
                 END
@@ -394,7 +590,7 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
                 """.formatted(FAILURE_FUNCTION));
         jdbcTemplate.execute("""
                 CREATE TRIGGER %s
-                BEFORE INSERT ON token_blacklist
+                BEFORE UPDATE ON token_families
                 FOR EACH ROW EXECUTE FUNCTION %s()
                 """.formatted(FAILURE_TRIGGER, FAILURE_FUNCTION));
     }
@@ -430,6 +626,11 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
         }
     }
 
-    private record LoginTokens(String userId, String accessToken, String refreshToken) {
+    private record LoginTokens(
+            String userId,
+            String accessToken,
+            String refreshToken,
+            String familyId,
+            CsrfContext csrf) {
     }
 }

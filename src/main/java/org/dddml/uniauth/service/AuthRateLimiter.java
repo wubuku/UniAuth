@@ -150,6 +150,8 @@ public class AuthRateLimiter {
             case CHALLENGE_VERIFY -> properties.getChallengeVerifyLimit();
             case PASSWORD_RESET_SEND, PASSWORD_RESET_VERIFY ->
                     properties.getPasswordResetLimit();
+            case REFRESH -> properties.getRefreshLimit();
+            case INTROSPECTION -> properties.getIntrospectionLimit();
         };
     }
 
@@ -183,7 +185,9 @@ public class AuthRateLimiter {
         CHALLENGE_SEND,
         CHALLENGE_VERIFY,
         PASSWORD_RESET_SEND,
-        PASSWORD_RESET_VERIFY
+        PASSWORD_RESET_VERIFY,
+        REFRESH,
+        INTROSPECTION
     }
 
     private record Reservation(int count, Instant expiresAt) {

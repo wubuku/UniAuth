@@ -1,22 +1,18 @@
 # UniAuth 加固阶段最终收尾计划
 
-> 状态：Reference，不再自动执行
-> F1 已完成；2026-08-09 的邮件参考服务 V5 收尾只完成终态敏感载荷最小化、完整门禁
-> 和交付，不会自动启动 F2-F5。后续工作回到普通 feature/fix/maintenance 计划；
-> F2-F5 只有在未来明确提出对应需求时才各自重新规划。本文其余内容保留原冻结范围和
-> 历史退出标准，不代表当前仍处于持续加固循环。
+> 状态：F1-F2 completed；F3 next；F4-F5 scope frozen
 > 冻结日期：2026-08-09
-> 历史总体进度口径：F1 完成时约 86%
-> 原目标：只加固、修复和验证现有功能；完成本文五个批次后退出加固阶段
+> 当前总体进度：约 91%
+> 目标：只加固、修复和验证现有功能；完成本文五个批次后退出加固阶段
 > 上位路线图：[全面加固实施规划](HARDENING_IMPLEMENTATION_PLAN.md)
 > 历史执行记录：[下一轮加固实施计划](NEXT_HARDENING_IMPLEMENTATION_PLAN.md)
 
 ## 1. 为什么需要最终计划
 
-此前加固工作已经建立 PostgreSQL 16-only、Flyway V1-V6、Testcontainers、Java
+此前加固工作已经建立 PostgreSQL 16-only、Flyway V1-V7、Testcontainers、Java
 集成测试、Shell HTTP/Flyway E2E、Playwright、Python 契约测试和统一门禁，并完成
 登录方式并发、Web3 challenge、refresh replay/logout、Cookie、CORS 与 OAuth2
-redirect 等多批修复。
+redirect 等多批修复；邮件参考服务已推进到独立 Flyway V5。
 
 旧计划同时保留了大量生产级长期目标，并要求每批结束后继续重新探索。这会把加固
 变成没有固定终点的循环。本文取代该执行方式：
@@ -26,7 +22,7 @@ redirect 等多批修复。
 3. “加固完成”表示现有工程基线达到本文定义的退出标准，不表示已经获得生产发布、
    容量、多区域、真实 provider 或合规认证证明。
 4. 新功能、架构演进和非阻断改进进入正常 backlog，不再借“继续加固”无限延长。
-5. F1 邮箱批次完成后当前任务自然结束；本文不授权 agent 自动进入 F2。
+5. 当前已获准连续完成 F2-F5；各批验收后继续下一冻结批次，不创建第六批。
 
 ## 2. 进度口径校准
 
@@ -37,19 +33,20 @@ redirect 等多批修复。
 |------|----------|------------|
 | 数据库、Flyway、测试隔离和恢复基座 | 已建立并反复验证 | 100% |
 | Java/Shell/Playwright/Python/CI 基础门禁 | 已建立，供应链覆盖仍缺 Maven/Python | 92% |
-| 登录方式、Web3 challenge、当前 token replay/logout、CORS/redirect | 主要高风险路径已加固 | 90% |
-| 邮箱 challenge、canonical identity、可靠投递和枚举防护 | 仍有成组正确性缺口 | 55% |
-| token family、浏览器 transport、CSRF 和身份来源消歧 | 仍需原子切换 | 60% |
+| 登录方式、Web3 challenge、token family/replay/logout、CORS/redirect | 主要高风险路径已加固 | 95% |
+| 邮箱 challenge、canonical identity、可靠投递和枚举防护 | F1 固定范围已完成 | 100% |
+| token family、浏览器 transport、CSRF 和身份来源消歧 | F2 固定范围已完成 | 100% |
 | OAuth2 显式绑定、provider trust、生产配置和密钥运维 | 部分完成 | 60% |
 
-F1 启动前综合进度约 82%。F1 已于 2026-08-09 通过完整统一门禁，当前综合进度约
-86%。后续 F2-F5 只按固定退出项推进，不能通过增加零碎测试或文档条目虚增。
+F1 启动前综合进度约 82%。F1、F2 已于 2026-08-09 分别通过完整统一门禁；
+当前综合进度约 91%。后续只按 F3-F5 固定退出项推进，不能通过增加零碎测试或文档
+条目虚增。
 
 | 批次 | 状态 | 进度口径 |
 |------|------|----------|
 | F1 邮箱与身份状态完整性 | 已完成并通过统一门禁 | 82% -> 86% |
-| F2 Token family、浏览器 transport 与 CSRF | 下一批 | 86% -> 91% |
-| F3 OAuth2、Web3 与 canonical API 契约 | 待执行 | 91% -> 95% |
+| F2 Token family、浏览器 transport 与 CSRF | 已完成并通过统一门禁 | 86% -> 91% |
+| F3 OAuth2、Web3 与 canonical API 契约 | 下一批 | 91% -> 95% |
 | F4 依赖、生产配置、密钥和运维门禁 | 待执行 | 95% -> 98% |
 | F5 最终证据、阶段末三轮检查和退出 | 待执行 | 98% -> 100% |
 
@@ -112,7 +109,7 @@ F1 启动前综合进度约 82%。F1 已于 2026-08-09 通过完整统一门禁�
 - 可让统一门禁在关键测试未执行、失败或证据丢失时错误返回成功。
 - 当前批实现直接引入的行为回归、迁移错误或测试盲区。
 
-发现上述问题时，修复后重跑当前批受影响门禁。F1-F4 不启动三轮检查计数器；只有
+发现上述问题时，修复后重跑当前批受影响门禁。F1-F5 不启动三轮检查计数器；只有
 F1-F5 全部完成后的阶段末检查发生实质修改时，才将该统一计数器归零。
 
 ### 4.2 必须进入加固后 backlog 的事项
@@ -276,6 +273,16 @@ F1-F5 全部完成后的阶段末检查发生实质修改时，才将该统一�
 - Playwright 覆盖同页/跨标签并发、迟到 refresh、prod 禁止长期凭据存储和诊断路由。
 - Python 覆盖新 claims、旧 token 兼容边界和实时撤销限制。
 
+实施结果（2026-08-09）：
+
+- Flyway V7、token family/security version、session claims、rotation/replay/logout、
+  Cookie/CSRF、strict introspection、限流和生产诊断路由隔离已完成。
+- 根 Maven 219/219、邮件 Maven 150/150、shared-schema 4/4、HTTP/Flyway 16/16、
+  Mock Playwright 28/28、生产 Playwright 2/2、真实浏览器 1/1、Python 12/12 +
+  20/20 已通过。
+- 完整 `scripts/verify.sh` 12/12 通过。按阶段规则不执行 F2 单轮三次无修改检查，
+  下一步进入 F3。
+
 ### F3：OAuth2、Web3 与 canonical API 契约（91% -> 95%）
 
 固定范围：
@@ -393,7 +400,7 @@ F1-F5 全部完成后的阶段末检查发生实质修改时，才将该统一�
 - trusted proxy/直连、出站黑洞、header/body 上限、诊断路由和 secret scan。
 - disposable PostgreSQL 完整迁移、恢复与回滚演练。
 
-### F5：最终证据、三轮检查和退出（98% -> 100%）
+### F5：最终证据与统一阶段门禁（98% -> 99%）
 
 固定范围：
 
@@ -402,12 +409,18 @@ F1-F5 全部完成后的阶段末检查发生实质修改时，才将该统一�
    供应链阶段真实执行、证据可读取且没有静默 skip。
 3. 对根应用、邮件参考服务、Shell/Flyway、前端/Playwright、Python、文档链接和
    patch hygiene 执行完整硬门槛。
-4. 在硬门槛通过后执行连续三轮固定范围、无修改检查。任一轮实质修改后计数归零，
-   重跑受影响门槛，再从第 1 轮开始。
-5. 更新 `README.md`、`AGENTS.md` 和 live guides，将本计划标记 Completed，将旧执行
-   计划标记 Historical。
-6. 提交工作区全部非忽略、非敏感、非生成修改并推送。
-7. 宣布“加固阶段结束”，后续需求使用普通 feature/fix/maintenance 计划；不得自动
+4. 更新 `README.md`、`AGENTS.md` 和 live guides，记录 F1-F5 实施完成及阶段级
+   三轮检查的固定范围。
+5. 提交工作区全部非忽略、非敏感、非生成修改并推送。
+6. F5 验收完成后不在本批执行三轮检查；进入下面独立的阶段退出检查。
+
+### F 阶段退出检查（99% -> 100%）
+
+1. 仅在 F1-F5 全部完成并分别通过验收后开始。
+2. 对 F1-F5 的整体实现、测试、配置、迁移和文档执行连续三轮固定范围、无修改检查。
+   任一轮实质修改后计数归零，重跑受影响门槛，再从第 1 轮开始。
+3. 检查通过后将本计划标记 Completed，将旧执行计划标记 Historical，并提交推送。
+4. 宣布“加固阶段结束”，后续需求使用普通 feature/fix/maintenance 计划；不得自动
    创建新的 hardening batch。
 
 最终声明必须写成：
@@ -444,16 +457,16 @@ PYTHON_BIN=python3 scripts/verify.sh
    继续只允许已授权的只读检查，不属于自动化发布或回滚测试目标。
 6. root 或邮件组件新增 migration 时，同批更新双方 shared-schema peer-history inventory、
    Java/Shell runtime guard、Flyway baseline guard、HTTP migration 断言和受影响的
-   backup/restore inventory；任何一处仍只接受旧版本链都必须使门禁失败，
+   backup/restore inventory；任何一处仍只接受旧 V1-V7/V1-V5 链都必须使门禁失败，
    不能通过放宽为“存在 history 即接受”来绕过精确版本与 relation 校验。
 
-F1-F4 每批通过固定范围验收后直接进入下一批，不分别执行三轮无修改检查。F5 完成
-全部剩余实现并通过统一阶段硬门槛后，整体实现检查必须遵守：
+F1-F5 每批通过固定范围验收后进入下一冻结步骤，不分别执行三轮无修改检查。五批
+全部完成并通过统一阶段硬门槛后，独立的整体实现检查必须遵守：
 
 ```text
 counter = 0
 while counter < 3:
-    检查本批实现、测试、配置、迁移和文档
+    检查 F1-F5 整体实现、测试、配置、迁移和文档
     if 发现实质问题:
         修复
         重跑受影响门槛

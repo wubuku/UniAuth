@@ -19,9 +19,9 @@ class FlywayLoginMethodPreflightIntegrationTest extends PostgreSqlIntegrationTes
         withVersionOneDatabase((databaseName, jdbcUrl) -> {
             Flyway latest = latestFlyway(jdbcUrl);
 
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(5);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(6);
             assertThat(latest.info().current()).isNotNull();
-            assertThat(latest.info().current().getVersion().toString()).isEqualTo("6");
+            assertThat(latest.info().current().getVersion().toString()).isEqualTo("7");
         });
     }
 

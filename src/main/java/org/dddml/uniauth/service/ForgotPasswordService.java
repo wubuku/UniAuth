@@ -23,6 +23,7 @@ public class ForgotPasswordService {
     private final CanonicalEmailService canonicalEmailService;
     private final EmailVerificationCodeProtector codeProtector;
     private final SecurityEventService securityEventService;
+    private final TokenSessionTransactionService tokenSessionTransactionService;
 
     public PasswordResetDispatch requestPasswordReset(String submittedEmail) {
         String email = canonicalEmailService.canonicalize(submittedEmail);
@@ -87,6 +88,10 @@ public class ForgotPasswordService {
         }
         method.setLocalPasswordHash(passwordEncoder.encode(newPassword));
         loginMethodRepository.save(method);
+        tokenSessionTransactionService.incrementSecurityVersionAndRevoke(
+                method.getUser().getId(),
+                "PASSWORD_RESET"
+        );
         securityEventService.append(
                 "PASSWORD_RESET_COMPLETED",
                 method.getUser().getId(),

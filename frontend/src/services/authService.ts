@@ -3,12 +3,19 @@ import { TokenRefreshResult } from '../types';
 import { User } from '../types';
 
 // API基础URL - 使用相对路径，Vite代理会处理开发环境
-const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 const AUTH_STORAGE_KEYS = ['auth_user', 'accessToken', 'refreshToken'] as const;
+const AUTH_SESSION_MARKER = 'auth_session_marker';
 const REFRESH_LOCK_NAME = 'uniauth-token-refresh';
+const AUTH_DIAGNOSTICS_ENABLED = Boolean(
+  import.meta.env.DEV
+  && import.meta.env.VITE_AUTH_DIAGNOSTICS === 'true'
+);
 let refreshTokenRequest: Promise<TokenRefreshResult> | null = null;
 let logoutRequest: Promise<void> | null = null;
 let logoutInProgress = false;
+let csrfToken: string | null = null;
+let csrfRequest: Promise<string> | null = null;
 
 localStorage.removeItem('refreshToken');
 
@@ -19,6 +26,48 @@ export class AuthService {
 
   static clearLocalAuthentication(): void {
     AUTH_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+    localStorage.removeItem(AUTH_SESSION_MARKER);
+    csrfToken = null;
+  }
+
+  static diagnosticsEnabled(): boolean {
+    return AUTH_DIAGNOSTICS_ENABLED;
+  }
+
+  private static diagnosticAccessToken(): string | null {
+    return AUTH_DIAGNOSTICS_ENABLED
+      ? localStorage.getItem('accessToken')
+      : null;
+  }
+
+  static markAuthenticatedSession(): void {
+    localStorage.setItem(
+      AUTH_SESSION_MARKER,
+      globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+    );
+  }
+
+  static async csrfHeader(): Promise<Record<string, string>> {
+    if (!csrfToken) {
+      if (!csrfRequest) {
+        csrfRequest = axios.get(`${API_BASE_URL}/api/auth/csrf`, {
+          withCredentials: true,
+        }).then((response) => {
+          const token = response.data?.token;
+          const headerName = response.data?.headerName;
+          if (typeof token !== 'string' || !token
+              || headerName !== 'X-CSRF-Token') {
+            throw new Error('CSRF bootstrap failed');
+          }
+          csrfToken = token;
+          return token;
+        }).finally(() => {
+          csrfRequest = null;
+        });
+      }
+      await csrfRequest;
+    }
+    return { 'X-CSRF-Token': csrfToken as string };
   }
 
   /**
@@ -71,8 +120,7 @@ export class AuthService {
    */
   static async getCurrentUser(): Promise<User> {
     try {
-      // 从localStorage获取accessToken
-      const accessToken = localStorage.getItem('accessToken');
+      const accessToken = this.diagnosticAccessToken();
       
       const response = await axios.get(`${API_BASE_URL}/api/user`, {
         withCredentials: true,
@@ -96,14 +144,14 @@ export class AuthService {
    * 刷新JWT Token
    */
   static refreshToken(
-    observedAccessToken = localStorage.getItem('accessToken')
+    observedMarker = localStorage.getItem(AUTH_SESSION_MARKER)
   ): Promise<TokenRefreshResult> {
     if (logoutInProgress) {
       return Promise.reject(new Error('Logout is in progress'));
     }
 
     if (!refreshTokenRequest) {
-      refreshTokenRequest = this.coordinateTokenRefresh(observedAccessToken)
+      refreshTokenRequest = this.coordinateTokenRefresh(observedMarker)
         .finally(() => {
           refreshTokenRequest = null;
         });
@@ -112,7 +160,7 @@ export class AuthService {
   }
 
   private static async coordinateTokenRefresh(
-    observedAccessToken: string | null
+    observedMarker: string | null
   ): Promise<TokenRefreshResult> {
     const lockManager = (
       navigator as Navigator & {
@@ -130,26 +178,29 @@ export class AuthService {
           throw new Error('Logout is in progress');
         }
 
-        const currentAccessToken = localStorage.getItem('accessToken');
-        if (currentAccessToken !== observedAccessToken) {
-          if (!currentAccessToken) {
+        const currentMarker = localStorage.getItem(AUTH_SESSION_MARKER);
+        if (currentMarker !== observedMarker) {
+          if (!currentMarker) {
             throw new Error('Authentication state changed before token refresh');
           }
           return {
             message: 'Token refresh completed in another browser context',
-            accessToken: currentAccessToken,
-            refreshToken: '',
+            accessToken: this.diagnosticAccessToken() ?? undefined,
             accessTokenExpiresIn: 0,
             refreshTokenExpiresIn: 0,
             tokenType: 'Bearer',
           };
         }
-        return this.requestTokenRefresh();
+        const refreshed = await this.requestTokenRefresh();
+        this.markAuthenticatedSession();
+        return refreshed;
       })
-      : await this.requestTokenRefresh();
+      : await this.requestTokenRefresh().then((refreshed) => {
+        this.markAuthenticatedSession();
+        return refreshed;
+      });
 
-    if (!result.accessToken
-        || localStorage.getItem('accessToken') !== result.accessToken) {
+    if (!localStorage.getItem(AUTH_SESSION_MARKER)) {
       throw new Error('Authentication state changed during token refresh');
     }
     return result;
@@ -232,7 +283,7 @@ export class AuthService {
    */
   static async getLoginMethods(): Promise<any> {
     try {
-      const accessToken = localStorage.getItem('accessToken');
+      const accessToken = this.diagnosticAccessToken();
       const response = await axios.get(`${API_BASE_URL}/api/user/login-methods`, {
         withCredentials: true,
         headers: {
@@ -253,7 +304,7 @@ export class AuthService {
    */
   static async removeLoginMethod(methodId: string): Promise<any> {
     try {
-      const accessToken = localStorage.getItem('accessToken');
+      const accessToken = this.diagnosticAccessToken();
       const response = await axios.delete(`${API_BASE_URL}/api/user/login-methods/${methodId}`, {
         withCredentials: true,
         headers: {
@@ -272,7 +323,7 @@ export class AuthService {
    */
   static async setPrimaryLoginMethod(methodId: string): Promise<any> {
     try {
-      const accessToken = localStorage.getItem('accessToken');
+      const accessToken = this.diagnosticAccessToken();
       const response = await axios.put(`${API_BASE_URL}/api/user/login-methods/${methodId}/primary`, {}, {
         withCredentials: true,
         headers: {
@@ -291,7 +342,7 @@ export class AuthService {
    */
   static async addLocalLoginMethod(username: string, password: string, passwordConfirm: string): Promise<any> {
     try {
-      const accessToken = localStorage.getItem('accessToken');
+      const accessToken = this.diagnosticAccessToken();
       const response = await axios.post(`${API_BASE_URL}/api/user/login-methods/add-local-login`, {
         username,
         password,
@@ -370,7 +421,7 @@ export class AuthService {
     nonce: string;
   }): Promise<any> {
     try {
-      const accessToken = localStorage.getItem('accessToken');
+      const accessToken = this.diagnosticAccessToken();
       const response = await axios.post(`${API_BASE_URL}/api/auth/web3/bind`, data, {
         withCredentials: true,
         headers: {
@@ -444,7 +495,6 @@ export class AuthService {
       displayName?: string;
     };
     accessToken?: string;
-    refreshToken?: string;
   }> {
     try {
       const response = await axios.post(`${API_BASE_URL}/api/auth/verify-email`, data);
@@ -494,32 +544,33 @@ export class AuthService {
 // 配置axios默认设置
 axios.defaults.withCredentials = true;
 
-// 请求拦截器 - 添加CSRF token
-axios.interceptors.request.use((config) => {
-  // 从cookie中获取CSRF token
-  const csrfToken = document.cookie
-    .split('; ')
-    .find(row => row.startsWith('XSRF-TOKEN='))
-    ?.split('=')[1];
-
-  if (csrfToken) {
-    config.headers['X-XSRF-TOKEN'] = csrfToken;
+axios.interceptors.request.use(async (config) => {
+  const method = (config.method ?? 'get').toUpperCase();
+  if (!['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(method)
+      && !config.url?.endsWith('/api/auth/csrf')) {
+    const header = await AuthService.csrfHeader();
+    config.headers['X-CSRF-Token'] = header['X-CSRF-Token'];
   }
-
   return config;
 });
 
 // 响应拦截器 - 处理认证错误和SSO登录回调
 axios.interceptors.response.use(
   (response) => {
-    // 检查是否是SSO登录成功的响应或token刷新成功的响应
-    if (response.data && response.data.accessToken) {
-      console.log('Token获取成功，存储Token...');
-      // Access token remains available for the heterogeneous resource-server demo.
+    if (response.data?.authenticated || response.data?.accessToken) {
       if (response.data.accessToken) {
-        localStorage.setItem('accessToken', response.data.accessToken);
+        if (AUTH_DIAGNOSTICS_ENABLED) {
+          localStorage.setItem('accessToken', response.data.accessToken);
+        } else {
+          localStorage.removeItem('accessToken');
+        }
+      } else if (!AUTH_DIAGNOSTICS_ENABLED) {
+        localStorage.removeItem('accessToken');
       }
       localStorage.removeItem('refreshToken');
+      if (response.data.accessToken) {
+        AuthService.markAuthenticatedSession();
+      }
       // 存储用户信息
       if (response.data.user) {
         localStorage.setItem('auth_user', JSON.stringify(response.data.user));
@@ -555,15 +606,30 @@ axios.interceptors.response.use(
         const observedAccessToken = typeof authorization === 'string'
           && authorization.startsWith('Bearer ')
           ? authorization.substring(7)
-          : localStorage.getItem('accessToken');
-        const refreshResponse = await AuthService.refreshToken(observedAccessToken);
+          : null;
+        const refreshResponse = await AuthService.refreshToken();
         
-        if (refreshResponse.accessToken) {
+        if (refreshResponse.accessToken || !observedAccessToken) {
           console.log('Token刷新成功，重新发起请求...');
 
           // 重新发起失败的请求
           const originalRequest = error.config;
-          originalRequest.headers['Authorization'] = `Bearer ${refreshResponse.accessToken}`;
+          if (refreshResponse.accessToken) {
+            const authorization = `Bearer ${refreshResponse.accessToken}`;
+            if (typeof originalRequest.headers?.set === 'function') {
+              originalRequest.headers.set('Authorization', authorization);
+            } else {
+              delete originalRequest.headers.authorization;
+              originalRequest.headers.Authorization = authorization;
+            }
+          } else {
+            if (typeof originalRequest.headers?.delete === 'function') {
+              originalRequest.headers.delete('Authorization');
+            } else {
+              delete originalRequest.headers.Authorization;
+              delete originalRequest.headers.authorization;
+            }
+          }
           return axios(originalRequest);
         }
       } catch (refreshError) {

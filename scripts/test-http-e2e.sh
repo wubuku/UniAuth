@@ -31,6 +31,11 @@ EMAIL_SERVICE_API_KEY="email-reference-e2e-${RUN_ID}"
 EMAIL_SERVICE_PORT=""
 EMAIL_STUB_PORT=""
 COOKIE_JAR="$TEMP_DIR/cookies.txt"
+INTROSPECTION_CLIENT_ID="resource-server-e2e"
+INTROSPECTION_CLIENT_SECRET="introspection-e2e-${RUN_ID}-change-me-now"
+CSRF_HEADER_NAME=""
+CSRF_TOKEN=""
+LOGIN_RESPONSE=""
 SERVER_PORT="${UNIAUTH_E2E_SERVER_PORT:-}"
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}localhost,127.0.0.1,::1"
 export no_proxy="${no_proxy:+${no_proxy},}localhost,127.0.0.1,::1"
@@ -329,6 +334,94 @@ assert_auth_cookie_headers() {
     done
 }
 
+cookie_jar_value() {
+    local cookie_name="$1"
+    awk -F '\t' -v cookie_name="$cookie_name" '
+        ($0 !~ /^#/ || $0 ~ /^#HttpOnly_/) && $6 == cookie_name {
+            value = $7
+        }
+        END {
+            if (value != "") {
+                print value
+            }
+        }
+    ' "$COOKIE_JAR"
+}
+
+bootstrap_csrf() {
+    local response
+
+    response="$(
+        curl -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+            "${BASE_URL}/api/auth/csrf"
+    )"
+    CSRF_HEADER_NAME="$(jq -er '.headerName' <<<"$response")"
+    CSRF_TOKEN="$(jq -er '.token' <<<"$response")"
+    [ "$CSRF_HEADER_NAME" = "X-CSRF-Token" ] \
+        || fail "CSRF bootstrap returned an unexpected header name"
+    [ -n "$CSRF_TOKEN" ] || fail "CSRF bootstrap returned an empty token"
+    [ -n "$(cookie_jar_value JSESSIONID)" ] \
+        || fail "CSRF bootstrap did not establish a server session"
+}
+
+cookie_header_with_refresh() {
+    local refresh_token_value="$1"
+    local session_id
+
+    session_id="$(cookie_jar_value JSESSIONID)"
+    [ -n "$session_id" ] || fail "CSRF session cookie is unavailable"
+    printf 'JSESSIONID=%s; refreshToken=%s' \
+        "$session_id" \
+        "$refresh_token_value"
+}
+
+introspect_token() {
+    local token_value="$1"
+    curl -sS -X POST "${BASE_URL}/oauth2/introspect" \
+        -u "${INTROSPECTION_CLIENT_ID}:${INTROSPECTION_CLIENT_SECRET}" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        --data-urlencode "token=$token_value"
+}
+
+login_local_session() {
+    local headers_file
+    local -a curl_args
+
+    headers_file="$(mktemp "$TEMP_DIR/login-headers.XXXXXX")"
+    curl_args=(
+        -sS
+        -D "$headers_file"
+        -b "$COOKIE_JAR"
+        -c "$COOKIE_JAR"
+        -X POST
+        "${BASE_URL}/api/auth/login"
+        -H "Content-Type: application/json"
+    )
+    if [ -n "$CSRF_HEADER_NAME" ] && [ -n "$CSRF_TOKEN" ]; then
+        curl_args+=(-H "${CSRF_HEADER_NAME}: ${CSRF_TOKEN}")
+    fi
+    LOGIN_RESPONSE="$(
+        curl "${curl_args[@]}" \
+            --data "$(
+                jq -cn \
+                    --arg username "$local_username" \
+                    --arg password "$local_password" \
+                    '{username: $username, password: $password}'
+            )"
+    )"
+    [ "$(jq -er '.authenticated' <<<"$LOGIN_RESPONSE")" = "true" ] \
+        || fail "local login was not authenticated"
+    if jq -e 'has("refreshToken")' <<<"$LOGIN_RESPONSE" >/dev/null; then
+        fail "local login exposed the refresh token in JSON"
+    fi
+    access_token="$(jq -er '.accessToken' <<<"$LOGIN_RESPONSE")"
+    refresh_token="$(cookie_jar_value refreshToken)"
+    [ -n "$refresh_token" ] \
+        || fail "local login did not store a refresh-token cookie"
+    assert_auth_cookie_headers "$headers_file" 3600 604800
+    bootstrap_csrf
+}
+
 start_email_service() {
     echo "HTTP E2E: packaging the reference email service"
     (
@@ -465,6 +558,8 @@ start_application() {
         export APP_EMAIL_DELIVERY_DEADLINE_SECONDS=120
         export APP_FRONTEND_URL="$BASE_URL"
         export APP_WEB3_DOMAIN="127.0.0.1:${SERVER_PORT}"
+        export INTROSPECTION_CLIENT_ID
+        export INTROSPECTION_CLIENT_SECRET
         exec "$PROJECT_DIR/start.sh"
     ) >>"$APP_LOG" 2>&1 &
     APP_PID=$!
@@ -648,6 +743,11 @@ echo "1/16 Verify Flyway-owned PostgreSQL startup"
 ")" = "1" ] || fail "Flyway V6 was not recorded as a successful SQL migration"
 [ "$(db_value "
     SELECT count(*)
+    FROM uniauth_flyway_schema_history
+    WHERE version = '7' AND type = 'SQL' AND success = true;
+")" = "1" ] || fail "Flyway V7 was not recorded as a successful SQL migration"
+[ "$(db_value "
+    SELECT count(*)
     FROM information_schema.tables
     WHERE table_schema = 'public'
       AND table_name = ANY (ARRAY[
@@ -661,9 +761,10 @@ echo "1/16 Verify Flyway-owned PostgreSQL startup"
         'spring_session_attributes',
         'email_delivery_outbox',
         'auth_rate_limits',
-        'security_events'
+        'security_events',
+        'token_families'
       ]);
-")" = "11" ] || fail "Flyway did not create all eleven managed tables"
+")" = "12" ] || fail "Flyway did not create all twelve managed tables"
 [ "$(db_value "SELECT to_regclass('public.flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "the default Flyway history table was unexpectedly created"
 [ "$(db_value "
@@ -738,6 +839,39 @@ echo "1/16 Verify Flyway-owned PostgreSQL startup"
       AND column_name IN ('verification_code', 'metadata', 'is_used');
 ")" = "0" ] \
     || fail "Flyway V6 retained plaintext challenge credential columns"
+[ "$(db_value "
+    SELECT data_type || ':' || is_nullable || ':' || column_default
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'users'
+      AND column_name = 'token_security_version';
+")" = "bigint:NO:0" ] \
+    || fail "Flyway V7 did not create the user token security version"
+[ "$(db_value "
+    SELECT count(*)
+    FROM pg_constraint
+    WHERE conrelid = 'public.token_families'::regclass
+      AND conname IN (
+        'token_families_pkey',
+        'fk_token_families_user',
+        'ck_token_families_id_uuid',
+        'ck_token_families_security_version_nonnegative',
+        'ck_token_families_generation_nonnegative',
+        'ck_token_families_expiry',
+        'ck_token_families_revoke_shape'
+      );
+")" = "7" ] \
+    || fail "Flyway V7 did not create the token-family constraints"
+[ "$(db_value "
+    SELECT count(*)
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND indexname IN (
+        'idx_token_families_user_active',
+        'idx_token_families_expires_at'
+      );
+")" = "2" ] \
+    || fail "Flyway V7 did not create the token-family indexes"
 [ "$(db_value "
     SELECT count(*)
     FROM pg_indexes
@@ -930,23 +1064,17 @@ wrong_login_status="$(
 )"
 [ "$wrong_login_status" = "401" ] || fail "wrong password did not return 401"
 
-login_headers="$TEMP_DIR/login-headers.txt"
-login_response="$(
-    curl -sS -D "$login_headers" -c "$COOKIE_JAR" \
-        -X POST "${BASE_URL}/api/auth/login" \
-        -H "Content-Type: application/json" \
-        --data "$(
-            jq -cn \
-                --arg username "$local_username" \
-                --arg password "$local_password" \
-                '{username: $username, password: $password}'
-        )"
-)"
-[ "$(jq -er '.authenticated' <<<"$login_response")" = "true" ] \
-    || fail "local login was not authenticated"
-access_token="$(jq -er '.accessToken' <<<"$login_response")"
-refresh_token="$(jq -er '.refreshToken' <<<"$login_response")"
-assert_auth_cookie_headers "$login_headers" 3600 604800
+login_local_session
+login_response="$LOGIN_RESPONSE"
+family_id="$(db_value "
+    SELECT id
+    FROM token_families
+    WHERE user_id = '$local_user_id'
+      AND revoked_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT 1;
+")"
+[ -n "$family_id" ] || fail "local login did not create a token family"
 
 echo "5/16 Verify protected APIs, persistence, and JWT contracts"
 current_user="$(
@@ -975,11 +1103,44 @@ login_methods="$(
 [ "$(jq -er '.loginMethods[0].authProvider' <<<"$login_methods")" = "local" ] \
     || fail "local login method contract changed unexpectedly"
 
-introspection="$(
-    curl -sS -X POST "${BASE_URL}/oauth2/introspect" \
+anonymous_introspection_status="$(
+    curl -sS -o "$TEMP_DIR/introspection-anonymous.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/oauth2/introspect" \
         -H "Content-Type: application/x-www-form-urlencoded" \
         --data-urlencode "token=$access_token"
 )"
+[ "$anonymous_introspection_status" = "401" ] \
+    || fail "anonymous token introspection was not rejected"
+query_introspection_status="$(
+    curl -sS -o "$TEMP_DIR/introspection-query.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/oauth2/introspect?token=${access_token}" \
+        -u "${INTROSPECTION_CLIENT_ID}:${INTROSPECTION_CLIENT_SECRET}" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        --data-urlencode "token=$access_token"
+)"
+[ "$query_introspection_status" = "400" ] \
+    || fail "query token introspection was not rejected"
+duplicate_introspection_status="$(
+    curl -sS -o "$TEMP_DIR/introspection-duplicate.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/oauth2/introspect" \
+        -u "${INTROSPECTION_CLIENT_ID}:${INTROSPECTION_CLIENT_SECRET}" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        --data-urlencode "token=$access_token" \
+        --data-urlencode "token=$access_token"
+)"
+[ "$duplicate_introspection_status" = "400" ] \
+    || fail "duplicate introspection token input was not rejected"
+cookie_introspection_status="$(
+    curl -sS -o "$TEMP_DIR/introspection-cookie.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/oauth2/introspect" \
+        -u "${INTROSPECTION_CLIENT_ID}:${INTROSPECTION_CLIENT_SECRET}" \
+        -b "$COOKIE_JAR" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        --data-urlencode "token=$access_token"
+)"
+[ "$cookie_introspection_status" = "400" ] \
+    || fail "browser-cookie introspection was not rejected"
+introspection="$(introspect_token "$access_token")"
 [ "$(jq -er '.active' <<<"$introspection")" = "true" ] \
     || fail "access token introspection was not active"
 [ "$(jq -er '.sub' <<<"$introspection")" = "$local_user_id" ] \
@@ -1003,10 +1164,10 @@ wait_for_application
 [ "$(db_value "
     SELECT count(*)
     FROM uniauth_flyway_schema_history
-    WHERE version IN ('1', '2', '3', '4', '5', '6')
+    WHERE version IN ('1', '2', '3', '4', '5', '6', '7')
       AND type = 'SQL'
       AND success = true;
-")" = "6" ] || fail "application restart changed the Flyway migration history"
+")" = "7" ] || fail "application restart changed the Flyway migration history"
 [ "$(db_value "SELECT count(*) FROM users WHERE id = '$local_user_id';")" = "1" ] \
     || fail "application restart lost the registered user"
 restarted_user="$(
@@ -1021,30 +1182,52 @@ echo "7/16 Refresh tokens and reject token type confusion"
 refresh_headers="$TEMP_DIR/refresh-headers.txt"
 refresh_response="$(
     curl -sS -D "$refresh_headers" -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
-        -X POST "${BASE_URL}/api/auth/refresh"
+        -X POST "${BASE_URL}/api/auth/refresh" \
+        -H "${CSRF_HEADER_NAME}: ${CSRF_TOKEN}"
 )"
 new_access_token="$(jq -er '.accessToken' <<<"$refresh_response")"
-new_refresh_token="$(jq -er '.refreshToken' <<<"$refresh_response")"
+if jq -e 'has("refreshToken")' <<<"$refresh_response" >/dev/null; then
+    fail "refresh exposed the refresh token in JSON"
+fi
+new_refresh_token="$(cookie_jar_value refreshToken)"
 [ "$new_access_token" != "$access_token" ] \
     || fail "refresh did not rotate the access token"
 [ "$new_refresh_token" != "$refresh_token" ] \
     || fail "refresh did not rotate the refresh token"
 assert_auth_cookie_headers "$refresh_headers" 3600 604800
+[ "$(db_value "
+    SELECT current_generation
+    FROM token_families
+    WHERE id = '$family_id';
+")" = "1" ] || fail "refresh did not advance the token-family generation"
 
 refresh_replay_status="$(
     curl -sS -o "$TEMP_DIR/refresh-replay.json" -w '%{http_code}' \
         -X POST "${BASE_URL}/api/auth/refresh" \
-        -H "Cookie: refreshToken=$refresh_token"
+        -H "${CSRF_HEADER_NAME}: ${CSRF_TOKEN}" \
+        -H "Cookie: $(cookie_header_with_refresh "$refresh_token")"
 )"
 [ "$refresh_replay_status" = "401" ] \
     || fail "a consumed refresh token was accepted for replay"
 [ "$(db_value "
-    SELECT count(*)
-    FROM token_blacklist
+    SELECT revoke_reason
+    FROM token_families
+    WHERE id = '$family_id';
+")" = "REFRESH_REPLAY" ] \
+    || fail "refresh replay did not revoke the whole token family"
+
+login_local_session
+new_access_token="$access_token"
+new_refresh_token="$refresh_token"
+family_id="$(db_value "
+    SELECT id
+    FROM token_families
     WHERE user_id = '$local_user_id'
-      AND token_type = 'REFRESH'
-      AND reason = 'REFRESH_ROTATED';
-")" = "1" ] || fail "refresh rotation was not persisted in the token blacklist"
+      AND revoked_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT 1;
+")"
+[ -n "$family_id" ] || fail "re-login did not create a replacement token family"
 
 refresh_as_bearer_status="$(
     curl -sS -o /dev/null -w '%{http_code}' \
@@ -1057,7 +1240,8 @@ refresh_as_bearer_status="$(
 access_as_refresh_status="$(
     curl -sS -o /dev/null -w '%{http_code}' \
         -X POST "${BASE_URL}/api/auth/refresh" \
-        -H "Cookie: refreshToken=$access_token"
+        -H "${CSRF_HEADER_NAME}: ${CSRF_TOKEN}" \
+        -H "Cookie: $(cookie_header_with_refresh "$access_token")"
 )"
 [ "$access_as_refresh_status" = "401" ] \
     || fail "access token was accepted as a refresh token"
@@ -1166,14 +1350,29 @@ repeat_web3_login="$(post_json /api/auth/web3/verify "$repeat_web3_challenge")"
     || fail "repeat Web3 login was incorrectly marked as new"
 
 echo "9/16 Verify header/cookie identity precedence"
-conflicting_identity="$(
-    curl -sS \
+conflicting_identity_status="$(
+    curl -sS -o "$TEMP_DIR/conflicting-identity.json" -w '%{http_code}' \
         -H "Authorization: Bearer $web3_access_token" \
         -H "Cookie: accessToken=$access_token" \
         "${BASE_URL}/api/user"
 )"
-[ "$(jq -er '.userId' <<<"$conflicting_identity")" = "$web3_user_id" ] \
-    || fail "the access-token cookie overrode the Authorization header"
+[ "$conflicting_identity_status" = "401" ] \
+    || fail "conflicting header and Cookie identities were not rejected"
+duplicate_header_status="$(
+    curl -sS -o "$TEMP_DIR/duplicate-authorization.json" -w '%{http_code}' \
+        -H "Authorization: Bearer $access_token" \
+        -H "Authorization: Bearer $access_token" \
+        "${BASE_URL}/api/user"
+)"
+[ "$duplicate_header_status" = "401" ] \
+    || fail "duplicate Authorization headers were not rejected"
+duplicate_cookie_status="$(
+    curl -sS -o "$TEMP_DIR/duplicate-access-cookie.json" -w '%{http_code}' \
+        -H "Cookie: accessToken=$access_token; accessToken=$access_token" \
+        "${BASE_URL}/api/user"
+)"
+[ "$duplicate_cookie_status" = "401" ] \
+    || fail "duplicate access-token cookies were not rejected"
 manual_cookie_identity="$(
     curl -sS \
         -H "Cookie: accessToken=$access_token" \
@@ -1212,6 +1411,10 @@ binding_response="$(
 )"
 [ "$(jq -er '.errorCode' <<<"$binding_response")" = "SUCCESS" ] \
     || fail "authenticated local account could not bind a Web3 wallet"
+
+login_local_session
+new_access_token="$access_token"
+new_refresh_token="$refresh_token"
 
 second_binding_wallet="$(create_wallet)"
 second_binding_challenge="$(signed_challenge "$second_binding_wallet")"
@@ -1336,6 +1539,10 @@ case "$race_conflict_error" in
         ;;
 esac
 
+login_local_session
+new_access_token="$access_token"
+new_refresh_token="$refresh_token"
+
 [ "$(db_value "
     SELECT count(*)
     FROM user_login_methods
@@ -1366,6 +1573,10 @@ if [ "$(db_value "
     [ "$race_cleanup_status" = "200" ] \
         || fail "the surviving race fixture could not be removed"
 fi
+
+login_local_session
+new_access_token="$access_token"
+new_refresh_token="$refresh_token"
 
 set_primary_status="$(
     request_status \
@@ -1401,6 +1612,10 @@ delete_bound_status="$(
       AND id = '$local_method_id'
       AND is_primary = true;
 ")" = "1" ] || fail "deleting the primary Web3 method did not promote the local method"
+
+login_local_session
+new_access_token="$access_token"
+new_refresh_token="$refresh_token"
 
 delete_last_status="$(
     request_status \
@@ -1659,7 +1874,8 @@ logout_headers="$TEMP_DIR/logout-headers.txt"
 logout_response="$(
     curl -sS -D "$logout_headers" \
         -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
-        -X POST "${BASE_URL}/api/auth/logout"
+        -X POST "${BASE_URL}/api/auth/logout" \
+        -H "${CSRF_HEADER_NAME}: ${CSRF_TOKEN}"
 )"
 [ "$(jq -er '.message' <<<"$logout_response")" = "Logged out successfully" ] \
     || fail "logout did not return the success contract"
@@ -1676,32 +1892,29 @@ revoked_access_status="$(
 )"
 [ "$revoked_access_status" = "401" ] \
     || fail "logout did not revoke the current access token"
+bootstrap_csrf
 revoked_refresh_status="$(
     curl -sS -o /dev/null -w '%{http_code}' \
         -X POST "${BASE_URL}/api/auth/refresh" \
-        -H "Cookie: refreshToken=$new_refresh_token"
+        -H "${CSRF_HEADER_NAME}: ${CSRF_TOKEN}" \
+        -H "Cookie: $(cookie_header_with_refresh "$new_refresh_token")"
 )"
 [ "$revoked_refresh_status" = "401" ] \
     || fail "logout did not revoke the current refresh token"
-revoked_introspection="$(
-    curl -sS -X POST "${BASE_URL}/oauth2/introspect" \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        --data-urlencode "token=$new_access_token"
-)"
+revoked_introspection="$(introspect_token "$new_access_token")"
 [ "$(jq -er '.active' <<<"$revoked_introspection")" = "false" ] \
     || fail "introspection reported a logged-out access token as active"
 [ "$(db_value "
     SELECT count(*)
-    FROM token_blacklist
+    FROM token_families
     WHERE user_id = '$local_user_id'
-      AND reason = 'LOGOUT'
-      AND token_type IN ('ACCESS', 'REFRESH');
-")" = "2" ] || fail "logout did not persist both token revocations"
+      AND revoke_reason = 'LOGOUT';
+")" -ge "1" ] || fail "logout did not persist token-family revocation"
 
 echo "16/16 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
     || fail "the E2E harness connected to an unexpected database"
-[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "6" ] \
+[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "7" ] \
     || fail "Flyway history contained unexpected rows after two application starts"
 [ "$(db_value "SELECT count(*) FROM web3_nonces;")" = "0" ] \
     || fail "consumed Web3 nonces remained in the database"
@@ -1741,12 +1954,9 @@ echo "16/16 Verify final database invariants"
 ")" = "0" ] || fail "one or more users ended without exactly one primary login method"
 [ "$(db_value "
     SELECT count(*)
-    FROM token_blacklist
+    FROM token_families
     WHERE user_id = '$local_user_id'
-      AND (
-        (token_type = 'REFRESH' AND reason = 'REFRESH_ROTATED')
-        OR reason = 'LOGOUT'
-      );
-")" = "3" ] || fail "final token revocation history was incomplete"
+      AND revoke_reason IN ('REFRESH_REPLAY', 'LOGOUT');
+")" -ge "2" ] || fail "final token-family revocation history was incomplete"
 
 echo "PASS: HTTP/PostgreSQL/Flyway/Web3/email end-to-end checks completed"

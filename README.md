@@ -9,8 +9,9 @@
 > [配置基线](docs/CONFIGURATION.md)、[开发指南](docs/DEVELOPMENT.md) 和
 > [验证指南](docs/VERIFICATION.md)。真实邮箱注册、登录、资源回跳和跨域 Bearer
 > 验证见[邮箱登录浏览器 E2E](docs/EMAIL_LOGIN_BROWSER_E2E.md)。
-> [加固阶段最终收尾计划](docs/drafts/FINAL_HARDENING_EXIT_PLAN.md)中的 F1 邮箱与身份
-> 完整性批次已经完成；F2-F5 是显式延后的独立批次，不会由当前邮箱任务自动启动。
+> [加固阶段最终收尾计划](docs/drafts/FINAL_HARDENING_EXIT_PLAN.md)中的 F1、F2
+> 已经完成，F3 是下一冻结批次，F4-F5 范围已冻结。F1-F5 每批只做自动化验收，
+> 五批全部完成后再统一执行一次连续三轮无修改检查。
 > 下文保留了较多设计目标、部署示例和历史说明，包括已经退役的 SQLite 路径。
 > 当前操作只使用上述 live guides；不要执行下文的 SQLite、手工 schema init 或旧域名示例。
 
@@ -23,15 +24,15 @@
 | 资源服务器 | Flask，默认端口 `5002` |
 | 邮件发送 | 外部 HTTP 服务，默认端口 `8095`；`reference/email-service/` 提供独立参考实现 |
 | 数据库 | PostgreSQL 16-only |
-| Migration | Flyway V1 baseline + V2 + V3 + V4 + V5 + V6，history `uniauth_flyway_schema_history` |
+| Migration | Flyway V1 baseline + V2 + V3 + V4 + V5 + V6 + V7，history `uniauth_flyway_schema_history` |
 | 邮件数据库布局 | 默认独立数据库；显式 `shared-uniauth` 可与 UniAuth 共用 `public` schema，两侧 relation 名无冲突并使用独立 Flyway history |
-| Java 验证 | 212 tests，0 failures/errors/skips |
+| Java 验证 | 219 tests，0 failures/errors/skips |
 | 邮件参考服务 | 150 tests；另有 Shell runtime 44/44、HTTP 11/11、Flyway guard 15/15、backup/restore 10/10 |
 | Shared-schema E2E | 4/4；UniAuth/邮件服务两种启动顺序、独立 history 和 baseline V0 |
 | HTTP E2E | 16/16；含四条安全链 CORS 矩阵，正常邮箱流程使用真实参考服务，失败映射矩阵使用受控 stub |
 | Flyway baseline guard | 16/16 |
-| Playwright | 28 个 Mock 浏览器测试 + 1 个真实邮箱登录跨服务 E2E |
-| Python | 18 个资源服务器测试 + 12 个邮件 REST stub 契约测试 |
+| Playwright | 28 个 Mock 浏览器测试 + 2 个生产构建测试 + 1 个真实邮箱登录跨服务 E2E |
+| Python | 20 个资源服务器测试 + 12 个邮件 REST stub 契约测试 |
 | 前端 lint/type/build | 通过 |
 
 安全启动、测试和 baseline 操作见 [开发指南](docs/DEVELOPMENT.md) 与
@@ -96,9 +97,10 @@ challenge，错误尝试和并发消费均走 PostgreSQL 条件更新与共享�
 
 `scripts/test-email-login-browser-e2e.sh` 进一步启动真实 Vite、UniAuth、Python
 资源 API、disposable PostgreSQL 和无投递邮件 stub，由 Chrome 从 `/resource-test`
-完成邮箱注册、验证、回跳、跨 hostname Bearer 访问和邮箱密码再次登录。当前跨 origin
-资源请求依赖登录 JSON 返回并由前端暂存于 localStorage 的 access token，不依赖
-HttpOnly Cookie；该演示 transport 的生产安全边界见
+完成邮箱注册、验证、回跳、跨 hostname Bearer 访问和邮箱密码再次登录。脚本只在该
+测试进程中显式启用 diagnostics，使跨 origin 资源请求使用登录 JSON 中的 access token；
+普通生产构建不包含该路由或诊断 bundle，也不把 access token 持久化到 localStorage。
+该演示 transport 的生产安全边界见
 [专项 E2E 指南](docs/EMAIL_LOGIN_BROWSER_E2E.md#access-token-边界)。
 
 | 属性 | 说明 |
@@ -137,11 +139,12 @@ HttpOnly Cookie；该演示 transport 的生产安全边界见
 ### JWT 令牌管理
 
 自定义 `JwtTokenService` 使用 RSA-2048/RS256 签发 access token 和 refresh token，
-并通过 JWKS 暴露公钥。当前 access token 验证时间、issuer、audience、type、
-`kid`、`jti`、用户身份和 enabled 状态；refresh token 轮换以 PostgreSQL 唯一 `jti`
-写入实现单次消费，logout 会持久撤销当前可验证的 access/refresh token，Resource
-Server 与 introspection 共用 blacklist 结论。当前尚无 token family/security version，
-也仍在 JSON 中返回 refresh token。默认密钥文件位于 ignored 的
+并通过 JWKS 暴露公钥。当前 access/refresh token 严格验证时间、issuer、audience、
+type、`kid`、`jti`、`sid`、generation、security version、`auth_time`、用户身份和
+enabled 状态；refresh rotation 通过 PostgreSQL generation CAS 推进，replay、logout、
+密码重置和凭据变化可撤销整个 family。refresh token 只通过 HttpOnly Cookie 传递，
+不进入 JSON；access token 仅在显式 diagnostics 演示中暴露。Resource Server 与受
+客户端鉴权的严格 introspection 共用数据库 session 结论。默认密钥文件位于 ignored 的
 `.local/uniauth/rsa-keys.ser`，仍不是生产密钥库。
 
 ### 会话持久化
@@ -497,7 +500,7 @@ SPRING_PROFILES_ACTIVE=test \
 mvn spring-boot:run
 ```
 
-测试环境会执行 Flyway V1-V6；SQL init 和 Spring Session 自动建表均关闭，演示账户
+测试环境会执行 Flyway V1-V7；SQL init 和 Spring Session 自动建表均关闭，演示账户
 仍保持默认关闭。
 
 ---

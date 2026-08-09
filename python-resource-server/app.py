@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from datetime import datetime
 
 import jwt
@@ -129,6 +130,38 @@ def validate_token(token):
         jti = decoded.get("jti")
         if not isinstance(jti, str) or not jti.strip():
             logger.warning("Token identifier validation failed")
+            return False, "Invalid token"
+        user_id = decoded.get("userId")
+        username = decoded.get("username")
+        if (
+            not isinstance(user_id, str)
+            or not user_id
+            or decoded.get("sub") != user_id
+            or not isinstance(username, str)
+            or not username
+        ):
+            logger.warning("Token identity validation failed")
+            return False, "Invalid token"
+        sid = decoded.get("sid")
+        try:
+            if (
+                not isinstance(sid, str)
+                or str(uuid.UUID(sid)) != sid
+            ):
+                raise ValueError
+        except (ValueError, AttributeError):
+            logger.warning("Token family validation failed")
+            return False, "Invalid token"
+        generation = decoded.get("generation")
+        security_version = decoded.get("ver")
+        auth_time = decoded.get("auth_time")
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+            for value in (generation, security_version, auth_time)
+        ):
+            logger.warning("Token session claim validation failed")
             return False, "Invalid token"
         logger.info("Token validation succeeded")
         return True, decoded

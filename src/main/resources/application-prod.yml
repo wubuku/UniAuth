@@ -5,12 +5,18 @@ server:
   servlet:
     session:
       cookie:
+        name: __Host-JSESSIONID
         secure: true
 
 app:
   auth:
     cookie:
       secure: true
+      access-token-name: __Host-accessToken
+      refresh-token-name: __Host-refreshToken
+    transport:
+      expose-access-token: false
+      diagnostics-enabled: false
   frontend:
     url: ${APP_FRONTEND_URL}
   cors:

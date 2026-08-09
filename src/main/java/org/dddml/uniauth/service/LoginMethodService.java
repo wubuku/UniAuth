@@ -35,6 +35,7 @@ public class LoginMethodService {
     private final PasswordEncoder passwordEncoder;
     private final CanonicalEmailService canonicalEmailService;
     private final PasswordPolicyService passwordPolicyService;
+    private final TokenSessionTransactionService tokenSessionTransactionService;
 
     /**
      * 获取用户的所有登录方式
@@ -96,6 +97,10 @@ public class LoginMethodService {
         
         try {
             UserLoginMethod saved = loginMethodRepository.saveAndFlush(loginMethod);
+            tokenSessionTransactionService.incrementSecurityVersionAndRevoke(
+                    userId,
+                    "OAUTH_CREDENTIAL_ADDED"
+            );
             log.info("OAuth2 login method binding completed");
             return saved;
         } catch (DataIntegrityViolationException exception) {
@@ -195,6 +200,10 @@ public class LoginMethodService {
         // 4. 删除登录方式
         loginMethodRepository.deleteById(loginMethodId);
         loginMethodRepository.flush();
+        tokenSessionTransactionService.incrementSecurityVersionAndRevoke(
+                userId,
+                "LOGIN_METHOD_REMOVED"
+        );
         log.info("Login method removed successfully");
     }
 
@@ -286,6 +295,10 @@ public class LoginMethodService {
         
         try {
             UserLoginMethod saved = loginMethodRepository.saveAndFlush(loginMethod);
+            tokenSessionTransactionService.incrementSecurityVersionAndRevoke(
+                    userId,
+                    "LOCAL_CREDENTIAL_ADDED"
+            );
             log.info("Local login method added");
             return saved;
         } catch (DataIntegrityViolationException exception) {
@@ -323,6 +336,10 @@ public class LoginMethodService {
         
         loginMethod.setLocalPasswordHash(passwordEncoder.encode(newPassword));
         loginMethodRepository.save(loginMethod);
+        tokenSessionTransactionService.incrementSecurityVersionAndRevoke(
+                loginMethod.getUser().getId(),
+                "PASSWORD_CHANGED"
+        );
         
         log.info("Local password updated");
     }

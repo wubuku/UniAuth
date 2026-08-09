@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import jwt
+import uuid
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 import app as resource_server
@@ -50,6 +51,10 @@ class ResourceServerTest(unittest.TestCase):
             "authorities": ["ROLE_USER"],
             "type": "access",
             "jti": "integration-token-id",
+            "sid": str(uuid.uuid4()),
+            "generation": 0,
+            "ver": 0,
+            "auth_time": int(now.timestamp()),
             "iss": resource_server.JWT_ISSUER,
             "aud": resource_server.JWT_AUDIENCE,
             "iat": now,
@@ -225,6 +230,38 @@ class ResourceServerTest(unittest.TestCase):
         self.assertEqual("Invalid token", result)
 
     @patch.object(resource_server, "get_jwks")
+    def test_legacy_token_without_session_claims_is_rejected(self, get_jwks):
+        get_jwks.return_value = self.jwks
+
+        valid, result = resource_server.validate_token(
+            self.token(
+                sid=None,
+                generation=None,
+                ver=None,
+                auth_time=None,
+            )
+        )
+
+        self.assertFalse(valid)
+        self.assertEqual("Invalid token", result)
+
+    @patch.object(resource_server, "get_jwks")
+    def test_invalid_session_claims_are_rejected(self, get_jwks):
+        get_jwks.return_value = self.jwks
+
+        for overrides in (
+            {"sid": "not-a-uuid"},
+            {"generation": -1},
+            {"ver": -1},
+            {"auth_time": -1},
+        ):
+            valid, result = resource_server.validate_token(
+                self.token(**overrides)
+            )
+            self.assertFalse(valid)
+            self.assertEqual("Invalid token", result)
+
+    @patch.object(resource_server, "get_jwks")
     def test_expired_token_is_rejected(self, get_jwks):
         get_jwks.return_value = self.jwks
 
@@ -248,6 +285,10 @@ class ResourceServerTest(unittest.TestCase):
                 "username": "rotated-user",
                 "type": "access",
                 "jti": "rotated-token-id",
+                "sid": str(uuid.uuid4()),
+                "generation": 0,
+                "ver": 0,
+                "auth_time": int(now.timestamp()),
                 "iss": resource_server.JWT_ISSUER,
                 "aud": resource_server.JWT_AUDIENCE,
                 "iat": now,

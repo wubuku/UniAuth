@@ -37,6 +37,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.responseCookie;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -81,7 +82,7 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(jsonPath("$.walletAddress").value(walletAddress))
                 .andExpect(jsonPath("$.isNewUser").value(true))
                 .andExpect(jsonPath("$.accessToken").isNotEmpty())
-                .andExpect(jsonPath("$.refreshToken").isNotEmpty())
+                .andExpect(jsonPath("$.refreshToken").doesNotExist())
                 .andReturn();
 
         String userId = responseJson(firstLogin).path("userId").asText();
@@ -138,7 +139,7 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andReturn();
         JsonNode loginBody = responseJson(loginResult);
         String accessToken = loginBody.path("accessToken").asText();
-        String refreshToken = loginBody.path("refreshToken").asText();
+        String refreshToken = responseCookie(loginResult, "refreshToken");
 
         ECKeyPair firstKeyPair = Keys.createEcKeyPair();
         String firstWallet = "0x" + Keys.getAddress(firstKeyPair.getPublicKey());
@@ -168,11 +169,23 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                 UserLoginMethod.AuthProvider.WEB3
         )).get().extracting(UserLoginMethod::getProviderUserId).isEqualTo(firstWallet);
 
+        MvcResult renewedLogin = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", username,
+                                "password", password
+                        ))))
+                .andExpect(status().isOk())
+                .andReturn();
+        String renewedAccessToken = responseJson(renewedLogin)
+                .path("accessToken")
+                .asText();
+
         ECKeyPair secondKeyPair = Keys.createEcKeyPair();
         String secondWallet = "0x" + Keys.getAddress(secondKeyPair.getPublicKey());
         SignedChallenge secondChallenge = requestSignedChallenge(secondWallet, secondKeyPair);
         mockMvc.perform(post("/api/auth/web3/bind")
-                        .header("Authorization", "Bearer " + accessToken)
+                        .header("Authorization", "Bearer " + renewedAccessToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(secondChallenge.requestBody()))
                 .andExpect(status().isBadRequest())

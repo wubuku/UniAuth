@@ -80,6 +80,9 @@ export function useAuth() {
 
   // 解析JWT token，获取过期时间
   const getTokenExpiry = useCallback(() => {
+    if (!AuthService.diagnosticsEnabled()) {
+      return null;
+    }
     const token = localStorage.getItem('accessToken');
     if (!token) return null;
 
@@ -94,6 +97,9 @@ export function useAuth() {
 
   // 检查token是否即将过期（剩余时间少于5分钟）
   const isTokenExpiring = useCallback(() => {
+    if (!AuthService.diagnosticsEnabled()) {
+      return false;
+    }
     const expiry = getTokenExpiry();
     if (!expiry) return true;
 
@@ -174,8 +180,7 @@ export function useAuth() {
         provider: 'local'
       });
       
-      // Access token remains available for the heterogeneous resource-server demo.
-      if (response.accessToken) {
+      if (AuthService.diagnosticsEnabled() && response.accessToken) {
         localStorage.setItem('accessToken', response.accessToken);
       }
       
@@ -216,8 +221,7 @@ export function useAuth() {
         }
       });
       
-      // Access token remains available for the heterogeneous resource-server demo.
-      if (response.accessToken) {
+      if (AuthService.diagnosticsEnabled() && response.accessToken) {
         localStorage.setItem('accessToken', response.accessToken);
       }
       

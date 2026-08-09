@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { mockCsrfBootstrap } from './csrf';
 
 const currentUser = {
   authenticated: true,
@@ -7,6 +8,10 @@ const currentUser = {
   userEmail: 'browser-user@example.invalid',
   userId: 'browser-user-id',
 };
+
+test.beforeEach(async ({ page }) => {
+  await mockCsrfBootstrap(page);
+});
 
 async function mockCurrentUser(
   page: Parameters<typeof test>[0]['page'],
@@ -39,7 +44,6 @@ test('local login stores authentication state and opens the authenticated home p
           provider: 'local',
         },
         accessToken: 'mock.access.token',
-        refreshToken: 'mock.refresh.token',
         tokenType: 'Bearer',
       }),
     });
@@ -158,7 +162,6 @@ test('email registration returns to the requested same-origin resource page', as
           displayName: 'Browser Registration',
         },
         accessToken: 'registration.access.token',
-        refreshToken: 'registration.refresh.token',
       }),
     });
   });
@@ -216,7 +219,6 @@ test('login rejects an external return target', async ({ page }) => {
           provider: 'local',
         },
         accessToken: 'mock.access.token',
-        refreshToken: 'mock.refresh.token',
         tokenType: 'Bearer',
       }),
     });

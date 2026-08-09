@@ -7,7 +7,7 @@
 - 不提交 `.env`、SMTP 凭据、数据库密码、真实收件地址或邮件内容。
 - 数据库默认使用独立布局。只有显式设置
   `EMAIL_DATABASE_LAYOUT=shared-uniauth` 时，才允许在获准的 PostgreSQL 16
-  `public` schema 中先于 UniAuth 迁移，或与完整 UniAuth V1-V6 peer 共存；两侧使用
+  `public` schema 中先于 UniAuth 迁移，或与完整 UniAuth V1-V7 peer 共存；两侧使用
   独立 Flyway history table 和同一 advisory lock。目标非空时必须先验证完整 peer；
   双方 history 同时存在后，每次启动都必须重新校验 peer；邮件服务不得在首次
   baseline 后退回默认 `dedicated`。`blacksheep*`、系统库和未获准共享开发库始终拒绝。
@@ -15,7 +15,7 @@
   baseline；失败、重复、未知 versioned 或 repeatable 记录必须失败关闭。出现 UniAuth
   relation 却没有 `uniauth_flyway_schema_history` 时视为半成品布局，不得继续启动。
 - 邮件侧只创建 `email_queue`、`email_logs`、对应序列/索引/约束和
-  `email_service_flyway_schema_history`，与 UniAuth V1-V6 的 relation 名称没有
+  `email_service_flyway_schema_history`，与 UniAuth V1-V7 的 relation 名称没有
   冲突。共享部署的原始冲突是后启动 Flyway 面对非空 `public` schema 而缺少自身
   history，不是业务表重名；只能由受控 baseline V0 兼容路径解决。
 - 启动时显式选择 `dev` 或 `prod` profile，并显式提供全部数据库和 SMTP 配置。

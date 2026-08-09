@@ -181,7 +181,6 @@ export default function TestPage() {
       setTokenRefreshResult({
         message: 'Token refresh failed',
         accessToken: '',
-        refreshToken: '',
         accessTokenExpiresIn: 0,
         refreshTokenExpiresIn: 0
       });

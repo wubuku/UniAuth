@@ -4,17 +4,19 @@
 > 核验日期：2026-08-09
 > 本套件只使用 disposable PostgreSQL、本地邮件 stub、真实 UniAuth/Vite/Python
 > 进程和真实 Chrome，不读取 `.env`、不连接共享数据库，也不发送真实邮件。
+> 聚合器只对本次 Vite dev server 临时设置 `VITE_AUTH_DIAGNOSTICS=true`；不会创建
+> `.env.local`，普通开发启动和生产构建都不自动启用诊断模式。
 
 ## 验证目标
 
 `scripts/test-email-login-browser-e2e.sh` 验证当前项目实际存在的用户链路：
 
-1. 用户访问 React 前端的 `/resource-test` 资源展示页。
+1. 聚合器显式启用 diagnostics，用户访问 React 前端的 `/resource-test` 资源展示页。
 2. 未登录用户被引导到 `/login?returnTo=/resource-test`。
 3. 用户完成邮箱注册，UniAuth 通过真实 REST client 调用不会投递邮件的本地 stub。
 4. Playwright 从权限为 `0600` 的临时捕获文件读取真实模板变量中的验证码。
 5. 验证成功后浏览器回到 `/resource-test`。
-6. 页面读取登录 JSON 响应保存的 access token，并用
+6. diagnostics 页面读取测试 profile 登录 JSON 响应保存的 access token，并用
    `Authorization: Bearer <token>` 跨 origin 调用真实 Python API。
 7. 清除浏览器认证状态后，再使用同一邮箱和密码登录并重复访问受保护资源。
 
@@ -44,16 +46,21 @@ Python 组件只有 REST API，不提供资源展示页面。当前展示页面�
 应用；Python API 可以部署在另一个 origin。套件故意让前端使用 `127.0.0.1`、
 Python API 使用 `localhost`，从而证明资源请求不能依赖 UniAuth host-only Cookie。
 
+`/resource-test` 和 `/test` 只在 Vite dev server 且
+`VITE_AUTH_DIAGNOSTICS=true` 时注册。Vite 生产构建通过虚拟模块排除两个路由、页面和
+诊断链接；独立 production Playwright 会检查路由回退和静态 bundle 内容。生产后端
+同时固定 `app.auth.transport.expose-access-token=false`。
+
 如果资源展示页面本身也部署在另一个域，它不能读取 UniAuth 域的 localStorage 或
 host-only Cookie。当前仓库尚未证明这种独立资源前端的完整登录协议；生产实现应使用
 OAuth/OIDC Authorization Code + PKCE，或使用 BFF/服务器端会话完成 token 交换和持有。
 
 ## Access Token 边界
 
-当前 UniAuth 实际采用双重传递：
+本套件的显式 diagnostics 模式采用双重传递：
 
 - 后端把 access token 写入 HttpOnly Cookie。
-- 登录和注册 JSON 响应同时返回 access token。
+- `test` profile 的登录和注册 JSON 响应同时返回 access token。
 - 前端把 JSON 中的 access token 存入 localStorage，调用 Python API 时读取该值并
   放入 `Authorization` header。
 
@@ -62,15 +69,17 @@ OAuth/OIDC Authorization Code + PKCE，或使用 BFF/服务器端会话完成 to
 Access token 可以同时存在于 HttpOnly Cookie，但它不能**只**存在于 HttpOnly
 Cookie，否则浏览器 JavaScript 无法构造跨 origin Bearer 请求。
 
-当前 localStorage 路径仅是异构资源服务器演示兼容性，不是生产最佳实践；XSS 会扩大
-token 泄露风险。生产通常采用以下一种边界：
+普通前端不会因为处于 Vite dev mode 就自动启用该路径；聚合脚本必须同时显式启动
+诊断路由。生产构建不包含诊断页面，也不把 access token 存入 localStorage。该路径
+仅是异构资源服务器演示兼容性；XSS 会扩大 token 泄露风险。生产通常采用以下一种
+边界：
 
 1. SPA 直接调用跨域 API：SPA 持有 access token，优先只保存在内存；refresh token
    使用 HttpOnly Cookie。
 2. BFF：浏览器只持有 HttpOnly session cookie；同域 BFF 在服务器端持有或交换 token，
    并代替浏览器调用资源 API。
 
-本套件明确验证第一种当前既有演示模式。Playwright 同时断言：
+本套件明确验证第一种模式的受控 diagnostics 演示。Playwright 同时断言：
 
 - Python 资源 origin 没有名为 `accessToken` 的 Cookie。
 - 即使 Python 资源 origin 存在哨兵 Cookie，资源请求也使用
@@ -95,7 +104,8 @@ Playwright 调用。
 | 聚合 | `scripts/test-email-login-browser-e2e.sh` | 组合以上层次并保证失败清理 |
 
 底层脚本要求调用者显式提供端口、数据库、URL 和临时文件位置。日常开发优先运行聚合
-入口，不要把机器专用值写入 `.env.local` 或仓库配置。
+入口。聚合器在启动前端进程时临时注入 `VITE_AUTH_DIAGNOSTICS=true`，不生成或修改
+`.env.local`；不要把机器专用值或测试开关写入仓库配置。
 
 ## 运行
 
@@ -167,6 +177,8 @@ Python 的 `CORS_ALLOWED_ORIGINS` 必须包含精确的 Vite origin。Bearer tok
 
 - 邮箱注册、验证码或邮箱加密码登录。
 - access token 的 JSON、Cookie、localStorage 或内存传递策略。
+- `VITE_AUTH_DIAGNOSTICS`、生产诊断 bundle 排除或后端
+  `app.auth.transport.expose-access-token` 策略。
 - `/resource-test` 登录引导或 `returnTo` 校验。
 - Vite proxy、CORS、Python API URL。
 - JWT issuer、audience、claims、JWKS 或资源服务器校验。

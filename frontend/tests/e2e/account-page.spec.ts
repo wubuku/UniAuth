@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { mockCsrfBootstrap } from './csrf';
 
 const removedPaths = [
   '/api/auth/check-user',
@@ -11,6 +12,10 @@ const removedPaths = [
   '/oauth2/introspect-test',
   '/oauth2/validate',
 ];
+
+test.beforeEach(async ({ page }) => {
+  await mockCsrfBootstrap(page);
+});
 
 test('account page renders from mocked APIs without removed endpoint calls', async ({ page }) => {
   const requestedPaths: string[] = [];

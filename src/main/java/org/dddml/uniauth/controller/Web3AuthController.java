@@ -15,11 +15,11 @@ import org.dddml.uniauth.dto.web3.Web3AuthResponse;
 import org.dddml.uniauth.dto.web3.Web3LoginRequest;
 import org.dddml.uniauth.dto.web3.Web3NonceResponse;
 import org.dddml.uniauth.entity.UserEntity;
-import org.dddml.uniauth.service.JwtTokenService;
-import org.dddml.uniauth.service.AuthCookieService;
+import org.dddml.uniauth.service.TokenIssuanceFacade;
 import org.dddml.uniauth.service.TokenValidationService;
+import org.dddml.uniauth.service.UserService;
+import org.dddml.uniauth.service.AuthenticationCredentialResolver;
 import org.dddml.uniauth.service.Web3AuthService;
-import org.dddml.uniauth.util.BearerTokenUtils;
 import org.dddml.uniauth.util.Web3SignatureUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,6 +27,10 @@ import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import jakarta.servlet.http.HttpServletRequest;
 
 @Slf4j
 @RestController
@@ -36,9 +40,10 @@ import java.time.LocalDateTime;
 public class Web3AuthController {
 
     private final Web3AuthService web3AuthService;
-    private final JwtTokenService jwtTokenService;
-    private final AuthCookieService authCookieService;
     private final TokenValidationService tokenValidationService;
+    private final TokenIssuanceFacade tokenIssuanceFacade;
+    private final UserService userService;
+    private final AuthenticationCredentialResolver credentialResolver;
 
     @GetMapping("/nonce/{walletAddress}")
     @Operation(summary = "Get nonce for wallet authentication",
@@ -88,6 +93,7 @@ public class Web3AuthController {
     })
     public ResponseEntity<?> verifyAndLogin(
             @Valid @RequestBody Web3LoginRequest request,
+            HttpServletRequest httpRequest,
             HttpServletResponse response) {
         try {
             String normalizedAddress = Web3SignatureUtils.normalizeAddress(request.getWalletAddress());
@@ -113,30 +119,20 @@ public class Web3AuthController {
             boolean isNewUser = !web3AuthService.isWalletBound(normalizedAddress);
             UserEntity user = web3AuthService.findOrCreateUser(normalizedAddress);
 
-            String accessToken = jwtTokenService.generateAccessToken(
-                    user.getUsername(),
-                    user.getEmail(),
-                    user.getId(),
-                    user.getAuthorities()
+            Map<String, Object> responseBody = new LinkedHashMap<>(
+                    tokenIssuanceFacade.issue(
+                            userService.convertToDto(user),
+                            httpRequest,
+                            response,
+                            "Web3 login successful",
+                            Instant.now()
+                    )
             );
-
-            String refreshToken = jwtTokenService.generateRefreshToken(user.getUsername(), user.getId());
-
-            long expiresIn = jwtTokenService.getExpires().getAccessToken() / 1000;
-
-            Web3AuthResponse responseBody = Web3AuthResponse.builder()
-                    .accessToken(accessToken)
-                    .refreshToken(refreshToken)
-                    .tokenType("Bearer")
-                    .expiresIn(expiresIn)
-                    .walletAddress(normalizedAddress)
-                    .userId(user.getId())
-                    .isNewUser(isNewUser)
-                    .build();
+            responseBody.put("walletAddress", normalizedAddress);
+            responseBody.put("userId", user.getId());
+            responseBody.put("isNewUser", isNewUser);
 
             log.info("Web3 login completed");
-
-            authCookieService.writeTokenCookies(response, accessToken, refreshToken);
 
             return ResponseEntity.ok(responseBody);
         } catch (Exception e) {
@@ -160,10 +156,12 @@ public class Web3AuthController {
         @ApiResponse(responseCode = "401", description = "User not authenticated")
     })
     public ResponseEntity<?> bindWallet(
-            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            HttpServletRequest httpRequest,
             @Valid @RequestBody Web3LoginRequest request) {
         try {
-            var bearerToken = BearerTokenUtils.extract(authHeader);
+            var bearerToken = credentialResolver.resolveAccessToken(
+                    httpRequest
+            );
             if (bearerToken.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                         .body(ErrorResponse.builder()

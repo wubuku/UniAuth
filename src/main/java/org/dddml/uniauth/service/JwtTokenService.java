@@ -281,6 +281,63 @@ public class JwtTokenService {
     /**
      * 生成访问 Token
      */
+    public String generateAccessToken(TokenSessionSnapshot session) {
+        Map<String, Object> claims = commonSessionClaims(session);
+        claims.put("email", session.email());
+        claims.put("authorities", session.authorities());
+        claims.put("type", "access");
+        claims.put("aud", token.getAudience());
+
+        return Jwts.builder()
+                .setClaims(claims)
+                .setSubject(session.userId())
+                .setIssuedAt(Date.from(session.issuedAt()))
+                .setExpiration(Date.from(session.issuedAt().plusMillis(
+                        expires.getAccessToken()
+                )))
+                .setHeaderParam("kid", token.getKid())
+                .signWith(privateKey, SignatureAlgorithm.RS256)
+                .compact();
+    }
+
+    public String generateRefreshToken(TokenSessionSnapshot session) {
+        Map<String, Object> claims = commonSessionClaims(session);
+        claims.put("type", "refresh");
+
+        return Jwts.builder()
+                .setClaims(claims)
+                .setSubject(session.userId())
+                .setIssuedAt(Date.from(session.issuedAt()))
+                .setExpiration(Date.from(session.familyExpiresAt()))
+                .setHeaderParam("kid", token.getKid())
+                .signWith(privateKey, SignatureAlgorithm.RS256)
+                .compact();
+    }
+
+    private Map<String, Object> commonSessionClaims(
+            TokenSessionSnapshot session) {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("userId", session.userId());
+        claims.put("username", session.username());
+        claims.put("sid", session.familyId());
+        claims.put("generation", session.generation());
+        claims.put("ver", session.securityVersion());
+        claims.put(
+                "auth_time",
+                session.authTime() == null
+                        ? 0
+                        : session.authTime().getEpochSecond()
+        );
+        claims.put("iss", token.getIssuer());
+        claims.put("jti", UUID.randomUUID().toString());
+        return claims;
+    }
+
+    /**
+     * Legacy-format helper retained only for negative compatibility fixtures.
+     * Runtime-issued tokens must use {@link #generateAccessToken(TokenSessionSnapshot)}.
+     */
+    @Deprecated
     public String generateAccessToken(
             String username,
             String email,
@@ -313,8 +370,9 @@ public class JwtTokenService {
     }
 
     /**
-     * 生成刷新 Token
+     * Legacy-format helper retained only for negative compatibility fixtures.
      */
+    @Deprecated
     public String generateRefreshToken(String username, String userId) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("userId", userId);
@@ -469,7 +527,8 @@ public class JwtTokenService {
                     && !subject.isBlank()
                     && subject.equals(userId)
                     && username != null
-                    && !username.isBlank()) {
+                    && !username.isBlank()
+                    && validSessionClaims(jwt)) {
                 return OAuth2TokenValidatorResult.success();
             }
             return OAuth2TokenValidatorResult.failure(new OAuth2Error(
@@ -499,6 +558,21 @@ public class JwtTokenService {
                 additionalValidator
         ));
         return decoder;
+    }
+
+    private boolean validSessionClaims(Jwt jwt) {
+        String familyId = jwt.getClaimAsString("sid");
+        Number generation = jwt.getClaim("generation");
+        Number securityVersion = jwt.getClaim("ver");
+        Number authTime = jwt.getClaim("auth_time");
+        return familyId != null
+                && !familyId.isBlank()
+                && generation != null
+                && generation.longValue() >= 0
+                && securityVersion != null
+                && securityVersion.longValue() >= 0
+                && authTime != null
+                && authTime.longValue() >= 0;
     }
 
     // Getter和Setter方法

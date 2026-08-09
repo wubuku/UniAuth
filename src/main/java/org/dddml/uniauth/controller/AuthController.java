@@ -14,6 +14,7 @@ import org.dddml.uniauth.service.AuthenticationLogoutService;
 import org.dddml.uniauth.service.CredentialAuthenticationService;
 import org.dddml.uniauth.service.RegistrationService;
 import org.dddml.uniauth.service.TokenIssuanceFacade;
+import org.dddml.uniauth.service.TokenRejectedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -72,8 +73,10 @@ public class AuthController {
             Map<String, Object> body = new LinkedHashMap<>(
                     tokenIssuanceFacade.issue(
                             user,
+                            httpRequest,
                             response,
-                            "Registration completed successfully"
+                            "Registration completed successfully",
+                            java.time.Instant.now()
                     )
             );
             body.put("success", true);
@@ -113,9 +116,17 @@ public class AuthController {
             UserDto user = credentialAuthenticationService.authenticate(request);
             return ResponseEntity.ok(tokenIssuanceFacade.issue(
                     user,
+                    httpRequest,
                     response,
-                    "Login successful"
+                    "Login successful",
+                    java.time.Instant.now()
             ));
+        } catch (TokenRejectedException exception) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of(
+                            "error", "ACTIVE_SESSION_CONFLICT",
+                            "message", "Log out the current browser session first"
+                    ));
         } catch (BadCredentialsException | IllegalArgumentException exception) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("error", "Invalid credentials"));

@@ -54,6 +54,9 @@ logging:
 
 app:
   auth:
+    transport:
+      expose-access-token: true
+      diagnostics-enabled: true
     rate-limit:
       enabled: false
   email:

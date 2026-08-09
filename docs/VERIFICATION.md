@@ -123,10 +123,10 @@ Cookie 误当成跨域 Bearer transport。详细复现见
 
 ### 收敛检查
 
-通常交付遵守下面的三轮规则。历史最终加固计划中的 F1 已完成，F2-F5 不再自动执行。
-2026-08-09 post-F1 邮件 V5 收尾在完整统一门禁通过后，对本次固定范围执行一次连续
-三轮无修改检查；检查通过并交付后即退出邮箱固化阶段。未来若明确启动 F2-F5 中的
-某一批，应作为独立 feature/fix/maintenance 需求重新规划和验收。
+通常交付遵守下面的三轮规则。当前冻结的最终加固 F1-F5 使用一次性阶段收敛：
+F1-F5 各轮只需通过该轮完整自动化验收，不分别执行三轮检查；五批全部完成并通过
+统一阶段门禁后，再对 F1-F5 的整体实现、测试、配置、迁移和文档独立执行唯一一次
+连续三轮无修改检查。验收中发现的问题仍须立即修复并重跑受影响门槛。
 
 三轮实现检查只能在以下基础门槛全部通过后开始：
 
@@ -172,16 +172,16 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 > Batch B2b、邮件服务边界、邮箱 challenge 投递接受/原子消费、敏感响应、API key
 > 单值鉴权、认证 Cookie/浏览器 refresh 存储预备切片，以及当前格式 refresh
 > replay/logout 持久撤销、CORS 单一来源、OAuth2 redirect/Referer 信任边界和
-> F1 邮箱身份完整性切片；
+> F1 邮箱身份完整性、F2 token family/浏览器 transport/CSRF/strict introspection；
 > 不代表 H1.4-H8、完整认证正确性或生产就绪。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 212/212；0 failures/errors/skips |
+| `mvn test` | 通过 | 219/219；0 failures/errors/skips |
 | `scripts/test-http-e2e.sh` | 通过 | 16/16；真实应用、独立 PostgreSQL、四条安全链 CORS allow/deny、refresh replay、logout 后 access/refresh/introspection 拒绝与 blacklist 行形状，以及既有邮件、Web3、JWT、登录方式和重启路径 |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 16/16；覆盖 exact schema、V2/V4/V6 初始及 apply 前只读预检、PostgreSQL major、确认 token、V2-V6 grouped rollback 与临时凭据清理 |
-| Flyway integration | 通过 | fresh V1→V6、existing baseline V1→V6、V3→V6、Hibernate validate、Session、checksum/failure recovery |
+| Flyway integration | 通过 | fresh V1→V7、existing baseline V1→V7、V3→V7、Hibernate validate、Session、checksum/failure recovery |
 | Shared-schema process E2E | 通过 | 4/4；UniAuth-first 与 email-first 两种启动顺序、独立 history、受控 baseline V0、重启与业务表共存 |
 | 邮件参考服务 | 通过 | 154 tests；Shell runtime 44/44、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；Flyway V1-V5、idempotency identity、终态载荷脱敏、schema-owner、migration discovery/naming、精确 peer history、半成品 peer、队列生命周期行形状、database layout 和非 PostgreSQL datasource 拒绝矩阵通过 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
@@ -191,8 +191,9 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `npx tsc --noEmit` | 通过 | 无 TypeScript 错误 |
 | `npm run build` | 通过 | Vite 生产构建成功，保留 chunk warning |
 | `npm run test:e2e` | 通过 | 28/28 Chrome-channel Mock Playwright tests；OAuth provider 导航不附加客户端 redirect/state，同页面与同源双标签页只消费一次 refresh，logout 保留无关存储，跨标签页 logout 不会被迟到 refresh continuation 恢复 |
+| `npm run test:e2e:production` | 通过 | 2/2；生产静态构建不包含诊断路由/bundle，普通登录不持久化 bearer credential |
 | 邮箱登录浏览器 E2E | 通过 | 1/1；真实 PostgreSQL/UniAuth/Vite/Python/stub，注册、验证码、同源回跳、跨 hostname Bearer、`credentials: omit`、资源域哨兵 Cookie 不随请求发送、邮箱密码再次登录 |
-| Python | 通过 | 18/18 离线 RSA/JWKS/Flask tests；refresh、缺失 `type`/`jti` 和非法 Bearer 格式失败关闭 |
+| Python | 通过 | 20/20 离线 RSA/JWKS/Flask tests；refresh、legacy session token、缺失/畸形 `sid`/generation/`ver`/`auth_time`、`type`/`jti` 和非法 Bearer 格式失败关闭 |
 | 邮件 REST stub contract | 通过 | 12/12；API key/health/接受/拒绝/限流/坏请求、idempotent retry/conflict、delivery status、response-lost recovery 和安全临时捕获文件 |
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 | Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
@@ -203,7 +204,7 @@ disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列�
 参考服务的 `email_queue`；第 13/16、14/16 步骤为获得稳定的 `503/429` 失败夹具
 而重启应用并切换到受控 loopback 邮件 REST stub。它验证：
 
-- Flyway V1/V2/V3/V4/V5/V6 和自定义 history table。
+- Flyway V1/V2/V3/V4/V5/V6/V7 和自定义 history table。
 - 应用重启后的 migration 幂等和用户数据保留。
 - `/api/auth/**` allowlist 与资源服务器拒绝边界。
 - 四条 Security filter chain 共用同一 CORS source，允许 origin 的 credentialed
@@ -226,12 +227,34 @@ disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列�
 - `prod` 中认证 Cookie 或 Session Cookie 的 Secure 最终值被高优先级配置覆盖为
   false 时，ApplicationContext 启动失败。
 - 前端启动、local/email/Web3/OAuth2、401 refresh 后都不保留
-  `localStorage.refreshToken`；当前 access token localStorage 演示兼容性保持不变。
+  `localStorage.refreshToken`；普通生产路径也不保留 access token，只有显式
+  diagnostics dev/E2E 为跨域 Python Bearer 演示写入该值。
 - refresh 成功响应在 Web Lock 持有期间写入 access token；hook、OAuth callback 和
   Axios 401 retry 不在锁释放后重复持久化。跨标签页 logout 与延迟 refresh 并发时，
   最终 `auth_user`、access token 和 legacy refresh token 均保持清空。
 - Python 资源服务器在签名、kid、issuer、audience 和 expiry 正确时仍拒绝
   refresh token 和缺少 `type` 的 token。
+
+F2 token session、浏览器 transport 与 CSRF 切片还验证：
+
+- Flyway V7 创建 `token_families` 并增加 `users.token_security_version`；
+  fresh/upgrade、Hibernate `validate`、schema fingerprint、shared-schema 两种启动顺序
+  和双方精确 peer history 全部接受 V1-V7，未知 V8 失败关闭。
+- access/refresh pair 共用 `sid`、generation、security version 和 `auth_time`；
+  refresh generation 通过 PostgreSQL CAS 单次推进，replay、logout、密码重置和
+  登录凭据变化撤销整个 family，并覆盖事务回滚和并发竞争。
+- refresh token 只通过 HttpOnly Cookie 传递，不进入 JSON；生产 Cookie 使用
+  `__Host-` 名称、Secure、Path `/` 且无 Domain，dev/test 保持 loopback HTTP 可运行。
+- Authorization 与认证 Cookie 的重复、空值、不同 token/用户/family 组合失败关闭；
+  Cookie 认证的 unsafe 请求必须提交 Session bootstrap 返回的精确单值 CSRF header，
+  Bearer-only 请求不借 Cookie 改变结论。
+- `POST /oauth2/introspect` 只接受 Basic client 鉴权和单值 form token，拒绝 query、
+  raw body、认证 Cookie、重复凭据和额外字段，并返回最小 session claim。
+- Mock Playwright 继续固定 single-flight、Web Locks 和跨标签 logout；生产 Playwright
+  证明 `/test`、`/resource-test` 及诊断代码不进入生产构建。真实邮箱浏览器 E2E 仅在
+  启动命令中临时启用 diagnostics，没有创建 `.env.local`。
+- Python 资源服务器校验完整 session claim 并拒绝 legacy token；纯离线 JWKS 模式
+  仍明确不能感知 PostgreSQL family 的实时撤销。
 
 CORS/OAuth2 redirect 信任边界切片还验证：
 
@@ -650,8 +673,7 @@ HTTP E2E、Flyway baseline guard、frontend lint/type/build/Mock Playwright、�
 5. 结果可由其他开发者在隔离环境复现。
 6. 与改动范围对应的后端集成测试、前端构建/浏览器测试或跨端验证没有被静默跳过。
 7. 适用三轮规则时，收敛检查是在基础验证门槛通过后执行，并且确实连续三轮无修改；
-   历史 F1 按当时记录的例外只执行完整自动化验收，但该例外不延续到未启动的 F2-F5；
-   本次 post-F1 邮件 V5 收尾仍须执行三轮检查。
+   最终加固 F1-F5 按本页明确例外，只记录各轮完整自动化验收，阶段末再统一检查。
 
 过去的验证记录保留为 Historical，不自动继承为当前版本状态。
 

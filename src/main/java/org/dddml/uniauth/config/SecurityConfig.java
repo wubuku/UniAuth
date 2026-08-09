@@ -39,10 +39,11 @@ import org.springframework.security.authentication.dao.DaoAuthenticationProvider
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.client.RestTemplate;
-import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.LoginMethodService;
 import org.dddml.uniauth.service.AuthCookieService;
 import org.dddml.uniauth.service.TokenValidationService;
+import org.dddml.uniauth.service.TokenIssuanceFacade;
+import org.dddml.uniauth.service.AuthenticationCredentialResolver;
 import org.springframework.http.*;
 import org.springframework.core.ParameterizedTypeReference;
 import java.util.List;
@@ -80,9 +81,6 @@ public class SecurityConfig {
     private PasswordEncoder passwordEncoder;
 
     @Autowired
-    private JwtTokenService jwtTokenService;
-
-    @Autowired
     private LoginMethodService loginMethodService;
 
     @Autowired
@@ -90,6 +88,12 @@ public class SecurityConfig {
 
     @Autowired
     private TokenValidationService tokenValidationService;
+
+    @Autowired
+    private TokenIssuanceFacade tokenIssuanceFacade;
+
+    @Autowired
+    private AuthenticationCredentialResolver credentialResolver;
 
     @Autowired
     private OAuth2RedirectPolicy oauth2RedirectPolicy;
@@ -141,9 +145,6 @@ public class SecurityConfig {
                     log.debug("OAuth2 callback mode: {}", isUserLoggedIn ? "binding" : "login");
 
                     UserDto userDto = null;
-                    String accessToken = null;
-                    String refreshToken = null;
-
                     // 处理Google用户（OpenID Connect）
                     if (authentication.getPrincipal() instanceof OidcUser oidcUser) {
                         String providerUserId = oidcUser.getSubject();
@@ -186,20 +187,15 @@ public class SecurityConfig {
                     }
 
                     if (userDto != null) {
-                        // 🎯 统一处理：无论是登录还是绑定，都生成新的JWT token
-                        accessToken = jwtTokenService.generateAccessToken(
-                            userDto.getUsername(),
-                            userDto.getEmail(),
-                            userDto.getId(),
-                            userService.getCurrentUser(userDto.getUsername()).getAuthorities()
+                        Map<String, Object> issued = tokenIssuanceFacade.issue(
+                                userDto,
+                                request,
+                                response,
+                                isUserLoggedIn
+                                        ? "Binding successful"
+                                        : "Login successful",
+                                null
                         );
-
-                        refreshToken = jwtTokenService.generateRefreshToken(
-                            userDto.getUsername(),
-                            userDto.getId()
-                        );
-
-                        authCookieService.writeTokenCookies(response, accessToken, refreshToken);
 
                         if (isUserLoggedIn) {
                             log.info("OAuth2 account binding completed");
@@ -223,19 +219,9 @@ public class SecurityConfig {
                             response.setCharacterEncoding("UTF-8");
                             
                             // 构建响应数据
-                            Map<String, Object> responseData = new HashMap<>();
-                            responseData.put("message", isUserLoggedIn ? "Binding successful" : "Login successful");
-                            responseData.put("authenticated", true);
-                            responseData.put("user", userDto);
-                            responseData.put("accessToken", accessToken);
-                            responseData.put("refreshToken", refreshToken);
-                            responseData.put("accessTokenExpiresIn", 3600); // 1小时
-                            responseData.put("refreshTokenExpiresIn", 604800); // 7天
-                            responseData.put("tokenType", "Bearer");
-                            
                             // 序列化并写入响应
                             ObjectMapper objectMapper = new ObjectMapper();
-                            objectMapper.writeValue(response.getWriter(), responseData);
+                            objectMapper.writeValue(response.getWriter(), issued);
                         } else {
                             // 重定向目标只来自经过校验的服务端部署配置。
                             log.debug("OAuth2 redirect response selected");
@@ -260,26 +246,11 @@ public class SecurityConfig {
              */
             private String getCurrentUserIdFromRequest(HttpServletRequest request) {
                 try {
-                    Cookie[] cookies = request.getCookies();
-                    if (cookies == null) {
-                        return null;
-                    }
-
-                    String accessToken = null;
-                    for (Cookie cookie : cookies) {
-                        if ("accessToken".equals(cookie.getName())) {
-                            accessToken = cookie.getValue();
-                            break;
-                        }
-                    }
-
-                    if (accessToken == null || accessToken.trim().isEmpty()) {
-                        return null;
-                    }
-
                     // 尝试提取userId，异常则返回null（不是登录状态）
                     try {
-                        return tokenValidationService.getUserIdFromAccessToken(accessToken);
+                        return credentialResolver.resolveAccessToken(request)
+                                .map(tokenValidationService::getUserIdFromAccessToken)
+                                .orElse(null);
                     } catch (RuntimeException e) {
                         log.debug("OAuth2 binding cookie was invalid or expired");
                         return null;

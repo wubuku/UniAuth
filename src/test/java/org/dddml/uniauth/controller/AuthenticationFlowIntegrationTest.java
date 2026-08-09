@@ -3,19 +3,23 @@ package org.dddml.uniauth.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.Cookie;
+import org.dddml.uniauth.config.IntrospectionProperties;
 import org.dddml.uniauth.dto.UserDto;
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.repository.UserRepository;
-import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.LoginMethodService;
+import org.dddml.uniauth.service.TokenIssuanceFacade;
+import org.dddml.uniauth.service.TokenSessionTransactionService;
 import org.dddml.uniauth.service.UserService;
+import org.dddml.uniauth.support.AuthIntegrationTestSupport.CsrfContext;
 import org.dddml.uniauth.support.PostgreSqlIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
@@ -26,11 +30,18 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.authenticatedIntrospection;
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.basicAuthorization;
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.bootstrapCsrf;
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.issueTokens;
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.responseCookie;
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.withCsrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -58,7 +69,13 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
     private UserService userService;
 
     @Autowired
-    private JwtTokenService jwtTokenService;
+    private TokenSessionTransactionService tokenSessionTransactionService;
+
+    @Autowired
+    private TokenIssuanceFacade tokenIssuanceFacade;
+
+    @Autowired
+    private IntrospectionProperties introspectionProperties;
 
     @Autowired
     private PasswordEncoder passwordEncoder;
@@ -106,6 +123,7 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.authenticated").value(true))
                 .andExpect(jsonPath("$.user.id").value(userId))
+                .andExpect(jsonPath("$.refreshToken").doesNotExist())
                 .andExpect(cookie().httpOnly("accessToken", true))
                 .andExpect(cookie().httpOnly("refreshToken", true))
                 .andReturn();
@@ -113,9 +131,10 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
         JsonNode loginBody = responseJson(loginResult);
         assertTokenCookies(loginResult, false);
         String accessToken = loginBody.path("accessToken").asText();
-        String refreshToken = loginBody.path("refreshToken").asText();
+        String refreshToken = responseCookie(loginResult, "refreshToken");
         assertThat(accessToken).isNotBlank();
         assertThat(refreshToken).isNotBlank().isNotEqualTo(accessToken);
+        CsrfContext csrf = bootstrapCsrf(mockMvc, objectMapper);
 
         UserLoginMethod localMethod = loginMethodRepository
                 .findByLocalUsername(username)
@@ -136,9 +155,12 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(jsonPath("$.loginMethods[0].authProvider").value("local"))
                 .andExpect(jsonPath("$.loginMethods[0].isPrimary").value(true));
 
-        mockMvc.perform(post("/oauth2/introspect")
-                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                        .param("token", accessToken))
+        mockMvc.perform(authenticatedIntrospection(
+                        post("/oauth2/introspect")
+                                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                                .param("token", accessToken),
+                        introspectionProperties
+                ))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.active").value(true))
                 .andExpect(jsonPath("$.sub").value(userId))
@@ -150,10 +172,14 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(jsonPath("$.keys[0].alg").value("RS256"))
                 .andExpect(jsonPath("$.keys[0].kid").value("key-1"));
 
-        MvcResult refreshResult = mockMvc.perform(post("/api/auth/refresh")
-                        .cookie(new Cookie("refreshToken", refreshToken)))
+        MvcResult refreshResult = mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie("refreshToken", refreshToken)),
+                        csrf
+                ))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.tokenType").value("Bearer"))
+                .andExpect(jsonPath("$.refreshToken").doesNotExist())
                 .andExpect(cookie().httpOnly("accessToken", true))
                 .andExpect(cookie().httpOnly("refreshToken", true))
                 .andReturn();
@@ -161,10 +187,14 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
         JsonNode refreshBody = responseJson(refreshResult);
         assertTokenCookies(refreshResult, false);
         assertThat(refreshBody.path("accessToken").asText()).isNotEqualTo(accessToken);
-        assertThat(refreshBody.path("refreshToken").asText()).isNotEqualTo(refreshToken);
+        assertThat(responseCookie(refreshResult, "refreshToken"))
+                .isNotEqualTo(refreshToken);
 
-        mockMvc.perform(post("/api/auth/refresh")
-                        .cookie(new Cookie("refreshToken", accessToken)))
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie("refreshToken", accessToken)),
+                        csrf
+                ))
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(get("/api/user")
                         .header("Authorization", "Bearer " + refreshToken))
@@ -172,11 +202,14 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
         mockMvc.perform(post("/api/auth/refresh"))
                 .andExpect(status().isUnauthorized());
 
-        MvcResult logoutResult = mockMvc.perform(post("/api/auth/logout")
-                        .cookie(
-                                new Cookie("accessToken", accessToken),
-                                new Cookie("refreshToken", refreshToken)
-                        ))
+        MvcResult logoutResult = mockMvc.perform(withCsrf(
+                        post("/api/auth/logout")
+                                .cookie(
+                                        new Cookie("accessToken", accessToken),
+                                        new Cookie("refreshToken", refreshToken)
+                                ),
+                        csrf
+                ))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("Logged out successfully"))
                 .andExpect(cookie().maxAge("accessToken", 0))
@@ -194,7 +227,6 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 "integration-multi@example.invalid",
                 password
         );
-        String accessToken = login(username, password).path("accessToken").asText();
         String localMethodId = loginMethodRepository
                 .findByLocalUsername(username)
                 .orElseThrow()
@@ -207,6 +239,7 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 "integration-multi@example.invalid",
                 "Integration Multi"
         );
+        String accessToken = login(username, password).path("accessToken").asText();
 
         mockMvc.perform(get("/api/user/login-methods")
                         .header("Authorization", "Bearer " + accessToken))
@@ -228,8 +261,9 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.removedMethodId").value(localMethodId));
 
+        String renewedAccessToken = issueAccessToken(userId);
         mockMvc.perform(delete("/api/user/login-methods/{id}", githubMethod.getId())
-                        .header("Authorization", "Bearer " + accessToken))
+                        .header("Authorization", "Bearer " + renewedAccessToken))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("不能移除最后一个登录方式"));
 
@@ -243,7 +277,7 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 .get(0)
                 .getId();
         mockMvc.perform(delete("/api/user/login-methods/{id}", otherMethodId)
-                        .header("Authorization", "Bearer " + accessToken))
+                        .header("Authorization", "Bearer " + renewedAccessToken))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("无权移除该登录方式"));
     }
@@ -258,12 +292,7 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 "OAuth Only",
                 null
         );
-        String accessToken = jwtTokenService.generateAccessToken(
-                oauthUser.getUsername(),
-                oauthUser.getEmail(),
-                oauthUser.getId(),
-                Set.of("ROLE_USER")
-        );
+        String accessToken = issueAccessToken(oauthUser.getId());
 
         mockMvc.perform(post("/api/user/login-methods/add-local-login")
                         .header("Authorization", "Bearer " + accessToken)
@@ -288,8 +317,12 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.user.id").value(oauthUser.getId()));
 
+        String renewedAccessToken = login(
+                "oauth-local",
+                "oauth-local-password"
+        ).path("accessToken").asText();
         mockMvc.perform(post("/api/user/login-methods/add-local-login")
-                        .header("Authorization", "Bearer " + accessToken)
+                        .header("Authorization", "Bearer " + renewedAccessToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -301,6 +334,153 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error")
                         .value("该用户已有本地登录方式，无法重复添加"));
+    }
+
+    @Test
+    void introspectionRequiresOneBasicCredentialAndOneFormToken()
+            throws Exception {
+        String userId = registerLocalUser(
+                "introspection-boundary",
+                "introspection-boundary@example.invalid",
+                "integration-password"
+        );
+        String accessToken = issueAccessToken(userId);
+        String authorization = basicAuthorization(introspectionProperties);
+
+        mockMvc.perform(post("/oauth2/introspect")
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("token", accessToken))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string(
+                        HttpHeaders.WWW_AUTHENTICATE,
+                        "Basic realm=\"token-introspection\""
+                ))
+                .andExpect(jsonPath("$.active").value(false));
+
+        mockMvc.perform(post("/oauth2/introspect")
+                        .header(HttpHeaders.AUTHORIZATION, "Basic d3Jvbmc6d3Jvbmc=")
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("token", accessToken))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/oauth2/introspect")
+                        .header(
+                                HttpHeaders.AUTHORIZATION,
+                                authorization,
+                                authorization
+                        )
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("token", accessToken))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/oauth2/introspect?token=" + accessToken)
+                        .header(HttpHeaders.AUTHORIZATION, authorization)
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("token", accessToken))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(post("/oauth2/introspect")
+                        .header(HttpHeaders.AUTHORIZATION, authorization)
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("token", accessToken, accessToken))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(post("/oauth2/introspect")
+                        .header(HttpHeaders.AUTHORIZATION, authorization)
+                        .header(HttpHeaders.COOKIE, "accessToken=" + accessToken)
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("token", accessToken))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(post("/oauth2/introspect")
+                        .header(HttpHeaders.AUTHORIZATION, authorization)
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("token", accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.active").value(true))
+                .andExpect(jsonPath("$.sub").value(userId))
+                .andExpect(jsonPath("$.sid").isNotEmpty())
+                .andExpect(jsonPath("$.generation").value(0))
+                .andExpect(jsonPath("$.ver").value(0))
+                .andExpect(jsonPath("$.username").doesNotExist())
+                .andExpect(jsonPath("$.email").doesNotExist())
+                .andExpect(jsonPath("$.authorities").doesNotExist())
+                .andExpect(header().string(
+                        HttpHeaders.CACHE_CONTROL,
+                        "no-store, no-cache, must-revalidate"
+                ))
+                .andExpect(header().string(HttpHeaders.PRAGMA, "no-cache"));
+    }
+
+    @Test
+    void loginRejectsReplacingAnotherUsersActiveBrowserSession()
+            throws Exception {
+        String password = "integration-password";
+        String firstUserId = registerLocalUser(
+                "session-owner",
+                "session-owner@example.invalid",
+                password
+        );
+        registerLocalUser(
+                "session-target",
+                "session-target@example.invalid",
+                password
+        );
+
+        MvcResult firstLogin = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LoginPayload(
+                                "session-owner",
+                                password
+                        ))))
+                .andExpect(status().isOk())
+                .andReturn();
+        String firstAccessToken = responseJson(firstLogin)
+                .path("accessToken")
+                .asText();
+        String firstRefreshToken = responseCookie(firstLogin, "refreshToken");
+        CsrfContext csrf = bootstrapCsrf(mockMvc, objectMapper);
+
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/login")
+                                .cookie(
+                                        new Cookie(
+                                                "accessToken",
+                                                firstAccessToken
+                                        ),
+                                        new Cookie(
+                                                "refreshToken",
+                                                firstRefreshToken
+                                        )
+                                )
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(
+                                        new LoginPayload(
+                                                "session-target",
+                                                password
+                                        )
+                                )),
+                        csrf
+                ))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error")
+                        .value("ACTIVE_SESSION_CONFLICT"));
+
+        mockMvc.perform(get("/api/user")
+                        .header(
+                                HttpHeaders.AUTHORIZATION,
+                                "Bearer " + firstAccessToken
+                        ))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value(firstUserId));
+    }
+
+    private String issueAccessToken(String userId) {
+        return issueTokens(
+                tokenSessionTransactionService,
+                tokenIssuanceFacade,
+                userId
+        ).accessToken();
     }
 
     private String registerLocalUser(String username, String email, String password)

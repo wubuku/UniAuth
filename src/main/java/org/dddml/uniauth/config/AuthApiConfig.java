@@ -41,13 +41,14 @@ public class AuthApiConfig {
                     "/api/auth/web3/bind"
                 ).permitAll()
                 .requestMatchers(HttpMethod.GET,
+                    "/api/auth/csrf",
                     "/api/auth/email/status/*",
                     "/api/auth/web3/nonce/*",
                     "/api/auth/web3/status/*"
                 ).permitAll()
                 .anyRequest().denyAll()
             )
-            .csrf(csrf -> csrf.disable());  // 认证API通常需要禁用CSRF
+            .csrf(csrf -> csrf.disable());
 
         return http.build();
     }

@@ -12,6 +12,8 @@ public class AuthCookieSecurityGuard implements InitializingBean {
 
     private static final String SESSION_COOKIE_SECURE_PROPERTY =
             "server.servlet.session.cookie.secure";
+    private static final String SESSION_COOKIE_NAME_PROPERTY =
+            "server.servlet.session.cookie.name";
 
     private final Environment environment;
     private final AuthCookieProperties authCookieProperties;
@@ -26,6 +28,15 @@ public class AuthCookieSecurityGuard implements InitializingBean {
                     "Production requires app.auth.cookie.secure=true"
             );
         }
+        if (!"__Host-accessToken".equals(
+                authCookieProperties.getAccessTokenName()
+        ) || !"__Host-refreshToken".equals(
+                authCookieProperties.getRefreshTokenName()
+        )) {
+            throw new IllegalStateException(
+                    "Production authentication cookies require __Host- names"
+            );
+        }
         Boolean sessionCookieSecure = environment.getProperty(
                 SESSION_COOKIE_SECURE_PROPERTY,
                 Boolean.class
@@ -33,6 +44,13 @@ public class AuthCookieSecurityGuard implements InitializingBean {
         if (!Boolean.TRUE.equals(sessionCookieSecure)) {
             throw new IllegalStateException(
                     "Production requires server.servlet.session.cookie.secure=true"
+            );
+        }
+        if (!"__Host-JSESSIONID".equals(environment.getProperty(
+                SESSION_COOKIE_NAME_PROPERTY
+        ))) {
+            throw new IllegalStateException(
+                    "Production session cookie requires the __Host-JSESSIONID name"
             );
         }
     }

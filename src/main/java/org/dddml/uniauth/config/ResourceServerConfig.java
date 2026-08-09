@@ -1,8 +1,7 @@
 package org.dddml.uniauth.config;
 
 import org.dddml.uniauth.service.TokenValidationService;
-import org.dddml.uniauth.util.BearerTokenUtils;
-import jakarta.servlet.http.Cookie;
+import org.dddml.uniauth.service.AuthenticationCredentialResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
@@ -27,6 +26,7 @@ import java.util.*;
 public class ResourceServerConfig {
 
     private final TokenValidationService tokenValidationService;
+    private final AuthenticationCredentialResolver credentialResolver;
 
     /**
      * 自定义Bearer Token解析器，从Cookie中读取Token
@@ -36,23 +36,8 @@ public class ResourceServerConfig {
         return new BearerTokenResolver() {
             @Override
             public String resolve(HttpServletRequest request) {
-                // 首先尝试从Authorization头读取
-                String authHeader = request.getHeader("Authorization");
-                Optional<String> headerToken = BearerTokenUtils.extract(authHeader);
-                if (headerToken.isPresent()) {
-                    return headerToken.get();
-                }
-
-                // 如果没有Authorization头，从Cookie中读取
-                if (request.getCookies() != null) {
-                    for (Cookie cookie : request.getCookies()) {
-                        if ("accessToken".equals(cookie.getName())) {
-                            return cookie.getValue();
-                        }
-                    }
-                }
-
-                return null;
+                return credentialResolver.resolveAccessToken(request)
+                        .orElse(null);
             }
         };
     }

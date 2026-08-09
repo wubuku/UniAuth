@@ -24,6 +24,7 @@ export default defineConfig({
     env: {
       ...process.env,
       VITE_API_BASE_URL: '',
+      VITE_AUTH_DIAGNOSTICS: 'true',
     },
   },
   projects: [

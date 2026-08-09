@@ -9,6 +9,7 @@ WITH selected_tables(table_name) AS (
         ('email_delivery_outbox'),
         ('auth_rate_limits'),
         ('security_events'),
+        ('token_families'),
         ('user_authorities'),
         ('token_blacklist'),
         ('spring_session'),

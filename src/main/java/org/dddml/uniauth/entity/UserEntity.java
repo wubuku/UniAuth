@@ -65,6 +65,9 @@ public class UserEntity {
     @Column
     private LocalDateTime lastLoginAt;
 
+    @Column(name = "token_security_version", nullable = false)
+    private long tokenSecurityVersion;
+
     // ✅ 多登录方式关联
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private Set<UserLoginMethod> loginMethods = new HashSet<>();
@@ -87,6 +90,7 @@ public class UserEntity {
         private LocalDateTime createdAt;
         private LocalDateTime updatedAt;
         private LocalDateTime lastLoginAt;
+        private long tokenSecurityVersion;
         private Set<UserLoginMethod> loginMethods = new HashSet<>();
 
         public UserEntityBuilder id(String id) { this.id = id; return this; }
@@ -104,6 +108,10 @@ public class UserEntity {
         public UserEntityBuilder createdAt(LocalDateTime createdAt) { this.createdAt = createdAt; return this; }
         public UserEntityBuilder updatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; return this; }
         public UserEntityBuilder lastLoginAt(LocalDateTime lastLoginAt) { this.lastLoginAt = lastLoginAt; return this; }
+        public UserEntityBuilder tokenSecurityVersion(long tokenSecurityVersion) {
+            this.tokenSecurityVersion = tokenSecurityVersion;
+            return this;
+        }
         public UserEntityBuilder loginMethods(Set<UserLoginMethod> loginMethods) { this.loginMethods = loginMethods; return this; }
 
         public UserEntity build() {
@@ -120,6 +128,7 @@ public class UserEntity {
             user.createdAt = this.createdAt;
             user.updatedAt = this.updatedAt;
             user.lastLoginAt = this.lastLoginAt;
+            user.tokenSecurityVersion = this.tokenSecurityVersion;
             user.loginMethods = this.loginMethods != null ? this.loginMethods : new HashSet<>();
             return user;
         }

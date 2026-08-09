@@ -16,6 +16,7 @@ public class AuthCookieService {
     private static final String SAME_SITE = "Lax";
     private static final String[] AUTH_COOKIE_NAMES = {
         "JSESSIONID",
+        "__Host-JSESSIONID",
         ACCESS_TOKEN_COOKIE,
         REFRESH_TOKEN_COOKIE,
         "id_token",
@@ -32,12 +33,12 @@ public class AuthCookieService {
             String accessToken,
             String refreshToken) {
         response.addCookie(createCookie(
-                ACCESS_TOKEN_COOKIE,
+                accessTokenCookieName(),
                 accessToken,
                 maxAgeSeconds(jwtTokenService.getExpires().getAccessToken())
         ));
         response.addCookie(createCookie(
-                REFRESH_TOKEN_COOKIE,
+                refreshTokenCookieName(),
                 refreshToken,
                 maxAgeSeconds(jwtTokenService.getExpires().getRefreshToken())
         ));
@@ -47,6 +48,20 @@ public class AuthCookieService {
         for (String cookieName : AUTH_COOKIE_NAMES) {
             response.addCookie(createCookie(cookieName, "", 0));
         }
+        if (!ACCESS_TOKEN_COOKIE.equals(accessTokenCookieName())) {
+            response.addCookie(createCookie(accessTokenCookieName(), "", 0));
+        }
+        if (!REFRESH_TOKEN_COOKIE.equals(refreshTokenCookieName())) {
+            response.addCookie(createCookie(refreshTokenCookieName(), "", 0));
+        }
+    }
+
+    public String accessTokenCookieName() {
+        return properties.getAccessTokenName();
+    }
+
+    public String refreshTokenCookieName() {
+        return properties.getRefreshTokenName();
     }
 
     private Cookie createCookie(String name, String value, int maxAgeSeconds) {

@@ -43,6 +43,14 @@ public class AuthRateLimitProperties {
     @Max(10000)
     private int passwordResetLimit = 5;
 
+    @Min(1)
+    @Max(10000)
+    private int refreshLimit = 20;
+
+    @Min(1)
+    @Max(10000)
+    private int introspectionLimit = 60;
+
     @NotBlank
     @Size(min = 32, max = 1024)
     private String keySecret = "local-only-auth-rate-limit-key-change-me";
@@ -117,5 +125,21 @@ public class AuthRateLimitProperties {
 
     public void setKeySecret(String keySecret) {
         this.keySecret = keySecret;
+    }
+
+    public int getRefreshLimit() {
+        return refreshLimit;
+    }
+
+    public void setRefreshLimit(int refreshLimit) {
+        this.refreshLimit = refreshLimit;
+    }
+
+    public int getIntrospectionLimit() {
+        return introspectionLimit;
+    }
+
+    public void setIntrospectionLimit(int introspectionLimit) {
+        this.introspectionLimit = introspectionLimit;
     }
 }

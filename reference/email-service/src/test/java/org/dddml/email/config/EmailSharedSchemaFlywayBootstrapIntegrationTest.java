@@ -104,20 +104,20 @@ class EmailSharedSchemaFlywayBootstrapIntegrationTest {
     }
 
     @Test
-    void existingSharedSchemaRevalidatesF1PeerRelations() {
+    void existingSharedSchemaRevalidatesF2PeerRelations() {
         DataSource dataSource = newDatabase();
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
         migrateUniAuth(dataSource);
         EmailSharedSchemaFlywayBootstrap.migrate(emailFlyway(dataSource), true);
 
-        jdbc.execute("DROP TABLE security_events");
+        jdbc.execute("DROP TABLE token_families");
 
         assertThatThrownBy(() ->
             EmailSharedSchemaFlywayBootstrap.migrate(emailFlyway(dataSource), true)
         )
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("not a complete UniAuth schema")
-            .hasMessageContaining("security_events");
+            .hasMessageContaining("token_families");
     }
 
     @Test
@@ -150,10 +150,10 @@ class EmailSharedSchemaFlywayBootstrapIntegrationTest {
                 case "unknown-version" -> addHistoryRow(
                     jdbc,
                     "uniauth_flyway_schema_history",
-                    "7",
+                    "8",
                     "unexpected migration",
                     "SQL",
-                    "V7__unexpected_migration.sql",
+                    "V8__unexpected_migration.sql",
                     true
                 );
                 case "duplicate-version" -> addHistoryRow(
@@ -177,10 +177,10 @@ class EmailSharedSchemaFlywayBootstrapIntegrationTest {
                 case "unsuccessful" -> addHistoryRow(
                     jdbc,
                     "uniauth_flyway_schema_history",
-                    "6",
+                    "7",
                     "failed migration",
                     "SQL",
-                    "V6__failed_migration.sql",
+                    "V7__failed_migration.sql",
                     false
                 );
                 default -> throw new AssertionError(

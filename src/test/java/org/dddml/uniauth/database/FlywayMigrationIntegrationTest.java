@@ -30,6 +30,7 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
             "spring_session",
             "spring_session_attributes",
             "token_blacklist",
+            "token_families",
             "uniauth_flyway_schema_history",
             "user_authorities",
             "user_login_methods",
@@ -48,9 +49,9 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Test
-    void freshDatabaseMigratesToVersionSixAndHibernateValidates() {
+    void freshDatabaseMigratesToVersionSevenAndHibernateValidates() {
         assertThat(flyway.info().current()).isNotNull();
-        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("6");
+        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("7");
         assertThat(flyway.migrate().migrationsExecuted).isZero();
 
         List<String> tables = jdbcTemplate.queryForList(
@@ -223,6 +224,8 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
                 .isEqualTo("timestamp without time zone:NO:CURRENT_TIMESTAMP");
         assertThat(columnDescriptor("users", "updated_at"))
                 .isEqualTo("timestamp without time zone:NO:CURRENT_TIMESTAMP");
+        assertThat(columnDescriptor("users", "token_security_version"))
+                .isEqualTo("bigint:NO:0");
         assertThat(columnDescriptor("web3_nonces", "created_at"))
                 .isEqualTo("timestamp with time zone:NO:CURRENT_TIMESTAMP");
         assertThat(columnDescriptor("web3_nonces", "message"))
@@ -255,6 +258,12 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
                 .isEqualTo("character varying:NO:");
         assertThat(columnDescriptor("token_blacklist", "blacklisted_at"))
                 .isEqualTo("timestamp without time zone:NO:CURRENT_TIMESTAMP");
+        assertThat(columnDescriptor("token_families", "current_generation"))
+                .isEqualTo("bigint:NO:0");
+        assertThat(columnDescriptor("token_families", "auth_time"))
+                .isEqualTo("timestamp with time zone:YES:");
+        assertThat(columnDescriptor("token_families", "expires_at"))
+                .isEqualTo("timestamp with time zone:NO:");
 
         assertThat(constraintExists("ck_email_verification_retry_count_nonnegative"))
                 .isTrue();
@@ -264,6 +273,13 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
         assertThat(constraintExists("ck_auth_rate_limit_count")).isTrue();
         assertThat(constraintExists("ck_security_event_outcome")).isTrue();
         assertThat(constraintExists("ck_token_blacklist_token_type")).isTrue();
+        assertThat(constraintExists(
+                "ck_users_token_security_version_nonnegative"
+        )).isTrue();
+        assertThat(constraintExists(
+                "ck_token_families_generation_nonnegative"
+        )).isTrue();
+        assertThat(constraintExists("ck_token_families_revoke_shape")).isTrue();
 
         assertThat(indexExists("idx_email_verification_pending_lookup")).isFalse();
         assertThat(indexExists("idx_email_verification_email_created_at")).isTrue();
@@ -275,6 +291,8 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
         assertThat(indexExists("idx_auth_rate_limits_expires_at")).isTrue();
         assertThat(indexExists("idx_security_events_subject_created")).isTrue();
         assertThat(indexExists("idx_token_blacklist_expires_at")).isTrue();
+        assertThat(indexExists("idx_token_families_user_active")).isTrue();
+        assertThat(indexExists("idx_token_families_expires_at")).isTrue();
 
         assertThat(indexExists("idx_users_email")).isFalse();
         assertThat(indexExists("idx_users_username")).isFalse();

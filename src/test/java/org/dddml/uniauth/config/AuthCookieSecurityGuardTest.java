@@ -21,7 +21,7 @@ class AuthCookieSecurityGuardTest {
 
     @Test
     void allowsSecureProductionCookies() {
-        AuthCookieProperties properties = properties(true);
+        AuthCookieProperties properties = productionProperties(true);
         MockEnvironment environment = environment("prod", true);
 
         assertThatCode(() -> new AuthCookieSecurityGuard(
@@ -45,7 +45,7 @@ class AuthCookieSecurityGuardTest {
 
     @Test
     void rejectsAnInsecureSessionCookieOverrideInProduction() {
-        AuthCookieProperties properties = properties(true);
+        AuthCookieProperties properties = productionProperties(true);
         MockEnvironment environment = environment("prod", false);
 
         assertThatThrownBy(() -> new AuthCookieSecurityGuard(
@@ -64,12 +64,23 @@ class AuthCookieSecurityGuardTest {
         return properties;
     }
 
+    private AuthCookieProperties productionProperties(boolean secure) {
+        AuthCookieProperties properties = properties(secure);
+        properties.setAccessTokenName("__Host-accessToken");
+        properties.setRefreshTokenName("__Host-refreshToken");
+        return properties;
+    }
+
     private MockEnvironment environment(String profile, boolean sessionCookieSecure) {
         MockEnvironment environment = new MockEnvironment();
         environment.setActiveProfiles(profile);
         environment.setProperty(
                 "server.servlet.session.cookie.secure",
                 Boolean.toString(sessionCookieSecure)
+        );
+        environment.setProperty(
+                "server.servlet.session.cookie.name",
+                "__Host-JSESSIONID"
         );
         return environment;
     }

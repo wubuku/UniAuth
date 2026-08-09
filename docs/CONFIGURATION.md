@@ -127,11 +127,11 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - `EMAIL_DATABASE_LAYOUT` 默认 `dedicated`，要求 `EMAIL_POSTGRES_*` 指向邮件专用
   PostgreSQL 16 数据库。只有显式设置 `shared-uniauth` 时才允许复用获准的 UniAuth
   数据库：目标 `public` schema 可以为空，由任一侧先迁移；若已存在 peer，则必须是
-  完整且 history 精确的 UniAuth V1-V6 或邮件 V1-V5。两侧使用独立 Flyway history
+  完整且 history 精确的 UniAuth V1-V7 或邮件 V1-V5。两侧使用独立 Flyway history
   table 和 advisory-lock 串行化。`blacksheep*`、系统库、未知 layout、H2 和其他
   非 PostgreSQL datasource 均在 Flyway 前拒绝。
 - 邮件侧业务 relation 是 `email_queue`、`email_logs` 及其序列/索引/约束，与
-  UniAuth V1-V6 的表、序列和索引名称没有冲突。不能据此直接移除迁移保护：后启动
+  UniAuth V1-V7 的表、序列和索引名称没有冲突。不能据此直接移除迁移保护：后启动
   Flyway 仍会遇到“schema 非空但缺少自身 history”的启动冲突。
 - Flyway location 是 `classpath:db/migration/postgresql`，history table 是
   `email_service_flyway_schema_history`，当前 migration 为 V1 + V2 + V3 + V4 + V5。
@@ -275,9 +275,10 @@ base 配置固定 `JSESSIONID`、`HttpOnly=true`、`Path=/`、`SameSite=Lax`；
 
 - Flyway location：`classpath:db/migration/postgresql`
 - history table：`uniauth_flyway_schema_history`
-- 当前版本：V6（V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS +
+- 当前版本：V7（V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS +
   V4 实体约束与索引对齐 + V5 Web3/SIWE challenge message 绑定 +
-  V6 邮箱身份/challenge/outbox/限流/安全事件加固）
+  V6 邮箱身份/challenge/outbox/限流/安全事件加固 +
+  V7 token family/security version/session claim 加固）
 - `fail-on-missing-locations=true`
 - `baseline-on-migrate=false`
 - `baseline-version=0`
@@ -328,7 +329,11 @@ HMAC digest、delivery/usage 状态和唯一 active challenge；同时新增
 `email_delivery_outbox`、`auth_rate_limits` 和 append-only `security_events`。
 V6 迁移会失效 pre-F1 旧 challenge，不能回滚旧应用继续写明文状态。
 
-后续结构修复从 V7 开始；不得改写 V1/V2/V3/V4/V5/V6 checksum。
+V7 增加 `users.token_security_version` 和 `token_families`，固定 family owner、
+generation、`auth_time`、expiry、revoke 状态和查询索引；新 token 的 `sid`、
+`generation`、`ver`、`auth_time` 与该持久状态共同验证。
+
+后续结构修复从 V8 开始；不得改写 V1/V2/V3/V4/V5/V6/V7 checksum。
 
 ## Existing-schema baseline
 
@@ -421,8 +426,10 @@ Vite：
   `VITE_DEV_PROXY_TARGET` 覆盖。
 - dev proxy 将请求 `Origin` 重写为实际 backend origin，使动态 Vite 端口保持同源
   代理语义；不要以接受任意随机 origin 的方式放宽生产 CORS。
-- `VITE_RESOURCE_SERVER_URL` 控制 `/resource-test` 调用的 Python API，默认
-  `http://localhost:5002`。
+- `VITE_AUTH_DIAGNOSTICS=true` 只在 Vite dev server 中启用 `/test`、
+  `/resource-test` 和对应诊断 bundle；生产构建始终排除它们。
+- `VITE_RESOURCE_SERVER_URL` 控制 diagnostics `/resource-test` 调用的 Python API，
+  默认 `http://localhost:5002`。
 - build 输出到 `../src/main/resources/static`。
 - build 会清空并重建输出目录。
 
@@ -439,11 +446,14 @@ Vite：
 - `JWT_ISSUER`、`JWT_AUDIENCE`、`RESOURCE_SERVER_PORT` 和 CORS origins 均可由环境变量覆盖。
 - JWT 只接受 RS256，并要求精确匹配 `kid`。
 
-当前跨 origin 演示依赖登录/注册 JSON 中返回的 access token。前端把它写入
-localStorage 并构造 Bearer header；HttpOnly access-token Cookie 不能被 JavaScript
-读取，也不会在不同 host 的 Python API 上替代该 header。该 localStorage 路径会扩大
-XSS 风险，不是生产最佳实践。生产 SPA 应优先把 access token 仅保存在内存并使用
-HttpOnly refresh cookie；或采用 BFF，使浏览器只持有 HttpOnly session cookie。
+显式 diagnostics 跨 origin 演示依赖 dev/test 后端在登录/注册 JSON 中返回的 access
+token。只有同时启用 `VITE_AUTH_DIAGNOSTICS=true` 时，前端才把它写入 localStorage
+并构造 Bearer header；HttpOnly access-token Cookie 不能被 JavaScript 读取，也不会在
+不同 host 的 Python API 上替代该 header。普通生产构建不包含诊断路由/bundle，后端
+`prod` 也固定 `app.auth.transport.expose-access-token=false`。该 diagnostics
+localStorage 路径会扩大 XSS 风险，不是生产 transport。生产 SPA 应优先把 access
+token 仅保存在内存并使用 HttpOnly refresh cookie；或采用 BFF，使浏览器只持有
+HttpOnly session cookie。
 
 详细运行和离线测试命令见组件 README；真实跨服务邮箱登录验证见
 [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md)。

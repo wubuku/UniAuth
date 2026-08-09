@@ -14,10 +14,11 @@
   Python API Bearer 访问和独立服务脚本。
 - `docs/drafts/README.md`: 既有计划、调查和历史记录索引。
 - `docs/drafts/DOCUMENTATION_PLAN.md`: 文档体系建设计划。
-- `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md`: 已停止自动执行的五批加固参考计划；
-  F2-F5 只有在未来明确提出对应需求时才单独启动。
+- `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md`: 已冻结的五批最终加固收尾范围和退出条件。
 - `docs/drafts/F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md`: 已完成 F1 的不可变
-  基线、实施记录，以及 post-F1 邮件 V5 收尾。
+  基线、固定实施切片、迁移边界、验收矩阵和 post-F1 邮件 V5 收尾记录。
+- `docs/drafts/F2_TOKEN_SESSION_HARDENING_IMPLEMENTATION.md`: 已完成 F2 的
+  token family、浏览器 transport、CSRF、严格 introspection 实施和验收记录。
 - `docs/drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md`: 历史批次执行记录；不再驱动开放循环。
 - `docs/archive/database/README.md`: 旧 SQL 的历史归档和当前替代路径。
 - `reference/email-service/README.md`: 外部邮件 REST 服务的独立参考实现、Flyway 和 E2E。
@@ -48,17 +49,19 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - Vite 开发端口：`5173`，`/api` 和 `/oauth2` 代理到 `http://localhost:8081`。
 - 前端 lint/build 要求 Node.js `20.19+`、`22.13+` 或 `24+`；CI 使用 Node `20.19`。
 - Python 示例与组件 README 当前统一使用：`5002`。
-- Python 组件是纯 REST API；资源展示页是 React `/resource-test`。当前跨 origin
-  演示读取登录/注册 JSON 中的 access token，写入 localStorage 后构造 Bearer
-  header；HttpOnly Cookie 不能替代该跨 host header。该路径仅用于演示，不是生产
-  token 存储建议。独立资源前端域需要 OAuth/OIDC Code+PKCE 或 BFF。
+- Python 组件是纯 REST API；资源展示页是 React diagnostics `/resource-test`。
+  只有 Vite dev server 显式设置 `VITE_AUTH_DIAGNOSTICS=true` 且后端显式暴露 JSON
+  access token 时，该演示才写入 localStorage 并构造 Bearer header；HttpOnly Cookie
+  不能替代该跨 host header。生产构建排除诊断路由/bundle，也不持久化 access token。
+  独立资源前端域需要 OAuth/OIDC Code+PKCE 或 BFF。
 - 默认不激活任何 Spring profile；启动者必须显式选择 `dev`、`test` 或 `prod`。
 - `dev`、`test`、`prod` 只支持 PostgreSQL 16；当前不维护 PostgreSQL 15 或
   SQLite 兼容路径。
 - 三个 profile 的 host、port、database、user 和 password 都必须显式提供。
 - Flyway 是唯一 schema owner；当前 runtime migration 链是 PostgreSQL V1 baseline +
   V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束与索引对齐 + V5
-  Web3/SIWE challenge message 绑定 + V6 邮箱身份/challenge/outbox/限流/安全事件加固。
+  Web3/SIWE challenge message 绑定 + V6 邮箱身份/challenge/outbox/限流/安全事件加固 +
+  V7 token family/security version/session claim 加固。
 - Hibernate 使用 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 外部邮件服务默认地址：`http://localhost:8095`。
 - UniAuth 主应用只实现邮件服务 HTTP 适配器；真实邮箱注册验证和密码重置需要独立
@@ -75,7 +78,7 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - 参考邮件服务的 `dev`、`test`、`prod` profile 只接受 PostgreSQL datasource；
   H2 不再是测试后端。默认 `EMAIL_DATABASE_LAYOUT=dedicated` 要求邮件专用数据库；
   `shared-uniauth` 是显式 opt-in，可在获准的空 `public` schema 先迁移邮件 V1-V5，
-  也可加入完整 UniAuth V1-V6 peer。两种启动顺序都使用独立 history；后启动一侧
+  也可加入完整 UniAuth V1-V7 peer。两种启动顺序都使用独立 history；后启动一侧
   验证完整 peer 后创建自己的 V0 baseline，两侧通过同一 PostgreSQL advisory lock
   串行化首次 baseline/migrate。Java guard 会在 Flyway 前拒绝非 PostgreSQL、未知
   layout、受保护数据库和不完整 peer。存在 peer relation 却缺少 peer history 属于
@@ -159,19 +162,22 @@ JWT 由 `JwtTokenService` 使用 RS256 签发：
 - `sub`: 用户 UUID，不是用户名。
 - `userId`: 用户 UUID。
 - `username`: 实际用户名。
-- `email`, `authorities`, `type`, `jti` 为自定义 claims。
+- `email`, `authorities`, `type`, `jti`, `sid`, `generation`, `ver`,
+  `auth_time` 为自定义 claims。
 - access token 默认 1 小时；refresh token 默认 7 天。
 - issuer 默认 `https://auth.example.com`。
 - audience 默认 `resource-server`。
 - `kid` 默认 `key-1`。
 - 读取用户名时先读 `username` claim，再回退 `sub` 兼容旧 token。
 
-认证响应通常双重传递 token：HttpOnly cookie + JSON body。所有签发入口通过
-`AuthCookieService` 统一写入 access/refresh Cookie；base/dev/test 使用本地 HTTP
+所有签发入口通过 `AuthCookieService` 统一写入 access/refresh HttpOnly Cookie；
+refresh token 不进入 JSON。access token 只在显式
+`app.auth.transport.expose-access-token=true` 的 diagnostics/dev/E2E 场景进入 JSON。
+base/dev/test 使用本地 HTTP
 兼容值，`prod` 必须同时保持认证 Cookie 和 Session Cookie 的 `Secure=true`，更高
-优先级配置若将任一值覆盖为 false，ApplicationContext 启动失败。前端只把 access
-token 放入 localStorage 以支持异构资源服务器测试，并在启动时移除历史
-`refreshToken` key；不要把这种演示策略直接描述为生产最佳实践。
+优先级配置若将任一值覆盖为 false，ApplicationContext 启动失败。普通生产前端不把
+access token 放入 localStorage；显式 diagnostics 模式才为异构资源服务器测试保留
+该值，并始终移除历史 `refreshToken` key。
 
 `JwtTokenService` 构造时读取 `jwt.rsa.key-file`；默认路径是 ignored 的
 `.local/uniauth/rsa-keys.ser`。已有密钥无法解析或 POSIX 权限过宽时启动失败，
@@ -235,7 +241,7 @@ ApplicationContext、PostgreSQL 和真实业务 Bean，只 mock 最外层 `Email
 参考邮件服务的 schema 由其自己的 Flyway V1/V2/V3/V4/V5 管理，history table 是
 `email_service_flyway_schema_history`；所有 profile 使用 Hibernate `validate`，
 SQL init 关闭。默认使用独立 PostgreSQL；显式 `shared-uniauth` 允许在获准的空
-`public` schema 先启动任一侧，或与完整 UniAuth V1-V6 peer 共存，且不得连接
+`public` schema 先启动任一侧，或与完整 UniAuth V1-V7 peer 共存，且不得连接
 `blacksheep*` 或其他未获准共享库。后启动一侧只有在对端 history/核心 relation
 完整、本侧 relation 不存在且对端没有失败 migration 时，才在共享 advisory lock
 内创建 baseline V0；全局
@@ -308,9 +314,11 @@ nonce、email verification 和 token blacklist 的既有实体约束，补齐 em
 索引并移除有等价唯一/规范索引覆盖的重复索引；V5 将 Web3 nonce 绑定到服务端签发
 的完整 SIWE message，并通过 PostgreSQL 条件删除完成一次性消费。V6 增加 canonical
 email identity、HMAC challenge、delivery/usage 状态、transactional outbox、共享
-认证限流和 append-only security event。V5 发布时会失效所有旧的未消费 Web3
+认证限流和 append-only security event。V7 增加用户 token security version 和
+refresh token family/generation/revoke 状态，并用 `sid`、`generation`、`ver`、
+`auth_time` 将签发 token 绑定到持久 session。V5 发布时会失效所有旧的未消费 Web3
 challenge；V6 no-return cutover 会失效旧明文邮箱 challenge。后续结构修复必须新增
-V7+，不得修改已经发布或 baseline 的 V1/V2/V3/V4/V5/V6 checksum。
+V8+，不得修改已经发布或 baseline 的 V1/V2/V3/V4/V5/V6/V7 checksum。
 
 修改 entity/schema 时至少核对：
 
@@ -373,11 +381,11 @@ PYTHON_BIN=python3 scripts/test-email-login-browser-e2e.sh
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-当前验证基线（2026-08-09 post-F1 邮件 V5 收尾工作树；每次后续变更仍须重跑）：
+当前候选基线（2026-08-09 F2 与 post-F1 邮件 V5 合并树；合并后的完整门禁必须重跑）：
 
-- 当前根统一门禁：Maven 212 tests、shared-schema process E2E 4/4、
+- 当前根统一门禁：Maven 219 tests、shared-schema process E2E 4/4、
   HTTP 16/16、Flyway baseline guard 16/16、Mock Playwright 28/28、
-  真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 18/18、邮件 REST stub
+  生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 20/20、邮件 REST stub
   contract 12/12；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
   patch hygiene 均通过。
 - 当前邮件参考服务：154 tests，0 failures/errors/skips；Shell runtime 44/44、
@@ -464,13 +472,21 @@ PYTHON_BIN=python3 scripts/verify.sh
   append-only security event、UniAuth V6 与邮件 V4 已实现。完整根 Maven 212/212、
   邮件 Maven 150/150、Flyway baseline guard 16/16、邮件 runtime 44/44，统一门禁
   `12/12` 通过。
+- 2026-08-09 F2 token session/浏览器 transport 增量：UniAuth V7、
+  `token_families`、用户 security version、`sid`/generation/`ver`/`auth_time`、
+  generation CAS、replay/logout 整族撤销、HttpOnly refresh、Cookie/Authorization
+  消歧、Session CSRF、strict introspection、共享限流和生产诊断路由隔离已实现。
+  完整根 Maven 219/219、shared-schema 4/4、HTTP/Flyway 16/16、Mock Playwright
+  28/28、生产 Playwright 2/2、真实浏览器 1/1、Python 12/12 + 20/20，统一门禁
+  `12/12` 通过。
 - Shell HTTP E2E：16/16；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
 - Flyway baseline guard：16/16。
-- Mock Playwright：28/28；真实邮箱登录浏览器 E2E：1/1。
-- Python 资源服务器：18/18；邮件 REST stub contract：12/12。
+- Mock Playwright：28/28；生产 Playwright：2/2；真实邮箱登录浏览器 E2E：1/1。
+- Python 资源服务器：20/20；邮件 REST stub contract：12/12。
 - 前端 ESLint、TypeScript 和生产构建通过。
-- F1 历史计划只执行了其固定范围；F2-F5 未自动启动。邮件参考服务 V5 收尾完成后，
-  当前邮箱固化阶段即结束，后续工作回到普通 feature/fix/maintenance 计划。
+- 最终加固 F1-F5 每批只执行固定范围验收和完整门禁，不分别执行连续三轮无修改检查；
+  F1-F5 全部实现并通过各自验收后，再独立执行一次阶段末连续三轮检查。无问题轮次只
+  记录在当次工作报告，不为留痕修改仓库文件。
 - 前端 lockfile 已通过严格 `npm ci`；已显式升级受影响的 Axios、Ethers、
   React Router、Vite 和相关传递依赖，`npm audit --audit-level=high` 通过。
 - npm audit 仍报告 2 个 React Router moderate advisories。当前 SPA 只使用
@@ -551,22 +567,22 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 触达 Python 资源服务器时必须通过离线 RSA/JWKS/Flask 测试，真实 JWKS 网络验证只能显式 opt in。
 - 需要启动服务时，只能使用显式 profile 和隔离可丢弃数据库；联调不能替代两端各自的自动化验证。
 - 不把可自动化的首轮验收转交给用户；“已完成”必须有可复现的测试证据。
-- 一般交付在基础验证全部通过后执行固定范围的三轮收敛检查。历史 F1 曾按当时冻结
-  计划只以自动化验收收口；该例外不延续到未启动的 F2-F5。本次 post-F1 邮件 V5
-  收尾仍须在完整门禁后执行三轮检查，任何实质修改都令计数器归零。
+- 一般交付在基础验证全部通过后执行固定范围的三轮收敛检查。当前最终加固阶段是明确
+  例外：F1-F5 每轮只以该轮自动化验收收口；F1-F5 全部完成并通过完整阶段门禁后，
+  再独立执行统一三轮检查。阶段末检查中的任何实质修改都令计数器归零。
 
 ## Current Rough Edges
 
 在依赖相关功能前先验证这些已知风险：
 
-- token blacklist 已接入当前格式 access/refresh 校验、refresh 单次消费、两个 logout
-  路由和 introspection；当前 replay 只拒绝已消费 `jti`，尚无 token family/security
-  version，不能撤销未知后继 token。Python 离线资源服务器也无法感知 PostgreSQL
-  blacklist，只能依赖 access token 剩余 TTL。
-- refresh token 仍出现在 JSON；access token 仍为演示目的写入 localStorage，
-  header/cookie token 来源也可能冲突。前端已用 runtime single-flight 和支持浏览器的
-  Web Locks 避免正常同页面/同源标签页重复 refresh，并保证跨标签页 logout 不会被
-  迟到 refresh continuation 写回；彻底收敛 transport 仍属于 Batch C 原子切换。
+- F2 已建立 token family/security version：refresh generation 使用 PostgreSQL CAS，
+  replay、logout、密码重置和凭据变化可撤销整族未知后继 token，Java Resource Server
+  与 strict introspection 校验当前 family/user 状态。Python 离线资源服务器只校验
+  session claims 和签名，仍无法通过纯 JWKS 感知 PostgreSQL 实时撤销。
+- refresh token 只通过 HttpOnly Cookie 传递，不进入 JSON；普通生产前端不持久化
+  access token，显式 diagnostics dev/E2E 才为异构 Python Bearer 演示写入
+  localStorage。Authorization/Cookie 重复、空值或冲突身份统一失败关闭。single-flight、
+  Web Locks 和跨标签 logout 继续固定并发不变量。
 - OAuth2 redirect 已由 `OAuth2RedirectPolicy` 统一约束，恶意/跨 origin
   `state.redirect_uri` 回退到配置的前端 base path 下的登录页，成功和失败回跳都
   保留该 context path；授权 resolver 不再保存未消费的 `Referer` origin。更大的
@@ -590,13 +606,11 @@ PYTHON_BIN=python3 scripts/verify.sh
   Authorization Server client redirect 等剩余部署配置仍需收敛。
 - Spring Authorization Server 当前仍注册固定 `auth-client`、`{noop}auth-secret`、
   localhost redirect、password grant 和无 PKCE 客户端。自定义 JWT 才是当前主要
-  业务签发路径；未来明确处理该风险时（原计划 F4），必须默认关闭未明确启用的
-  Authorization Server 客户端能力，或将其完整配置、grant 和凭据失败关闭，不能把
-  当前固定值带入生产。
-- 自定义 `/oauth2/introspect` 和 `/oauth2/api/introspect` 当前无需客户端鉴权，并兼容
-  query/form/raw body 多种 token 输入。未来明确处理该风险时（原计划 F2），必须改成
-  受鉴权、严格单值的服务到服务 endpoint，禁止 query token、浏览器 Cookie 和重复
-  凭据，不能把当前公开接口用于实时撤销判断。
+  业务签发路径；F4 必须默认关闭未明确启用的 Authorization Server 客户端能力，或将
+  其完整配置、grant 和凭据失败关闭，不能把当前固定值带入生产。
+- 自定义 introspection 只保留受 Basic client 鉴权的 `POST /oauth2/introspect`
+  form endpoint；query/raw body、浏览器认证 Cookie、重复 header/参数和额外字段失败
+  关闭。真实部署仍必须在 F4 提供非 placeholder client secret 和外部化运维策略。
 
 这些条目是工作提示，不代替针对当前任务的代码阅读和测试。
 
@@ -605,19 +619,20 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 多步骤任务持续使用 plan 工具；关键提醒必须写入本文件或任务实施文档。
 - 每次状态汇报都给出诚实的粗略完成百分比；发现遗漏或风险时允许回退，但必须说明
   当前固定范围和下一步如何继续收敛。
-- 当前邮箱固化阶段不得再开放循环。V5 敏感载荷最小化、完整门禁、三轮检查和交付
-  完成后即退出；`docs/drafts/FINAL_HARDENING_EXIT_PLAN.md` 仅保留为参考，
-  F2-F5 必须由未来明确需求分别启动，不得自动续跑。
+- 加固阶段不再开放循环。当前范围以
+  `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md` 冻结的 F1-F5 为准；F1-F2 已完成，
+  F3 是下一批，完成五批及统一阶段末检查后必须退出，不得自动创建第六批。
 - 只有数据丢失、认证/授权绕过、凭据泄露、门禁伪成功或当前批直接引入的实质回归
   可以并入正在执行的固定批次。其他发现进入加固后的普通 backlog，不能借“继续探索”
   延长阶段。
-- 未来若明确启动 F2-F5 中的某一批，仍按“固定范围 -> PostgreSQL 集成测试与夹具 ->
-  Shell/Flyway E2E -> Playwright/Python/供应链工具 -> 完整硬门槛 -> 文档与交付”
-  执行，但不得把未启动批次当作当前阻塞项。百分比按当前明确范围诚实评估。
-- 当前总原则是完成邮箱参考服务 V5 收尾后回到正常新功能/需求开发。
+- F1-F5 每批执行：固定范围 -> PostgreSQL 集成测试与夹具 -> Shell/Flyway E2E ->
+  Playwright/Python/供应链工具 -> 完整硬门槛 -> 文档更新与提交推送。各批不分别
+  执行连续三轮无修改检查；F1-F5 全部完成并通过统一阶段门禁后，再对整个 F 阶段
+  独立执行唯一一次连续三轮检查。百分比按最终退出范围诚实评估，不通过零碎条目虚增。
+- 当前总原则是先全面加固已有功能，不增加新功能。
 - 实施前先建立集成测试、Shell E2E 和 Playwright 保护；测试必须覆盖本次修改。
-- 本次邮箱参考服务收尾在完整门禁后执行一次连续三轮无修改检查；任何实质修改都将
-  计数归零。通过后不得以一般性“继续加固”为由开启下一轮。
+- F1-F5 的单批基础门禁通过后按冻结计划进入下一步骤；只在五批全部完成后的阶段末检查中
+  使用连续三轮计数器，任何实质修改都将该阶段末计数归零。
 - 并发修复优先数据库约束、条件更新和 CAS，不默认使用悲观锁，也不机械引入 `@Version`。
 - 未经用户允许，不运行真实高成本外部调用；真实 OAuth/mail 也不是默认门禁。
 - 外部依赖下载遇到网络阻断时，可使用用户提供的本机 `http_proxy`、`https_proxy`

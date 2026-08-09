@@ -12,6 +12,15 @@ app:
   auth:
     cookie:
       secure: false
+      access-token-name: accessToken
+      refresh-token-name: refreshToken
+    transport:
+      expose-access-token: false
+      diagnostics-enabled: false
+    csrf:
+      header-name: X-CSRF-Token
+    session:
+      cleanup-delay-ms: ${AUTH_SESSION_CLEANUP_DELAY_MS:3600000}
     password:
       min-length: 8
       max-length: 128
@@ -25,8 +34,13 @@ app:
       challenge-send-limit: ${AUTH_RATE_LIMIT_CHALLENGE_SEND_LIMIT:5}
       challenge-verify-limit: ${AUTH_RATE_LIMIT_CHALLENGE_VERIFY_LIMIT:10}
       password-reset-limit: ${AUTH_RATE_LIMIT_PASSWORD_RESET_LIMIT:5}
+      refresh-limit: ${AUTH_RATE_LIMIT_REFRESH_LIMIT:20}
+      introspection-limit: ${AUTH_RATE_LIMIT_INTROSPECTION_LIMIT:60}
       key-secret: ${AUTH_RATE_LIMIT_KEY_SECRET:local-only-auth-rate-limit-key-change-me}
       cleanup-delay-ms: ${AUTH_RATE_LIMIT_CLEANUP_DELAY_MS:60000}
+    introspection:
+      client-id: ${INTROSPECTION_CLIENT_ID:resource-server}
+      client-secret: ${INTROSPECTION_CLIENT_SECRET:local-only-introspection-client-secret-change-me}
   demo-data:
     enabled: false
     disposable: false

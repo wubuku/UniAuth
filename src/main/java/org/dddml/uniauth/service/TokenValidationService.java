@@ -5,8 +5,10 @@ import io.jsonwebtoken.Jws;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.dddml.uniauth.entity.TokenBlacklistEntity;
+import org.dddml.uniauth.entity.TokenFamilyEntity;
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.repository.TokenBlacklistRepository;
+import org.dddml.uniauth.repository.TokenFamilyRepository;
 import org.dddml.uniauth.repository.UserRepository;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
@@ -19,6 +21,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -30,6 +33,7 @@ public class TokenValidationService {
 
     private final JwtTokenService jwtTokenService;
     private final TokenBlacklistRepository tokenBlacklistRepository;
+    private final TokenFamilyRepository tokenFamilyRepository;
     private final UserRepository userRepository;
 
     private JwtDecoder signedAccessTokenDecoder;
@@ -38,7 +42,9 @@ public class TokenValidationService {
     @PostConstruct
     void initialize() {
         signedAccessTokenDecoder = jwtTokenService.jwtDecoder();
-        activeAccessTokenDecoder = jwtTokenService.jwtDecoder(this::validateActiveAccessToken);
+        activeAccessTokenDecoder = jwtTokenService.jwtDecoder(
+                this::validateActiveAccessToken
+        );
     }
 
     public JwtDecoder accessTokenDecoder() {
@@ -53,21 +59,29 @@ public class TokenValidationService {
         return toValidatedAccessToken(decodeAccessToken(tokenValue)).userId();
     }
 
+    public ValidatedToken decodeRefreshTokenForRotation(String tokenValue) {
+        return decodeSignedRefreshToken(tokenValue);
+    }
+
     public ValidatedToken decodeRefreshToken(String tokenValue) {
         ValidatedToken token = decodeSignedRefreshToken(tokenValue);
-        requireActive(token);
+        requireActive(token, true);
         return token;
     }
 
-    public Optional<ValidatedToken> accessTokenForRevocation(String tokenValue) {
+    public Optional<ValidatedToken> accessTokenForRevocation(
+            String tokenValue) {
         try {
-            return Optional.of(toValidatedAccessToken(decodeSignedAccessToken(tokenValue)));
+            return Optional.of(toValidatedAccessToken(
+                    decodeSignedAccessToken(tokenValue)
+            ));
         } catch (RuntimeException exception) {
             return Optional.empty();
         }
     }
 
-    public Optional<ValidatedToken> refreshTokenForRevocation(String tokenValue) {
+    public Optional<ValidatedToken> refreshTokenForRevocation(
+            String tokenValue) {
         try {
             return Optional.of(decodeSignedRefreshToken(tokenValue));
         } catch (RuntimeException exception) {
@@ -80,17 +94,16 @@ public class TokenValidationService {
         String type = parsed.getBody().get("type", String.class);
         if (ACCESS_TYPE.equals(type)) {
             Jwt jwt = decodeAccessToken(tokenValue);
+            ValidatedToken token = toValidatedAccessToken(jwt);
             return new IntrospectedToken(
-                    jwt.getSubject(),
-                    jwt.getClaimAsString("userId"),
-                    jwt.getClaimAsString("username"),
-                    jwt.getClaimAsString("email"),
-                    jwt.getClaim("authorities"),
+                    token.userId(),
                     normalizedAudience(jwt.getAudience()),
-                    jwt.getIssuer() != null ? jwt.getIssuer().toString() : null,
                     jwt.getIssuedAt(),
                     jwt.getExpiresAt(),
-                    jwt.getId(),
+                    token.familyId(),
+                    token.generation(),
+                    token.securityVersion(),
+                    token.authTime(),
                     ACCESS_TYPE
             );
         }
@@ -98,15 +111,13 @@ public class TokenValidationService {
             ValidatedToken token = decodeRefreshToken(tokenValue);
             return new IntrospectedToken(
                     token.userId(),
-                    token.userId(),
-                    token.username(),
                     null,
-                    null,
-                    null,
-                    jwtTokenService.getToken().getIssuer(),
                     token.issuedAt(),
                     token.expiresAt(),
-                    token.jti(),
+                    token.familyId(),
+                    token.generation(),
+                    token.securityVersion(),
+                    token.authTime(),
                     REFRESH_TYPE
             );
         }
@@ -124,6 +135,10 @@ public class TokenValidationService {
                 jwt.getSubject(),
                 jwt.getClaimAsString("userId"),
                 jwt.getClaimAsString("username"),
+                jwt.getClaimAsString("sid"),
+                numberClaim(jwt.getClaims(), "generation"),
+                numberClaim(jwt.getClaims(), "ver"),
+                numberClaim(jwt.getClaims(), "auth_time"),
                 jwt.getIssuedAt(),
                 jwt.getExpiresAt()
         );
@@ -136,7 +151,9 @@ public class TokenValidationService {
         if (!REFRESH_TYPE.equals(claims.get("type", String.class))) {
             throw new JwtException("Only refresh tokens are accepted");
         }
-        if (!jwtTokenService.getToken().getIssuer().equals(claims.getIssuer())) {
+        if (!jwtTokenService.getToken().getIssuer().equals(
+                claims.getIssuer()
+        )) {
             throw new JwtException("Refresh token issuer is invalid");
         }
         return validatedToken(
@@ -145,8 +162,16 @@ public class TokenValidationService {
                 claims.getSubject(),
                 claims.get("userId", String.class),
                 claims.get("username", String.class),
-                claims.getIssuedAt() != null ? claims.getIssuedAt().toInstant() : null,
-                claims.getExpiration() != null ? claims.getExpiration().toInstant() : null
+                claims.get("sid", String.class),
+                numberClaim(claims, "generation"),
+                numberClaim(claims, "ver"),
+                numberClaim(claims, "auth_time"),
+                claims.getIssuedAt() != null
+                        ? claims.getIssuedAt().toInstant()
+                        : null,
+                claims.getExpiration() != null
+                        ? claims.getExpiration().toInstant()
+                        : null
         );
     }
 
@@ -156,6 +181,10 @@ public class TokenValidationService {
             String subject,
             String userId,
             String username,
+            String familyId,
+            long generation,
+            long securityVersion,
+            long authTimeEpochSeconds,
             Instant issuedAt,
             Instant expiresAt) {
         if (jti == null || jti.isBlank()) {
@@ -169,7 +198,13 @@ public class TokenValidationService {
         if (username == null || username.isBlank()) {
             throw new JwtException("Token username is missing");
         }
-        if (issuedAt == null || expiresAt == null || !expiresAt.isAfter(issuedAt)) {
+        requireUuid(familyId);
+        if (generation < 0 || securityVersion < 0 || authTimeEpochSeconds < 0) {
+            throw new JwtException("Token session claims are invalid");
+        }
+        if (issuedAt == null
+                || expiresAt == null
+                || !expiresAt.isAfter(issuedAt)) {
             throw new JwtException("Token timestamps are invalid");
         }
         return new ValidatedToken(
@@ -177,6 +212,12 @@ public class TokenValidationService {
                 tokenType,
                 userId,
                 username,
+                familyId,
+                generation,
+                securityVersion,
+                authTimeEpochSeconds == 0
+                        ? null
+                        : Instant.ofEpochSecond(authTimeEpochSeconds),
                 issuedAt,
                 expiresAt
         );
@@ -193,34 +234,44 @@ public class TokenValidationService {
         }
     }
 
-    private void requireActive(ValidatedToken token) {
+    private void requireActive(
+            ValidatedToken token,
+            boolean exactGeneration) {
         if (tokenBlacklistRepository.existsByJti(token.jti())) {
             throw new JwtException("Token has been revoked");
         }
         UserEntity user = userRepository.findById(token.userId())
-                .orElseThrow(() -> new JwtException("Token user does not exist"));
-        if (!user.isEnabled()) {
-            throw new JwtException("Token user is disabled");
+                .orElseThrow(() -> new JwtException(
+                        "Token user does not exist"
+                ));
+        TokenFamilyEntity family = tokenFamilyRepository
+                .findById(token.familyId())
+                .orElseThrow(() -> new JwtException(
+                        "Token family does not exist"
+                ));
+        Instant now = Instant.now();
+        boolean generationValid = exactGeneration
+                ? family.getCurrentGeneration() == token.generation()
+                : family.getCurrentGeneration() >= token.generation();
+        if (!user.isEnabled()
+                || !user.getUsername().equals(token.username())
+                || user.getTokenSecurityVersion() != token.securityVersion()
+                || !family.isActiveAt(now)
+                || !family.getUserId().equals(token.userId())
+                || family.getSecurityVersion() != token.securityVersion()
+                || !generationValid) {
+            throw new JwtException("Token session is inactive");
         }
     }
 
     private OAuth2TokenValidatorResult validateActiveAccessToken(Jwt jwt) {
-        String jti = jwt.getId();
-        String userId = jwt.getClaimAsString("userId");
-        if (jti == null || jti.isBlank() || userId == null || userId.isBlank()) {
-            return invalidToken("Token identity is invalid");
+        try {
+            ValidatedToken token = toValidatedAccessToken(jwt);
+            requireActive(token, false);
+            return OAuth2TokenValidatorResult.success();
+        } catch (RuntimeException exception) {
+            return invalidToken("Token session is inactive");
         }
-        if (tokenBlacklistRepository.existsByJti(jti)) {
-            return invalidToken("Token has been revoked");
-        }
-        Optional<UserEntity> user = userRepository.findById(userId);
-        if (user.isEmpty()) {
-            return invalidToken("Token user does not exist");
-        }
-        if (!user.get().isEnabled()) {
-            return invalidToken("Token user is disabled");
-        }
-        return OAuth2TokenValidatorResult.success();
     }
 
     private OAuth2TokenValidatorResult invalidToken(String description) {
@@ -238,26 +289,49 @@ public class TokenValidationService {
         return audience.size() == 1 ? audience.get(0) : audience;
     }
 
+    private long numberClaim(Map<String, ?> claims, String name) {
+        Object value = claims.get(name);
+        if (!(value instanceof Number number)) {
+            throw new JwtException("Token " + name + " claim is invalid");
+        }
+        return number.longValue();
+    }
+
+    private void requireUuid(String value) {
+        if (value == null || value.isBlank()) {
+            throw new JwtException("Token family identifier is missing");
+        }
+        try {
+            if (!UUID.fromString(value).toString().equals(value)) {
+                throw new IllegalArgumentException();
+            }
+        } catch (IllegalArgumentException exception) {
+            throw new JwtException("Token family identifier is invalid");
+        }
+    }
+
     public record ValidatedToken(
             String jti,
             TokenBlacklistEntity.TokenType tokenType,
             String userId,
             String username,
+            String familyId,
+            long generation,
+            long securityVersion,
+            Instant authTime,
             Instant issuedAt,
             Instant expiresAt) {
     }
 
     public record IntrospectedToken(
             String subject,
-            String userId,
-            String username,
-            String email,
-            Object authorities,
             Object audience,
-            String issuer,
             Instant issuedAt,
             Instant expiresAt,
-            String jti,
+            String familyId,
+            long generation,
+            long securityVersion,
+            Instant authTime,
             String type) {
     }
 }

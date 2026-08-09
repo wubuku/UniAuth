@@ -7,7 +7,8 @@ import org.dddml.uniauth.dto.RegisterRequest;
 import org.dddml.uniauth.dto.UserDto;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
-import org.dddml.uniauth.service.JwtTokenService;
+import org.dddml.uniauth.service.TokenIssuanceFacade;
+import org.dddml.uniauth.service.TokenSessionTransactionService;
 import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.support.PostgreSqlIntegrationTest;
 import org.junit.jupiter.api.Test;
@@ -40,6 +41,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.issueTokens;
 
 @SpringBootTest(properties = {
         "app.frontend.url=https://frontend.example.test/console",
@@ -62,7 +64,10 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
     private UserService userService;
 
     @Autowired
-    private JwtTokenService jwtTokenService;
+    private TokenSessionTransactionService tokenSessionTransactionService;
+
+    @Autowired
+    private TokenIssuanceFacade tokenIssuanceFacade;
 
     @Autowired
     private OAuth2AuthorizationRequestResolver authorizationRequestResolver;
@@ -103,12 +108,7 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
     @Test
     void authenticatedCallbackBindsNewProviderToExistingUser() throws Exception {
         UserDto localUser = registerLocalUser("oauth-binding");
-        String accessToken = jwtTokenService.generateAccessToken(
-                localUser.getUsername(),
-                localUser.getEmail(),
-                localUser.getId(),
-                localUser.getAuthorities()
-        );
+        String accessToken = accessToken(localUser);
         String providerSubject = "github-binding-" + UUID.randomUUID();
 
         JsonNode response = executeJsonCallback(
@@ -134,12 +134,7 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
         String ownerId = ownerResponse.path("user").path("id").asText();
 
         UserDto secondUser = registerLocalUser("oauth-conflict-target");
-        String secondUserToken = jwtTokenService.generateAccessToken(
-                secondUser.getUsername(),
-                secondUser.getEmail(),
-                secondUser.getId(),
-                secondUser.getAuthorities()
-        );
+        String secondUserToken = accessToken(secondUser);
         JsonNode conflictResponse = executeJsonCallback(
                 authentication("github", providerSubject),
                 secondUserToken
@@ -197,12 +192,7 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
         String providerSubject = "github-redirect-conflict-" + UUID.randomUUID();
         executeJsonCallback(authentication("github", providerSubject), null);
         UserDto secondUser = registerLocalUser("oauth-redirect-conflict");
-        String secondUserToken = jwtTokenService.generateAccessToken(
-                secondUser.getUsername(),
-                secondUser.getEmail(),
-                secondUser.getId(),
-                secondUser.getAuthorities()
-        );
+        String secondUserToken = accessToken(secondUser);
         String state = URLEncoder.encode(
                 """
                 {"redirect_uri":"https://evil.example/collect","response_type":"redirect"}
@@ -232,12 +222,7 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
         String providerSubject = "github-allowed-redirect-" + UUID.randomUUID();
         executeJsonCallback(authentication("github", providerSubject), null);
         UserDto secondUser = registerLocalUser("oauth-allowed-redirect");
-        String secondUserToken = jwtTokenService.generateAccessToken(
-                secondUser.getUsername(),
-                secondUser.getEmail(),
-                secondUser.getId(),
-                secondUser.getAuthorities()
-        );
+        String secondUserToken = accessToken(secondUser);
         String state = URLEncoder.encode(
                 """
                 {
@@ -337,6 +322,14 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
                     });
         }
         return responseBody;
+    }
+
+    private String accessToken(UserDto user) {
+        return issueTokens(
+                tokenSessionTransactionService,
+                tokenIssuanceFacade,
+                user.getId()
+        ).accessToken();
     }
 
     private OAuth2AuthenticationToken authentication(String provider, String subject) {

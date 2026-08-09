@@ -91,7 +91,7 @@
 | P1 | 说明参考服务 Flyway schema-owner 配置不可被外部覆盖，并记录 Java/Shell/ApplicationContext/Flyway guard 证据 | 已完成 |
 | P1 | 说明参考服务缺失 migration location 与非法 migration 命名必须 fail closed，并记录覆盖拒绝证据 | 已完成 |
 | P1 | 说明参考服务 JPA repository 测试必须使用 PostgreSQL + Flyway + Hibernate validate，并记录真实约束断言 | 已完成 |
-| P1 | 明确邮件 relation 与 UniAuth V1-V6 无命名冲突，并记录同 public schema 下独立 history、受控 baseline V0、精确 peer history、半成品 peer 拒绝、双启动顺序与选择性备份边界 | 已完成 |
+| P1 | 明确邮件 relation 与 UniAuth V1-V7 无命名冲突，并记录同 public schema 下独立 history、受控 baseline V0、精确 peer history、半成品 peer 拒绝、双启动顺序与选择性备份边界 | 已完成 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -117,17 +117,18 @@
 ## 已知事实与待修复项
 
 - `dev`、`test`、`prod` 已统一为显式 PostgreSQL 16，SQLite runtime 已退役。
-- Flyway V1 baseline + V2 + V3 + V4 + V5 + V6 已接管 schema，并加固登录方式行形状、
+- Flyway V1 baseline + V2 + V3 + V4 + V5 + V6 + V7 已接管 schema，并加固登录方式行形状、
   primary、集合变更 CAS、其余目标实体约束、Web3/SIWE challenge、canonical email、
-  HMAC challenge、transactional outbox、认证限流和安全事件；旧 SQL 已归档到 runtime
+  HMAC challenge、transactional outbox、认证限流、安全事件、token family、用户
+  security version 和 session claim/rotation/revoke 契约；旧 SQL 已归档到 runtime
   classpath 外。
 - Java 已有 PostgreSQL/Testcontainers 集成测试；当前完整 Maven 为
-  212/212，0 failures/errors/skips。
+  219/219，0 failures/errors/skips。
 - HTTP Shell E2E 当前 16/16、Flyway baseline guard 16/16、Mock Playwright
-  28/28、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 18/18、邮件 REST stub
-  contract 12/12；同页面和同源双标签页 refresh 协调、跨标签页 refresh/logout
-  迟到写回拒绝、logout 存储边界、Python `jti` 契约与跨 hostname
-  Bearer/Cookie 隔离均已进入统一门禁。
+  28/28、生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器
+  20/20、邮件 REST stub contract 12/12；同页面和同源双标签页 refresh 协调、
+  跨标签页 refresh/logout 迟到写回拒绝、logout 存储边界、完整 session claims、
+  生产 diagnostics 排除与跨 hostname Bearer/Cookie 隔离均已进入统一门禁。
 - 前端严格 `npm ci`、high/critical 依赖审计、lint、typecheck 和生产构建通过；
   `scripts/verify.sh` 与 GitHub Actions 使用统一验证入口。
 - npm audit 仍有 2 个 React Router moderate advisories；当前客户端路由 pathname
@@ -168,17 +169,18 @@
   reconciliation、同步拒绝/限流、响应丢失、重启和终态失败已有 PostgreSQL、HTTP、
   Playwright 与 Python stub 契约覆盖。参考邮件服务不带 key 的 template 请求以及
   simple/batch 端点仍可能重复入队，SMTP 投递仍是至少一次语义。
-- token blacklist 已接入当前格式 access/refresh 校验、refresh 单次消费、logout
-  持久撤销和 introspection；仍缺 token family/security version，Python 离线 JWKS
-  校验也不能感知数据库撤销。
+- token family/security version 已接入 access/refresh 严格校验、generation CAS、
+  replay/logout/凭据变化整族撤销和受鉴权 strict introspection。refresh token 只通过
+  HttpOnly Cookie 传递；普通生产构建不暴露或持久化 access token，显式 diagnostics
+  dev/E2E 才保留跨域 Bearer 演示。Python 离线 JWKS 校验仍不能感知数据库实时撤销。
 - Web3 的 `isNewUser`、bind 返回处理、EIP-191 字节长度、完整 SIWE message 绑定、
   PostgreSQL nonce 原子 upsert、带 message/有效期条件的原子消费和并发重放均已
   修复并由 V5、Java 集成测试和真实 HTTP E2E 覆盖；后续只在新的固定范围中继续
   复核与 token transport、domain allowlist 等相邻边界的交互。
 - `blacksheep_dev` 只读 baseline rehearsal 已通过，但 baseline apply 尚未执行。
 
-这些问题的总路线图见 `HARDENING_IMPLEMENTATION_PLAN.md`，原冻结范围和退出顺序见
-`FINAL_HARDENING_EXIT_PLAN.md`；两者现均为参考材料，不自动驱动后续批次。
+这些问题的总路线图见 `HARDENING_IMPLEMENTATION_PLAN.md`；当前固定范围、退出顺序和
+F3-F5 后续实施边界由 `FINAL_HARDENING_EXIT_PLAN.md` 驱动。
 `NEXT_HARDENING_IMPLEMENTATION_PLAN.md` 只保留历史批次和验证记录。当前邮箱参考
 服务收尾完成后，文档工作回到按具体 feature/fix/maintenance 需求更新，不继续开放
 一般性加固循环。
@@ -217,7 +219,7 @@ git diff --check
 |--------|------|------|
 | P0 | 建立真实邮箱注册/登录、资源回跳和跨 origin Bearer 的 Live 复现指南 | 已完成 |
 | P0 | 记录 Python 资源服务器是纯 REST API，展示页属于 React `/resource-test` | 已完成 |
-| P0 | 明确 JSON/localStorage Bearer 与 HttpOnly Cookie 的双重传递和安全边界 | 已完成 |
+| P0 | 明确显式 diagnostics JSON/localStorage Bearer 与普通生产 HttpOnly Cookie 边界 | 已完成 |
 | P1 | 索引五个独立服务启动脚本、聚合器、Playwright 配置和故障排查 | 已完成 |
 | P1 | 将真实浏览器套件纳入统一门禁与 Agent 快速命令 | 已完成 |
 | P2 | 独立资源前端域的 OAuth/OIDC Code+PKCE 或 BFF 设计 | 延后，属于新功能 |

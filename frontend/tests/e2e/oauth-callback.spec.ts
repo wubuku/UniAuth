@@ -1,4 +1,9 @@
 import { expect, test } from '@playwright/test';
+import { mockCsrfBootstrap } from './csrf';
+
+test.beforeEach(async ({ page }) => {
+  await mockCsrfBootstrap(page);
+});
 
 async function openClientRoute(
   page: Parameters<typeof test>[0]['page'],
@@ -23,7 +28,6 @@ test('OAuth callback processes once under React StrictMode and loads the user', 
       body: JSON.stringify({
         message: 'Token refreshed successfully',
         accessToken: 'callback.access.token',
-        refreshToken: 'callback.refresh.token',
         accessTokenExpiresIn: 3600,
         refreshTokenExpiresIn: 604800,
         tokenType: 'Bearer',

@@ -232,6 +232,7 @@ echo "Email browser E2E 5/6: start real Vite frontend"
 FRONTEND_PORT="$FRONTEND_PORT" \
 VITE_DEV_PROXY_TARGET="$BACKEND_URL" \
 VITE_RESOURCE_SERVER_URL="$RESOURCE_URL" \
+VITE_AUTH_DIAGNOSTICS=true \
     "$PROJECT_DIR/scripts/email-login-e2e/start-frontend.sh" \
     >"$FRONTEND_LOG" 2>&1 &
 FRONTEND_PID=$!

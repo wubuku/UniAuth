@@ -50,6 +50,7 @@ class AuthCookieServiceTest {
                 .map(Cookie::getName))
                 .containsExactly(
                         "JSESSIONID",
+                        "__Host-JSESSIONID",
                         "accessToken",
                         "refreshToken",
                         "id_token",

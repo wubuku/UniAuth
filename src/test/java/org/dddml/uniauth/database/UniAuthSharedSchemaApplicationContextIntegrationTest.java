@@ -97,7 +97,7 @@ class UniAuthSharedSchemaApplicationContextIntegrationTest {
     void startsOnAnExistingEmailPublicSchemaAndKeepsIndependentHistory() {
         assertThat(uniAuthFlyway.info().current()).isNotNull();
         assertThat(uniAuthFlyway.info().current().getVersion().toString())
-            .isEqualTo("6");
+            .isEqualTo("7");
         assertThat(uniAuthFlyway.migrate().migrationsExecuted).isZero();
 
         assertThat(jdbcTemplate.queryForObject(
@@ -115,11 +115,11 @@ class UniAuthSharedSchemaApplicationContextIntegrationTest {
             SELECT count(*)
             FROM uniauth_flyway_schema_history
             WHERE type = 'SQL'
-              AND version IN ('1', '2', '3', '4', '5', '6')
+              AND version IN ('1', '2', '3', '4', '5', '6', '7')
               AND success
             """,
             Integer.class
-        )).isEqualTo(6);
+        )).isEqualTo(7);
         assertThat(jdbcTemplate.queryForObject(
             """
             SELECT count(*)
@@ -133,6 +133,10 @@ class UniAuthSharedSchemaApplicationContextIntegrationTest {
             "SELECT to_regclass('public.users')",
             String.class
         )).isEqualTo("users");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT to_regclass('public.token_families')",
+            String.class
+        )).isEqualTo("token_families");
         assertThat(jdbcTemplate.queryForObject(
             "SELECT to_regclass('public.email_queue')",
             String.class

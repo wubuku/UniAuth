@@ -24,9 +24,9 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - 本地用户名/密码注册与登录。
 - Google、GitHub、X OAuth2 Client 登录。
 - 多登录方式绑定、移除和主方式选择。
-- 邮箱验证码注册与密码重置的部分实现。
+- 邮箱验证码注册、邮箱加密码登录与密码重置。
 - Web3 钱包 nonce、签名验证、登录和绑定。
-- 自定义 RS256 access/refresh token。
+- 自定义 RS256 access/refresh token、持久 token family 和 refresh generation CAS。
 - JWKS 与 token introspection。
 - Spring Security Resource Server 保护 `/api/**`。
 - Spring Session JDBC。
@@ -41,9 +41,13 @@ Authorization Server 协议已经完整接通。
 
 1. `AuthController` 接收用户名和密码。
 2. `CustomUserDetailsService` / `UserService` 从 `user_login_methods` 验证本地方式。
-3. `JwtTokenService` 生成 access token 和 refresh token。
-4. 响应通常同时写入 HttpOnly cookie 和 JSON body。
-5. 前端当前还会把 access token 写入 localStorage，用于异构资源服务器演示。
+3. `TokenIssuanceFacade` 在事务中创建持久 token family/session snapshot，再由
+   `JwtTokenService` 从同一快照生成 access token 和 refresh token。
+4. 响应统一写入 access/refresh HttpOnly Cookie；refresh token 不进入 JSON，
+   access token 仅在显式 `app.auth.transport.expose-access-token=true` 时进入 JSON。
+5. 普通生产前端通过 Cookie 和 canonical current-user API 恢复身份，不持久化
+   access token。只有显式 diagnostics dev/E2E 模式为异构资源服务器演示把 JSON
+   access token 写入 localStorage。
 
 ### OAuth2 登录
 
@@ -51,7 +55,8 @@ Authorization Server 协议已经完整接通。
 2. Spring Security OAuth2 Client 完成 provider 回调。
 3. `SecurityConfig.oauth2SuccessHandler` 识别登录或绑定场景。
 4. `UserService.getOrCreateOAuthUser` 查找、创建或绑定登录方式。
-5. 自定义 JWT 被签发，随后返回 JSON 或重定向到配置的前端地址。
+5. `TokenIssuanceFacade` 创建或替换 token family、写入 HttpOnly Cookie，随后重定向
+   到配置的前端地址；前端回调页通过 refresh/current-user API 完成状态恢复。
 
 ### 邮箱注册、密码登录与密码重置
 
@@ -74,11 +79,11 @@ SMTP 或邮件供应商。外部服务必须提供 health、模板邮件端点�
 仓库提供一个独立的[邮件服务参考实现](../reference/email-service/README.md)，其 schema
 由独立 Flyway V1/V2/V3/V4/V5 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP
 E2E 验证。数据库默认使用独立 PostgreSQL；显式 `shared-uniauth` 可在获准的空
-`public` schema 先启动任一侧，或与完整 UniAuth V1-V6 peer 使用独立 history table
+`public` schema 先启动任一侧，或与完整 UniAuth V1-V7 peer 使用独立 history table
 共存。两种启动顺序由共享 advisory lock 串行化，并有真实 ApplicationContext 与
 双进程 E2E。邮件组件只创建
 `email_queue`、`email_logs`、对应序列/索引/约束和
-`email_service_flyway_schema_history`；这些 relation 名称与 UniAuth V1-V6 无冲突。
+`email_service_flyway_schema_history`；这些 relation 名称与 UniAuth V1-V7 无冲突。
 原始兼容问题是后启动 Flyway 面对非空 `public` schema 且缺少自身 history，而不是
 业务表重名。受控兼容路径只在 peer 完整、本侧 relation 不存在且 history 无失败记录
 时创建 baseline V0，`baseline-on-migrate` 仍保持 `false`。非 PostgreSQL datasource 会
@@ -129,8 +134,12 @@ UniAuth 用户/认证表；disposable 空库恢复后会启动真实 Spring 应�
 
 1. `ResourceServerConfig` 从 `Authorization: Bearer` 或 `accessToken` cookie 取 token。
 2. `JwtDecoder` 使用当前 RSA 公钥验证签名、时间、issuer、audience 和 `type=access`。
-3. `authorities` claim 转换为 Spring Security authority。
-4. `/api/user` 和其他 `/api/**` 受资源服务器链保护。
+3. `AuthenticationCredentialResolver` 对重复、空值、不同 token 或不同身份的
+   Authorization/Cookie 凭据失败关闭。
+4. `TokenValidationService` 继续核对用户 security version、token family、generation
+   和撤销状态；`authorities` claim 转换为 Spring Security authority。
+5. `/api/user` 和其他 `/api/**` 受资源服务器链保护；带认证 Cookie 的 unsafe 请求
+   还必须提交 Session bootstrap 返回的精确单值 CSRF header。
 
 ### Python 资源服务器
 
@@ -138,12 +147,14 @@ Python 组件是纯 REST API，不提供资源展示页面；当前资源页面�
 `/resource-test`。该页面与 UniAuth 登录页面属于同一个前端 origin，但 Python API
 可以部署在另一个 origin。
 
-当前 UniAuth 对 access token 采用双重传递：后端写入 HttpOnly Cookie，同时在登录和
-注册 JSON 响应中返回 token。前端把 JSON token 暂存于 localStorage，并在访问 Python
-API 时构造 `Authorization: Bearer <token>`，并使用 `credentials: omit` 禁止资源请求
-携带 Cookie。因此该跨 origin 演示依赖 JSON/localStorage 中的 Bearer token，而不是
-HttpOnly Cookie；后者主要供 UniAuth 自身同站请求使用。这条 localStorage 路径会扩大
-XSS 风险，只是当前演示兼容方案，不是生产最佳实践。
+普通生产构建不包含 `/test`、`/resource-test` 或对应诊断 bundle，后端 `prod`
+profile 也不在 JSON 中暴露 access token。只有 Vite dev server 显式设置
+`VITE_AUTH_DIAGNOSTICS=true`，并配合后端显式
+`app.auth.transport.expose-access-token=true` 时，诊断页面才会把 JSON access token
+暂存于 localStorage，并在访问 Python API 时构造
+`Authorization: Bearer <token>`；请求使用 `credentials: omit`，不会携带 Cookie。
+因此该跨 origin 测试依赖显式 diagnostics 模式中的 JSON/localStorage Bearer token，
+不是普通生产 transport。HttpOnly Cookie 主要供 UniAuth 自身同站请求使用。
 
 生产部署通常选择以下一种边界：
 
@@ -188,8 +199,8 @@ Python API 的验证步骤：
   主前端 base path 下的登录页，成功与失败回跳都保留配置的 context path；
   `Referer` 不作为 Session redirect 来源。
 - access/refresh Cookie 已集中到 `AuthCookieService`，prod Secure 配置有启动期
-  fail-closed guard；header/cookie 双凭据、CSRF 和最终 token transport 仍待
-  Batch C 原子切换。
+  fail-closed guard；header/cookie 双凭据消歧、Session CSRF、refresh Cookie-only
+  和生产诊断路由隔离已完成。
 
 ## 身份模型
 
@@ -225,11 +236,20 @@ access token 使用 RS256，当前默认：
 | `authorities` | 权限集合 |
 | `type` | `access` 或 `refresh` |
 | `jti` | 每个 token 的唯一 ID |
+| `sid` | 持久 token family UUID |
+| `generation` | 当前 refresh generation |
+| `ver` | 用户 token security version |
+| `auth_time` | 初始真实认证时间；refresh 不推进 |
 | issuer | `https://auth.example.com` |
 | audience | `resource-server`（access token） |
 | `kid` | `key-1` |
 
 access token 默认 1 小时，refresh token 默认 7 天。
+同一 pair 从一个 `TokenSessionSnapshot` 签发并共享 `sid`、generation、`ver` 和
+`auth_time`。refresh 通过 PostgreSQL CAS 单次推进 generation；replay、logout、
+密码重置或凭据变化可以撤销整族未知后继 token。Java Resource Server 和 strict
+introspection 会查询持久 session 状态；纯 JWKS 的 Python 示例只能验证签名与 claims，
+不能实时感知 PostgreSQL 撤销。
 
 `JwtTokenService` 构造阶段读取 `jwt.rsa.key-file`。默认路径是 ignored 的
 `.local/uniauth/rsa-keys.ser`，新生成文件在 POSIX 文件系统上限制为 owner read/write。
@@ -243,21 +263,24 @@ access token 默认 1 小时，refresh token 默认 7 天。
 | `test` | PostgreSQL | Flyway migrate/validate；Hibernate `validate` |
 | `prod` | PostgreSQL | Flyway migrate/validate；Hibernate `validate` |
 
-当前问题：
+当前约束：
 
 - 演示数据默认关闭；显式启用时只允许 disposable test/demo 数据库并只 upsert 受管账户。
 - Flyway 当前为 dev-derived V1 baseline + V2 登录方式约束 + V3 登录方式 revision
   CAS + V4 实体约束与索引对齐 + V5 Web3/SIWE challenge message 绑定 + V6 邮箱身份/
-  challenge/outbox/限流/安全事件加固；不得修改已发布的 V1/V2/V3/V4/V5/V6。
+  challenge/outbox/限流/安全事件加固 + V7 token family/security version/session
+  claim 加固；不得修改已发布的 V1/V2/V3/V4/V5/V6/V7。
 - V2 已对齐登录方式的时区/nullability，并增加 provider/行形状与 primary 唯一约束；
   V3 已保护 remove/set-primary 组合并发；V4 已对齐 users、Web3 nonce、email
   verification 和 token blacklist 的目标 nullability/default/check，并补齐 email 查询
-  索引、移除可证明冗余的索引。其余 schema 和数据预检仍归后续 H1.4 切片。
+  索引、移除可证明冗余的索引。
 - V5 将 Web3 nonce 与服务端完整 SIWE message 绑定；nonce 生成采用 PostgreSQL
   upsert，验证采用带 message 和有效期条件的原子删除，V5 migration 会失效旧 challenge。
 - V6 规范化 contact email 与 email-shaped LOCAL username，分离 synthetic identity，
   退役明文 code/metadata，并增加唯一 active challenge、transactional outbox、
   PostgreSQL 认证限流和 append-only security event。
+- V7 增加 `users.token_security_version` 和 `token_families`，固定 family owner、
+  generation、`auth_time`、expiry、revoke 状态及查询索引。
 - Spring Session 表由 Flyway V1 管理，框架自动建表关闭。
 - `blacksheep_dev` 已通过只读 baseline rehearsal，尚未执行 baseline apply。
 
@@ -270,8 +293,9 @@ access token 默认 1 小时，refresh token 默认 7 天。
 | 本地认证 | `AuthController`、`UserService`、`CustomUserDetailsService` |
 | OAuth2 登录/绑定 | `SecurityConfig`、`UserService`、`LoginMethodService` |
 | CORS 与 OAuth2 回跳边界 | `CorsProperties`、`CorsConfig`、`FrontendProperties`、`OAuth2RedirectPolicy` |
-| JWT | `JwtTokenService`、`TokenController`、`OAuth2TokenController` |
-| API 认证 | `ResourceServerConfig`、`ApiAuthController` |
+| JWT/session | `JwtTokenService`、`TokenIssuanceFacade`、`TokenSessionTransactionService`、`TokenController` |
+| API 认证 | `ResourceServerConfig`、`AuthenticationCredentialResolver`、`TokenValidationService`、`ApiAuthController` |
+| CSRF/transport | `CsrfBootstrapController`、`CsrfProtectionFilter`、`AuthCookieService`、`AuthTransportProperties` |
 | 邮箱验证码 | `EmailAuthController`、`EmailVerificationCodeService` |
 | 密码重置 | `ForgotPasswordController`、`ForgotPasswordService` |
 | Web3 | `Web3AuthController`、`Web3AuthService`、`Web3NonceService` |

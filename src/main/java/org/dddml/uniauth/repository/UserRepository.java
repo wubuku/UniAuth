@@ -26,6 +26,16 @@ public interface UserRepository extends JpaRepository<UserEntity, String> {
     )
     Optional<Long> findLoginMethodsRevision(@Param("userId") String userId);
 
+    @Query(
+        value = """
+                SELECT token_security_version
+                FROM users
+                WHERE id = :userId
+                """,
+        nativeQuery = true
+    )
+    Optional<Long> findTokenSecurityVersion(@Param("userId") String userId);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(
         value = """
@@ -39,5 +49,20 @@ public interface UserRepository extends JpaRepository<UserEntity, String> {
     int compareAndIncrementLoginMethodsRevision(
         @Param("userId") String userId,
         @Param("expectedRevision") long expectedRevision
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+                UPDATE users
+                SET token_security_version = token_security_version + 1
+                WHERE id = :userId
+                  AND token_security_version = :expectedVersion
+                """,
+        nativeQuery = true
+    )
+    int compareAndIncrementTokenSecurityVersion(
+        @Param("userId") String userId,
+        @Param("expectedVersion") long expectedVersion
     );
 }

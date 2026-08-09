@@ -6,8 +6,9 @@ import org.dddml.uniauth.dto.RegisterRequest;
 import org.dddml.uniauth.dto.UserDto;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
-import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.LoginMethodService;
+import org.dddml.uniauth.service.TokenIssuanceFacade;
+import org.dddml.uniauth.service.TokenSessionTransactionService;
 import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.support.PostgreSqlIntegrationTest;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.dddml.uniauth.support.AuthIntegrationTestSupport.issueTokens;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
@@ -51,7 +53,10 @@ class LoginMethodConcurrencyIntegrationTest extends PostgreSqlIntegrationTest {
     private UserService userService;
 
     @Autowired
-    private JwtTokenService jwtTokenService;
+    private TokenSessionTransactionService tokenSessionTransactionService;
+
+    @Autowired
+    private TokenIssuanceFacade tokenIssuanceFacade;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -170,12 +175,7 @@ class LoginMethodConcurrencyIntegrationTest extends PostgreSqlIntegrationTest {
                 user.getEmail(),
                 "Primary Google"
         );
-        String accessToken = jwtTokenService.generateAccessToken(
-                user.getUsername(),
-                user.getEmail(),
-                user.getId(),
-                Set.of("ROLE_USER")
-        );
+        String accessToken = accessToken(user);
 
         installPrimaryClearDelayTrigger();
         try {
@@ -345,12 +345,11 @@ class LoginMethodConcurrencyIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     private String accessToken(UserDto user) {
-        return jwtTokenService.generateAccessToken(
-                user.getUsername(),
-                user.getEmail(),
-                user.getId(),
-                Set.of("ROLE_USER")
-        );
+        return issueTokens(
+                tokenSessionTransactionService,
+                tokenIssuanceFacade,
+                user.getId()
+        ).accessToken();
     }
 
     private void assertOneSuccessAndOneConflict(

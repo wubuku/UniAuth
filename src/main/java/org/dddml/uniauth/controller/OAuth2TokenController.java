@@ -1,27 +1,39 @@
 package org.dddml.uniauth.controller;
 
-import org.dddml.uniauth.service.JwtTokenService;
-import org.dddml.uniauth.service.TokenValidationService;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.jwk.RSAKey;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.dddml.uniauth.config.IntrospectionProperties;
+import org.dddml.uniauth.service.AuthCookieService;
+import org.dddml.uniauth.service.AuthRateLimiter;
+import org.dddml.uniauth.service.JwtTokenService;
+import org.dddml.uniauth.service.TokenIntrospectionService;
+import org.dddml.uniauth.service.TokenValidationService;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.MultiValueMap;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-import jakarta.servlet.http.HttpServletRequest;
-import java.io.BufferedReader;
-import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.PublicKey;
 import java.security.interfaces.RSAPublicKey;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
-/**
- * OAuth2 Token 管理控制器
- * 提供 JWKS 端点和 Token 验证端点
- * 用于支持异构资源服务器的 Token 验证
- */
 @Slf4j
 @RestController
 @RequestMapping("/oauth2")
@@ -29,138 +41,177 @@ import java.util.*;
 public class OAuth2TokenController {
 
     private final JwtTokenService jwtTokenService;
-    private final TokenValidationService tokenValidationService;
+    private final TokenIntrospectionService tokenIntrospectionService;
+    private final IntrospectionProperties introspectionProperties;
+    private final AuthRateLimiter authRateLimiter;
+    private final AuthCookieService authCookieService;
 
-    /**
-     * JWKS 端点
-     * 返回用于验证 JWT 签名的公钥集合
-     * 符合 RFC 7517 (JSON Web Key) 和 RFC 7518 规范
-     */
     @GetMapping("/jwks")
     public ResponseEntity<?> getJwks() {
-        log.debug("JWKS endpoint requested");
         try {
             PublicKey publicKey = jwtTokenService.getPublicKey();
-            String kid = jwtTokenService.getToken().getKid();  // 从配置文件读取 kid
-            
-            // 将公钥转换为 JWK 格式
-            if (publicKey instanceof RSAPublicKey) {
-                RSAPublicKey rsaKey = (RSAPublicKey) publicKey;
-                RSAKey jwk = new RSAKey.Builder(rsaKey)
-                        .keyID(kid)  // 使用与 Token 头中 kid 相同的值
-                        .algorithm(JWSAlgorithm.RS256)
-                        .build();
-                
-                // 使用RSAKey的toJSONObject()方法生成正确的JWK格式
-                List<Map<String, Object>> keys = new ArrayList<>();
-                keys.add(jwk.toJSONObject());
-                
-                log.debug("JWKS returned successfully");
-                return ResponseEntity.ok(Map.of("keys", keys));
-            } else {
-                log.error("Public key is not RSA key");
-                return ResponseEntity.status(500).body(Map.of(
-                        "error", "Internal server error",
-                        "message", "Public key type not supported"
+            if (!(publicKey instanceof RSAPublicKey rsaKey)) {
+                return ResponseEntity.internalServerError().body(Map.of(
+                        "error", "JWKS generation failed"
                 ));
             }
-        } catch (Exception e) {
-            log.error("Error generating JWKS");
-            return ResponseEntity.status(500).body(Map.of(
-                    "error", "Internal server error",
-                    "message", "JWKS generation failed"
+            RSAKey jwk = new RSAKey.Builder(rsaKey)
+                    .keyID(jwtTokenService.getToken().getKid())
+                    .algorithm(JWSAlgorithm.RS256)
+                    .build();
+            return ResponseEntity.ok(Map.of(
+                    "keys",
+                    List.of(jwk.toJSONObject())
+            ));
+        } catch (RuntimeException exception) {
+            log.error("JWKS generation failed");
+            return ResponseEntity.internalServerError().body(Map.of(
+                    "error", "JWKS generation failed"
             ));
         }
     }
 
-    /**
-     * Token 内省端点
-     * 验证 Token 有效性并返回 Token 信息
-     * 符合 RFC 7662 (Token Introspection) 规范
-     * 支持两种路径：/oauth2/introspect 和 /oauth2/api/introspect
-     * 支持两种请求格式：查询参数和表单提交
-     */
-    @PostMapping({"/introspect", "/api/introspect"})
+    @PostMapping(
+        value = "/introspect",
+        consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE,
+        produces = MediaType.APPLICATION_JSON_VALUE
+    )
     public ResponseEntity<?> introspect(
-            @RequestParam(value = "token", required = false) String token,
-            @RequestBody(required = false) MultiValueMap<String, String> formData,
+            @RequestBody MultiValueMap<String, String> form,
             HttpServletRequest request) {
-        log.info("Token introspection request received");
-        
-        // 尝试从多个来源获取token
-        String tokenValue = token;
-        
-        // 如果查询参数中没有token，尝试从表单数据中获取
-        if (tokenValue == null && formData != null) {
-            tokenValue = formData.getFirst("token");
+        Optional<String> clientId = authenticateClient(request);
+        if (clientId.isEmpty()) {
+            return ResponseEntity.status(401)
+                    .header(
+                            HttpHeaders.WWW_AUTHENTICATE,
+                            "Basic realm=\"token-introspection\""
+                    )
+                    .body(Map.of("active", false));
         }
-        
-        // 如果还是没有token，尝试从请求体中直接获取（处理原始POST请求）
-        if (tokenValue == null) {
-            try {
-                StringBuilder sb = new StringBuilder();
-                BufferedReader reader = request.getReader();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    sb.append(line);
-                }
-                String body = sb.toString();
-                if (body != null && body.contains("token=")) {
-                    // 解析表单数据格式的请求体
-                    String[] parts = body.split("&");
-                    for (String part : parts) {
-                        if (part.startsWith("token=")) {
-                            tokenValue = part.substring("token=".length());
-                            tokenValue = URLDecoder.decode(tokenValue, "UTF-8");
-                            break;
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                log.debug("Introspection request body could not be parsed");
-            }
+        if (hasAuthenticationCookie(request)
+                || request.getQueryString() != null
+                || form.size() != 1
+                || !form.containsKey("token")
+                || form.get("token") == null
+                || form.get("token").size() != 1
+                || form.getFirst("token") == null
+                || form.getFirst("token").isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("active", false));
         }
-        
-        if (tokenValue == null || tokenValue.trim().isEmpty()) {
-            log.warn("Empty token provided for introspection");
+
+        authRateLimiter.requireAllowed(
+                AuthRateLimiter.Policy.INTROSPECTION,
+                request.getRemoteAddr(),
+                clientId.orElseThrow()
+        );
+        Optional<TokenValidationService.IntrospectedToken> result =
+                tokenIntrospectionService.introspect(
+                        form.getFirst("token")
+                );
+        if (result.isEmpty()) {
             return ResponseEntity.ok(Map.of("active", false));
         }
-        
+
+        TokenValidationService.IntrospectedToken token = result.orElseThrow();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("active", true);
+        body.put("sub", token.subject());
+        body.put("type", token.type());
+        body.put("sid", token.familyId());
+        body.put("generation", token.generation());
+        body.put("ver", token.securityVersion());
+        body.put(
+                "auth_time",
+                token.authTime() == null
+                        ? 0
+                        : token.authTime().getEpochSecond()
+        );
+        body.put(
+                "iat",
+                token.issuedAt() == null
+                        ? null
+                        : token.issuedAt().getEpochSecond()
+        );
+        body.put(
+                "exp",
+                token.expiresAt() == null
+                        ? null
+                        : token.expiresAt().getEpochSecond()
+        );
+        if (token.audience() != null) {
+            body.put("aud", token.audience());
+        }
+        return ResponseEntity.ok(body);
+    }
+
+    private Optional<String> authenticateClient(HttpServletRequest request) {
+        List<String> headers = headerValues(request, HttpHeaders.AUTHORIZATION);
+        if (headers.size() != 1) {
+            return Optional.empty();
+        }
+        String authorization = headers.get(0);
+        if (!authorization.startsWith("Basic ")
+                || authorization.length() <= "Basic ".length()) {
+            return Optional.empty();
+        }
         try {
-            TokenValidationService.IntrospectedToken tokenInfo =
-                    tokenValidationService.introspect(tokenValue);
-            
-            log.debug("Token introspection succeeded");
-            
-            // 构造内省响应
-            Map<String, Object> response = new LinkedHashMap<>();
-            response.put("active", true);
-            response.put("sub", tokenInfo.subject());
-            response.put("userId", tokenInfo.userId());
-            response.put("username", tokenInfo.username());
-            response.put("email", tokenInfo.email());
-            response.put("authorities", tokenInfo.authorities());
-            response.put("aud", tokenInfo.audience());
-            response.put("iss", tokenInfo.issuer());
-            response.put("iat", tokenInfo.issuedAt() != null
-                    ? tokenInfo.issuedAt().getEpochSecond()
-                    : null);
-            response.put("exp", tokenInfo.expiresAt() != null
-                    ? tokenInfo.expiresAt().getEpochSecond()
-                    : null);
-            response.put("jti", tokenInfo.jti());
-            response.put("type", tokenInfo.type());
-            response.put("token_type", "Bearer");
-            
-            return ResponseEntity.ok(response);
-            
-        } catch (Exception e) {
-            log.warn("Token introspection failed");
-            return ResponseEntity.ok(Map.of(
-                    "active", false,
-                    "error", "Invalid token"
-            ));
+            byte[] decoded = Base64.getDecoder().decode(
+                    authorization.substring("Basic ".length())
+            );
+            String credentials = new String(
+                    decoded,
+                    StandardCharsets.UTF_8
+            );
+            int separator = credentials.indexOf(':');
+            if (separator <= 0
+                    || separator != credentials.lastIndexOf(':')) {
+                return Optional.empty();
+            }
+            String clientId = credentials.substring(0, separator);
+            String clientSecret = credentials.substring(separator + 1);
+            if (!constantTimeEquals(
+                    clientId,
+                    introspectionProperties.getClientId()
+            ) || !constantTimeEquals(
+                    clientSecret,
+                    introspectionProperties.getClientSecret()
+            )) {
+                return Optional.empty();
+            }
+            return Optional.of(clientId);
+        } catch (IllegalArgumentException exception) {
+            return Optional.empty();
         }
     }
-    
+
+    private boolean hasAuthenticationCookie(HttpServletRequest request) {
+        String accessName = authCookieService.accessTokenCookieName();
+        String refreshName = authCookieService.refreshTokenCookieName();
+        for (String header : headerValues(request, HttpHeaders.COOKIE)) {
+            for (String part : header.split(";")) {
+                String name = part.trim().split("=", 2)[0];
+                if (accessName.equals(name) || refreshName.equals(name)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private List<String> headerValues(
+            HttpServletRequest request,
+            String name) {
+        Enumeration<String> values = request.getHeaders(name);
+        if (values == null) {
+            return List.of();
+        }
+        return Collections.list(values);
+    }
+
+    private boolean constantTimeEquals(String left, String right) {
+        return MessageDigest.isEqual(
+                left.getBytes(StandardCharsets.UTF_8),
+                right.getBytes(StandardCharsets.UTF_8)
+        );
+    }
 }

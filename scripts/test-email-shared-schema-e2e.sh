@@ -258,7 +258,7 @@ stop_application
     SELECT count(*)
     FROM uniauth_flyway_schema_history
     WHERE success;
-")" = "6" ] || fail "root-first restart changed UniAuth Flyway history"
+")" = "7" ] || fail "root-first restart changed UniAuth Flyway history"
 [ "$(db_value "$ROOT_FIRST_DATABASE" "
     SELECT count(*)
     FROM email_service_flyway_schema_history
@@ -285,14 +285,21 @@ stop_application
 [ "$(db_value "$EMAIL_FIRST_DATABASE" "
     SELECT count(*)
     FROM uniauth_flyway_schema_history
-    WHERE type = 'SQL' AND version IN ('1', '2', '3', '4', '5', '6') AND success;
-")" = "6" ] || fail "UniAuth did not apply V1 through V6"
+    WHERE type = 'SQL'
+      AND version IN ('1', '2', '3', '4', '5', '6', '7')
+      AND success;
+")" = "7" ] || fail "UniAuth did not apply V1 through V7"
 [ "$(db_value "$EMAIL_FIRST_DATABASE" "
     SELECT count(*)
     FROM information_schema.tables
     WHERE table_schema = 'public'
-      AND table_name IN ('users', 'email_queue', 'email_logs');
-")" = "3" ] || fail "shared public schema is missing managed tables"
+      AND table_name IN (
+          'users',
+          'token_families',
+          'email_queue',
+          'email_logs'
+      );
+")" = "4" ] || fail "shared public schema is missing managed tables"
 [ "$(db_value "$EMAIL_FIRST_DATABASE" \
     "SELECT to_regclass('public.flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "an unowned default Flyway history table was created"
@@ -309,6 +316,6 @@ stop_application
     SELECT count(*)
     FROM uniauth_flyway_schema_history
     WHERE success;
-")" = "7" ] || fail "email-first restart changed UniAuth Flyway history"
+")" = "8" ] || fail "email-first restart changed UniAuth Flyway history"
 
 echo "PASS: shared database/public schema process E2E"

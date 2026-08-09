@@ -10,6 +10,10 @@ import org.dddml.uniauth.service.CredentialAuthenticationService;
 import org.dddml.uniauth.service.RegistrationService;
 import org.dddml.uniauth.service.TokenIssuanceFacade;
 import org.dddml.uniauth.service.TokenValidationService;
+import org.dddml.uniauth.service.TokenIntrospectionService;
+import org.dddml.uniauth.service.UserService;
+import org.dddml.uniauth.service.AuthenticationCredentialResolver;
+import org.dddml.uniauth.config.IntrospectionProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -41,13 +45,17 @@ class RemovedDangerousEndpointsTest {
         OAuth2TokenController oAuth2TokenController =
                 new OAuth2TokenController(
                         mock(JwtTokenService.class),
-                        mock(TokenValidationService.class)
+                        mock(TokenIntrospectionService.class),
+                        mock(IntrospectionProperties.class),
+                        mock(AuthRateLimiter.class),
+                        mock(AuthCookieService.class)
                 );
         Web3AuthController web3AuthController = new Web3AuthController(
                 mock(Web3AuthService.class),
-                mock(JwtTokenService.class),
-                mock(AuthCookieService.class),
-                mock(TokenValidationService.class)
+                mock(TokenValidationService.class),
+                mock(TokenIssuanceFacade.class),
+                mock(UserService.class),
+                mock(AuthenticationCredentialResolver.class)
         );
 
         mockMvc = standaloneSetup(

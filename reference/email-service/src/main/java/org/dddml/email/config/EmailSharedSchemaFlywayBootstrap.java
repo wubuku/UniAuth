@@ -56,6 +56,7 @@ final class EmailSharedSchemaFlywayBootstrap {
         "security_events",
         "user_authorities",
         "token_blacklist",
+        "token_families",
         "spring_session",
         "spring_session_attributes"
     );
@@ -70,12 +71,13 @@ final class EmailSharedSchemaFlywayBootstrap {
         "security_events",
         "user_authorities",
         "token_blacklist",
+        "token_families",
         "spring_session",
         "spring_session_attributes"
     );
 
     private static final List<String> REQUIRED_PEER_VERSIONS =
-        List.of("1", "2", "3", "4", "5", "6");
+        List.of("1", "2", "3", "4", "5", "6", "7");
 
     private EmailSharedSchemaFlywayBootstrap() {
     }

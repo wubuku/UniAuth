@@ -248,7 +248,7 @@ Flyway 是本组件唯一的 schema owner：
 - datasource：所有 profile 只接受 `jdbc:postgresql:` URL；H2 不受支持
 - database layout：默认 `EMAIL_DATABASE_LAYOUT=dedicated`；显式
   `shared-uniauth` 才允许在获准的空 `public` schema 先迁移，或与完整
-  UniAuth V1-V6 peer 共用该 schema
+  UniAuth V1-V7 peer 共用该 schema
 - location：`classpath:db/migration/postgresql`
 - history table：`email_service_flyway_schema_history`
 - 当前 migration：V1 建表 + V2 队列/日志完整性 + V3 队列生命周期行形状 +
@@ -291,7 +291,7 @@ index，固定重复请求的稳定 queue identity。V5 清空历史
 变更必须新增 V6+。默认独立
 布局要求邮件专用数据库。显式
 `shared-uniauth` 在空 `public` schema 上可先迁移邮件 V1-V5，不创建 baseline；
-若 UniAuth V1-V6 已存在，则先验证其完整 relation 和成功 history，再以 baseline V0
+若 UniAuth V1-V7 已存在，则先验证其完整 relation 和成功 history，再以 baseline V0
 建立独立 `email_service_flyway_schema_history` 并迁移 V1-V5。UniAuth 后启动时也会
 验证邮件 V1-V5 后建立自己的 V0 history。两侧使用同一 PostgreSQL advisory lock
 串行化首次迁移，拒绝 managed relation 冲突、不完整 peer 和不精确 history。
@@ -304,7 +304,7 @@ relation 却没有 peer history 时视为半成品布局并失败关闭。
 
 命名层面可以直接共存：邮件 migration 只创建 `email_queue`、`email_logs`、对应
 `BIGSERIAL` 序列、邮件索引/约束和 `email_service_flyway_schema_history`，与
-UniAuth V1-V6 的 relation 名称没有交集，也没有指向 UniAuth 业务表的外键。不能只凭
+UniAuth V1-V7 的 relation 名称没有交集，也没有指向 UniAuth 业务表的外键。不能只凭
 “表名不冲突”关闭保护，因为第二套 Flyway 首次进入非空 `public` schema 时仍缺少
 自己的 history。兼容实现保留 `baseline-on-migrate=false`，只在确认对端完整、
 本侧 managed relation 不存在且对端 history 无失败 migration 后显式创建 baseline
@@ -426,29 +426,18 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   baseline。
 - migration checksum 失配时失败关闭，并保留已有 migration history 和业务数据。
 
-2026-08-09 post-F1 V5 收尾当前组合基线：
+2026-08-09 F2 与 post-F1 邮件 V5 合并候选基线：
 
 - 本组件 Maven：154 tests，0 failures/errors/skips。
 - 本组件 Shell runtime 44/44、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
 - PostgreSQL backup/restore rehearsal 10/10。
-- UniAuth 根项目完整统一门禁通过：Java 212 tests、shared-schema process E2E 4/4、
-  HTTP 16/16、Flyway 16/16、Mock Playwright 28/28、真实邮箱登录浏览器 E2E 1/1、
-  Python 资源服务器 18/18、邮件 REST stub contract 12/12。
-- 该基线通过一次连续三轮无修改检查并交付后即结束邮箱固化阶段；不会自动启动
-  历史计划中的 F2-F5。
-
-2026-08-09 F1 完成历史组合基线：
-
-以下只记录 F1 当时的验收事实和原计划，不代表 F2-F5 仍会自动启动。
-
-- 本组件 Maven：150 tests，0 failures/errors/skips。
-- 本组件 Shell runtime 44/44、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
-- PostgreSQL backup/restore rehearsal 10/10。
-- UniAuth 根项目：Java 212 tests、shared-schema process E2E 4/4、HTTP 16/16、
+- F2 同步前的 UniAuth 根项目：Java 219 tests、shared-schema process E2E 4/4、HTTP 16/16、
   Flyway 16/16、Mock Playwright 28/28、真实邮箱登录浏览器 E2E 1/1、
-  Python 资源服务器 18/18、邮件 REST stub contract 12/12；
-  本轮稳定源码快照的完整根统一门禁已通过。最终加固 F1-F4 不分别执行连续三轮
-  无修改检查；该检查由 F5 在 F1-F5 全部完成后统一执行。
+  生产 Playwright 2/2、Python 资源服务器 20/20、邮件 REST stub contract 12/12，
+  完整根统一门禁 12/12 已通过。
+- 上述 V5 和 F2 结果来自同步前的两个稳定源码快照；合并后的组合树必须重新运行完整
+  根门禁，不能直接继承两边成功状态。最终加固 F1-F5 不分别执行连续三轮无修改检查；
+  该检查在 F1-F5 全部完成后统一执行。
 - 根 Shell HTTP E2E 的正常邮箱路径使用本参考服务真实 JAR、真实 HTTP 和独立
   PostgreSQL，直接断言模板、idempotency identity 和 delivery status；脚本随后只为
   `503/429` 失败映射切换到受控 loopback REST stub，仍通过真实 UniAuth

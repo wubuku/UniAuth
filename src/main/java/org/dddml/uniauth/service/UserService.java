@@ -196,8 +196,10 @@ public class UserService {
                 email,
                 name
             );
-            
-            return convertToDto(existingUser);
+
+            UserEntity updatedUser = userRepository.findById(existingUserId)
+                .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+            return convertToDto(updatedUser);
         } else {
             // 场景C: 登录流程 - 创建新用户
             
