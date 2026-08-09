@@ -387,7 +387,7 @@ export class AuthService {
    * 获取OAuth2登录URL
    */
   static getLoginUrl(provider: 'google' | 'github' | 'x'): string {  // ✅ X API v2：提供者名改为 'x'
-    // 不再传递自定义参数，后端会从 Referer 头获取重定向地址
+    // 回跳目标由后端部署配置和受信 origin allowlist 决定。
     const baseUrl = `${API_BASE_URL}/oauth2/authorization/${provider}`;
     console.log('OAuth2 login URL:', baseUrl);
     return baseUrl;

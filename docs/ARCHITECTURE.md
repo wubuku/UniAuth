@@ -174,7 +174,13 @@ Python API 的验证步骤：
 
 - `/api/auth/**` 不经过 Resource Server 链。该空间内需要身份的接口必须自行验证，
   例如当前 Web3 bind 手工解析 bearer token。
-- CORS 同时存在于 `CorsConfig`、`WebConfig`、`WebMvcConfig` 和 YAML。
+- 四条安全链都显式启用 `CorsConfig` 提供的同一个
+  `CorsConfigurationSource`；`CorsProperties` 校验 `app.cors`，MVC 层不再维护
+  第二套 allowlist。
+- OAuth2 成功、业务错误和 Spring failure handler 共用 `OAuth2RedirectPolicy`。
+  `state.redirect_uri` 只能保留配置 allowlist 中的同源 path/query；恶意目标回退到
+  主前端 base path 下的登录页，成功与失败回跳都保留配置的 context path；
+  `Referer` 不作为 Session redirect 来源。
 - access/refresh Cookie 已集中到 `AuthCookieService`，prod Secure 配置有启动期
   fail-closed guard；header/cookie 双凭据、CSRF 和最终 token transport 仍待
   Batch C 原子切换。
@@ -254,6 +260,7 @@ access token 默认 1 小时，refresh token 默认 7 天。
 |------|----------|
 | 本地认证 | `AuthController`、`UserService`、`CustomUserDetailsService` |
 | OAuth2 登录/绑定 | `SecurityConfig`、`UserService`、`LoginMethodService` |
+| CORS 与 OAuth2 回跳边界 | `CorsProperties`、`CorsConfig`、`FrontendProperties`、`OAuth2RedirectPolicy` |
 | JWT | `JwtTokenService`、`TokenController`、`OAuth2TokenController` |
 | API 认证 | `ResourceServerConfig`、`ApiAuthController` |
 | 邮箱验证码 | `EmailAuthController`、`EmailVerificationCodeService` |

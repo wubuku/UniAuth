@@ -166,14 +166,14 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 > 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1、Batch B2a、
 > Batch B2b、邮件服务边界、邮箱 challenge 投递接受/原子消费、敏感响应、API key
 > 单值鉴权、认证 Cookie/浏览器 refresh 存储预备切片，以及当前格式 refresh
-> replay/logout 持久撤销切片；
+> replay/logout 持久撤销、CORS 单一来源和 OAuth2 redirect/Referer 信任边界切片；
 > 不代表 H1.4-H8、完整认证正确性或生产就绪。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 151/151；0 failures/errors/skips |
-| `scripts/test-http-e2e.sh` | 通过 | 15/15；真实应用、独立 PostgreSQL、refresh replay、logout 后 access/refresh/introspection 拒绝与 blacklist 行形状，以及既有邮件、Web3、JWT、登录方式和重启路径 |
+| `mvn test` | 通过 | 200/200；0 failures/errors/skips |
+| `scripts/test-http-e2e.sh` | 通过 | 16/16；真实应用、独立 PostgreSQL、四条安全链 CORS allow/deny、refresh replay、logout 后 access/refresh/introspection 拒绝与 blacklist 行形状，以及既有邮件、Web3、JWT、登录方式和重启路径 |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 14/14；新增非法 token blacklist pre-history 拒绝，并覆盖 exact schema、V2/V4 初始及 apply 前数据预检、V5 history/message 列、非法 email state、post-baseline 失败恢复与其他拒绝/清理路径 |
 | Flyway integration | 通过 | fresh V1→V5、existing baseline V1→V5、V3→V5、Hibernate validate、Session、checksum/failure recovery |
 | Shared-schema process E2E | 通过 | 4/4；UniAuth-first 与 email-first 两种启动顺序、独立 history、受控 baseline V0、重启与业务表共存 |
@@ -184,7 +184,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `npm audit --audit-level=high` | 通过 | 0 high/critical；2 个 React Router moderate advisories 见下文 |
 | `npx tsc --noEmit` | 通过 | 无 TypeScript 错误 |
 | `npm run build` | 通过 | Vite 生产构建成功，保留 chunk warning |
-| `npm run test:e2e` | 通过 | 27/27 Chrome-channel Mock Playwright tests；同页面与同源双标签页只消费一次 refresh，logout 保留无关存储，跨标签页 logout 不会被迟到 refresh continuation 恢复 |
+| `npm run test:e2e` | 通过 | 28/28 Chrome-channel Mock Playwright tests；OAuth provider 导航不附加客户端 redirect/state，同页面与同源双标签页只消费一次 refresh，logout 保留无关存储，跨标签页 logout 不会被迟到 refresh continuation 恢复 |
 | 邮箱登录浏览器 E2E | 通过 | 1/1；真实 PostgreSQL/UniAuth/Vite/Python/stub，注册、验证码、同源回跳、跨 hostname Bearer、`credentials: omit`、资源域哨兵 Cookie 不随请求发送、邮箱密码再次登录 |
 | Python | 通过 | 18/18 离线 RSA/JWKS/Flask tests；refresh、缺失 `type`/`jti` 和非法 Bearer 格式失败关闭 |
 | 邮件 REST stub contract | 通过 | 9/9；既有 API key/health/接受/拒绝/限流/坏请求/chunked/header 契约，加上既有文件权限收紧为 `0600` 的临时捕获文件 |
@@ -193,13 +193,15 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 
 Shell HTTP E2E 使用 `test` profile、UniAuth disposable PostgreSQL、参考邮件服务
 disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列开始前启动真实
-参考邮件服务 JAR；第 10/15、11/15 步骤通过真实 HTTP 调用模板端点并直接检查
-参考服务的 `email_queue`；第 12/15、13/15 步骤为获得稳定的 `503/429` 失败夹具
+参考邮件服务 JAR；第 11/16、12/16 步骤通过真实 HTTP 调用模板端点并直接检查
+参考服务的 `email_queue`；第 13/16、14/16 步骤为获得稳定的 `503/429` 失败夹具
 而重启应用并切换到受控 loopback 邮件 REST stub。它验证：
 
 - Flyway V1/V2/V3/V4/V5 和自定义 history table。
 - 应用重启后的 migration 幂等和用户数据保留。
 - `/api/auth/**` allowlist 与资源服务器拒绝边界。
+- 四条 Security filter chain 共用同一 CORS source，允许 origin 的 credentialed
+  preflight 成功，恶意 origin 不获得 allow-origin header。
 - 本地注册/登录、JWT claims、cookie/header 优先级和持久化。
 - refresh rotation 与 access/refresh type confusion。
 - 本地签名 Web3 登录、domain/chain/完整 message 字段 tamper、并发 replay、nonce
@@ -223,6 +225,18 @@ disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列�
   最终 `auth_user`、access token 和 legacy refresh token 均保持清空。
 - Python 资源服务器在签名、kid、issuer、audience 和 expiry 正确时仍拒绝
   refresh token 和缺少 `type` 的 token。
+
+CORS/OAuth2 redirect 信任边界切片还验证：
+
+- `CorsProperties` 拒绝 wildcard credentialed origin、path/userinfo/query/fragment、
+  空 allowlist 和非法 HTTP(S) origin；四条安全链的 preflight/实际响应行为一致。
+- `FrontendProperties` 拒绝非法主前端 URL 和额外 redirect origin，并接受合法的
+  context path。
+- OAuth2 成功回跳只使用配置的主前端 URL；业务错误和 Spring failure handler
+  共用同一 policy，跨 origin、错误 port、userinfo 和控制字符目标回退到主前端
+  base path 下的登录页，成功与失败路径都保留配置的 context path。
+- 授权 resolver 保留 PKCE，恶意 `Referer` 不再写入 `OAUTH2_FRONTEND_URL` Session
+  属性；前端 provider 导航不附加客户端可控 redirect/state 参数。
 
 未执行真实 OAuth provider、真实邮件或共享开发库写操作。
 

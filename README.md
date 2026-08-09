@@ -23,12 +23,12 @@
 | 数据库 | PostgreSQL 16-only |
 | Migration | Flyway V1 baseline + V2 + V3 + V4 + V5，history `uniauth_flyway_schema_history` |
 | 邮件数据库布局 | 默认独立数据库；显式 `shared-uniauth` 可与 UniAuth 共用 `public` schema，两侧 relation 名无冲突并使用独立 Flyway history |
-| Java 验证 | 151 tests，0 failures/errors/skips |
+| Java 验证 | 200 tests，0 failures/errors/skips |
 | 邮件参考服务 | 148 tests；其中 22 个 PostgreSQL/GreenMail E2E、1 个 shared-schema ApplicationContext test、6 个 shared-schema bootstrap tests；另有 Shell runtime 43/43、HTTP 11/11、Flyway guard 15/15、backup/restore 10/10 |
 | Shared-schema E2E | 4/4；UniAuth/邮件服务两种启动顺序、独立 history 和 baseline V0 |
-| HTTP E2E | 15/15；正常邮箱流程使用真实参考服务，失败映射矩阵使用受控 stub |
+| HTTP E2E | 16/16；含四条安全链 CORS 矩阵，正常邮箱流程使用真实参考服务，失败映射矩阵使用受控 stub |
 | Flyway baseline guard | 14/14 |
-| Playwright | 26 个 Mock 浏览器测试 + 1 个真实邮箱登录跨服务 E2E |
+| Playwright | 28 个 Mock 浏览器测试 + 1 个真实邮箱登录跨服务 E2E |
 | Python | 18 个资源服务器测试 + 9 个邮件 REST stub 契约测试 |
 | 前端 lint/type/build | 通过 |
 
@@ -417,9 +417,20 @@ GITHUB_CLIENT_SECRET=your-github-client-secret
 TWITTER_CLIENT_ID=your-twitter-client-id
 TWITTER_CLIENT_SECRET=your-twitter-client-secret
 
+# OAuth2 callback、前端回跳与 CORS
+OAUTH2_CALLBACK_URI=http://localhost:8081/oauth2/callback
+APP_FRONTEND_URL=http://localhost:5173
+CORS_ALLOWED_ORIGINS=http://localhost:5173
+# 可选：逗号分隔的额外受信 OAuth2 错误回跳 origin
+# APP_FRONTEND_ALLOWED_REDIRECT_ORIGINS=https://console.example.com
+
 # JWT 密钥配置（生产环境必须修改）
 JWT_SECRET=your-base64-encoded-secret-key
 ```
+
+`APP_FRONTEND_URL` 可以包含部署 context path；OAuth2 成功和错误回跳都会保留该
+base path。`CORS_ALLOWED_ORIGINS` 与额外 redirect allowlist 则必须填写精确 origin，
+不能包含 path。
 
 **重要安全提示**：生产环境必须修改所有默认密钥和密码，不要将包含真实凭据的 `.env` 文件提交到版本控制系统。
 
@@ -453,10 +464,16 @@ JWT_SECRET=your-base64-encoded-secret-key
 
 ### 步骤四：启动应用
 
-#### 开发环境启动（使用可丢弃的 SQLite）
+#### 开发环境启动（使用显式 PostgreSQL）
 
 ```bash
-SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
+POSTGRES_HOST=localhost \
+POSTGRES_PORT=5432 \
+POSTGRES_DATABASE=uniauth_dev \
+POSTGRES_USER=postgres \
+POSTGRES_PASSWORD='set-explicitly' \
+SPRING_PROFILES_ACTIVE=dev \
+./start.sh
 ```
 
 应用启动后访问 `http://localhost:8081`。演示数据默认关闭；如需创建三个受管演示账户，
@@ -465,8 +482,8 @@ SPRING_PROFILES_ACTIVE=dev mvn spring-boot:run
 
 #### 测试环境启动（使用 PostgreSQL）
 
-`test` profile 会执行 SQL init 和 Hibernate schema update，只允许指向隔离且可丢弃的数据库，
-并且必须提供完整的 `POSTGRES_*` 变量：
+`test` profile 只允许指向隔离且可丢弃的 PostgreSQL，并且必须提供完整的
+`POSTGRES_*` 变量。Flyway 是唯一 schema owner，Hibernate 只执行 `validate`：
 
 ```bash
 POSTGRES_HOST=localhost \
@@ -478,7 +495,8 @@ SPRING_PROFILES_ACTIVE=test \
 mvn spring-boot:run
 ```
 
-测试环境会执行 `schema-postgresql.sql`；演示账户仍保持默认关闭。
+测试环境会执行 Flyway V1-V5；SQL init 和 Spring Session 自动建表均关闭，演示账户
+仍保持默认关闭。
 
 ---
 
@@ -496,7 +514,7 @@ mvn spring-boot:run
 ./build-frontend.sh
 
 
-# 2. 使用安全启动脚本（默认隔离 dev SQLite）
+# 2. 使用安全启动脚本（默认 dev profile，但必须显式提供 PostgreSQL）
 ./start.sh
 
 # 设置环境变量运行测试环境
@@ -524,8 +542,8 @@ mvn spring-boot:run
 # ----------------------------------------------------------------------
 
 # **提示**：
-# - OAuth2 callback 仍包含多个环境域名硬编码，不能把任一隧道域名视为通用默认值。
-# - 实际值见 application.yml 和 application-{profile}.yml；本地运行前应显式覆盖。
+# - prod 必须显式提供 OAUTH2_CALLBACK_URI、APP_FRONTEND_URL 和 CORS_ALLOWED_ORIGINS。
+# - dev/test 使用 loopback 默认值；部署时仍应与 provider 控制台和实际前端 origin 对齐。
 ```
 
 ### 步骤五：验证安装
@@ -1474,28 +1492,16 @@ public class SecurityConfig {
 
 #### CORS 配置
 
-```java
-@Configuration
-public class CorsConfig {
+UniAuth 的四条 Spring Security filter chain 共用 `CorsConfig` 创建的唯一
+`CorsConfigurationSource`。origin 通过环境变量提供，带凭据时不能使用 wildcard：
 
-    @Bean
-    public CorsFilter corsFilter() {
-        CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOriginPatterns(List.of(
-            "https://*.yourdomain.com",
-            "http://localhost:5173"
-        ));
-        config.addAllowedMethod("*");
-        config.addAllowedHeader("*");
-        config.setAllowCredentials(true);
-        config.setMaxAge(3600L);
-
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", config);
-        return new CorsFilter(source);
-    }
-}
+```bash
+CORS_ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
 ```
+
+methods、headers、exposed headers、credentials 和 max-age 的基线位于
+`application.yml` 的 `app.cors`；origin 必须是不带 path/query/fragment/userinfo 的
+精确 HTTP(S) origin。
 
 ---
 
@@ -1691,15 +1697,9 @@ pg_restore -h localhost -U postgres -d uni_auth -c /backup/postgresql/uni_auth_2
 3. 检查是否有代理或负载均衡器修改了请求 URI
 
 **解决方案**：
-```yaml
-# application.yml
-spring:
-  security:
-    oauth2:
-      client:
-        registration:
-          google:
-            redirect-uri: https://your-domain.com/oauth2/callback
+```bash
+OAUTH2_CALLBACK_URI=https://your-domain.com/oauth2/callback
+APP_FRONTEND_URL=https://your-domain.com
 ```
 
 #### 2. JWT 签名验证失败

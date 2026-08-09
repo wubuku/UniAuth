@@ -7,8 +7,9 @@
 > 认证 Cookie/浏览器 refresh 存储预备切片和 Web3/SIWE challenge 加固切片已完成；
 > 五轮收敛第 2 轮的 refresh replay/logout blacklist 切片实现与统一门禁已完成，
 > 第一次检查发现 Bearer scheme 大小写解析缺口并已修复；随后补齐前端跨标签页
-> refresh/logout 迟到写回保护，2026-08-09 完整 12/12 门禁已通过；提交前仍须
-> 执行连续三轮无修改检查
+> refresh/logout 迟到写回保护，2026-08-09 完整 12/12 门禁、连续三轮无修改检查、
+> 提交和推送均已完成；CORS 单一来源与 OAuth2 redirect/Referer 信任边界收敛
+> 切片已完成实现和完整统一门禁；提交退出条件包括连续三轮无修改检查
 > 事实基线：2026-08-07；邮件 SMTP、持久化投递和限流异常路径增量：2026-08-08
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
 > 前置成果：PostgreSQL 16-only、Flyway V1 baseline + V2 + V3 + V4 + V5、Testcontainers、
@@ -38,12 +39,12 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | 当前 migration | V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束/索引对齐 + V5 Web3/SIWE message 绑定 |
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
-| Java | `mvn clean compile test-compile` 和 151/151 tests 已通过 |
+| Java | `mvn clean compile test-compile` 和 200/200 tests 已通过 |
 | 邮件参考服务 | Flyway V1/V2/V3；148 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E；1 个 shared-schema ApplicationContext test；6 个 shared-schema bootstrap tests；5 个 PostgreSQL repository constraint tests；Java runtime guard 30 tests；1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 43/43、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10 |
 | Shared-schema E2E | `scripts/test-email-shared-schema-e2e.sh` 4/4 已通过，覆盖 UniAuth/email 两种启动顺序、独立 history 和 baseline V0 |
-| HTTP E2E | `scripts/test-http-e2e.sh` 15/15 已通过 |
+| HTTP E2E | `scripts/test-http-e2e.sh` 16/16 已通过 |
 | Flyway guard | `scripts/test-flyway-baseline-guard.sh` 14/14 已通过 |
-| 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、27/27 Mock Playwright tests 已通过 |
+| 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、28/28 Mock Playwright tests 已通过 |
 | Python | 18/18 离线 JWT/JWKS/Flask tests 和 9/9 邮件 REST stub contract tests 已通过 |
 | 统一入口 | `scripts/verify.sh` 本地通过；CI 使用同一入口 |
 | 既有库演练 | `blacksheep_dev` 只读 rehearsal 已通过 |
@@ -1231,6 +1232,67 @@ REST、模板、队列、SMTP、retry、限流或 UniAuth 邮箱业务语义。
 baseline guard `13/13`；前端 lint、TypeScript、生产构建、Mock Playwright `21/21`；
 Python 资源服务器离线测试 `16/16`。统一根门禁和连续三轮无修改检查仍是本切片
 提交前硬门槛。
+
+#### 2026-08-09 CORS 与 OAuth2 redirect/Referer 收敛切片
+
+本切片只关闭当前跨 origin 和 OAuth2 回跳目标的多配置源、open redirect 与部署域名
+漂移风险，不增加登录方式、回调模式、前端页面或公开 API。
+
+固定实施范围：
+
+1. 用一个受 Bean Validation 约束的 `app.cors` properties 和一个
+   `CorsConfigurationSource` 解释全部 CORS 行为；删除 `CorsConfig` 中的 MVC
+   configurer、`WebConfig` 的 path-specific CORS 和 `WebMvcConfig`。
+2. 四条有序 Security filter chain 全部显式启用同一个 CORS source。带凭据时拒绝
+   wildcard origin；origin 必须是无 userinfo、path、query、fragment 的绝对
+   HTTP(S) origin。
+3. `dev`、`test` 使用明确的 loopback/test origin；`prod` 必须显式提供
+   `CORS_ALLOWED_ORIGINS`。base/prod 不再携带 localhost、历史隧道或历史部署域名
+   作为可运行默认 allowlist。
+4. 建立一个受校验的 OAuth2 redirect policy。默认回跳只来自
+   `app.frontend.url`，额外目标只能与配置的 frontend redirect origin allowlist
+   精确同源；拒绝 userinfo、scheme-relative、控制字符、错误 scheme/host/port
+   和跨 origin state URI。
+5. OAuth2 成功处理、业务错误处理和 Spring OAuth2 failure handler 复用同一 policy。
+   恶意或畸形 `state.redirect_uri` 只能回退到配置的 frontend 登录页，不能影响
+   `Location` host。
+6. 授权请求 resolver 继续启用 PKCE，但不再把未经消费的 `Referer` origin 写入
+   Session；`OAUTH2_FRONTEND_URL` 从运行代码中删除。
+7. `app.frontend.url` 和 provider callback URI 在 `dev`/`test` 使用本地安全默认值，
+   `prod` 必须通过环境变量提供；不在本切片改动 Web3 domain、Authorization Server
+   client 模型、OAuth provider scope 或显式绑定意图。
+
+测试与退出条件：
+
+1. PostgreSQL/ApplicationContext + MockMvc 覆盖 `/api/auth/**`、
+   Authorization Server `/oauth2/**`、Resource Server `/api/**` 和 Web/OAuth2
+   login chain 的 allowed/disallowed credentialed preflight 与实际响应 header。
+2. 配置启动测试覆盖 wildcard、带 path/userinfo/query/fragment origin、空 allowlist、
+   非 HTTP(S) frontend URL 和非法额外 redirect origin 的失败关闭。
+3. OAuth2 handler 集成测试覆盖正常成功回跳、恶意 state redirect fallback、允许的
+   同源 state path、统一 failure handler，以及恶意 Referer 不进入 Session。
+4. Shell HTTP E2E 对真实应用执行四条 filter chain 的 CORS allow/deny matrix；
+   Flyway schema 未变化，只重跑现有 baseline guard。
+5. 前端增加 OAuth provider 导航边界测试，确认客户端不附加 redirect/state URI；
+   Python 契约没有行为变化，完整离线套件作为回归门槛。
+6. 完整 `scripts/verify.sh` 通过后才进入连续三轮无修改检查；任何实质修复都重置
+   计数器并重跑受影响门槛。
+
+实际结果（2026-08-09）：
+
+- 单一 `CorsConfigurationSource` 已覆盖四条安全链，重复 MVC CORS 配置已删除；
+  `CorsProperties` 对 credentialed wildcard、非法 origin 和空配置失败关闭。
+- `FrontendProperties`、`HttpUrlSafety` 与 `OAuth2RedirectPolicy` 已统一成功、业务
+  错误和 Spring failure redirect；恶意/跨 origin `state.redirect_uri` 回退到主前端
+  base path 下的登录页，配置 context path 在成功/失败回跳中保持一致；未消费
+  `Referer` 不再写入 Session，PKCE resolver 保持启用。
+- provider callback、主前端 URL 和 UniAuth CORS allowlist 已按 profile 外部化；
+  `dev`/`test` 使用 loopback 默认值，`prod` 要求显式环境变量。
+- 完整 `PYTHON_BIN=python3 scripts/verify.sh` 12/12 通过：根 Java `200/200`、
+  邮件组件 `148/148`、shared-schema `4/4`、HTTP `16/16`、Flyway guard
+  `14/14`、Mock Playwright `28/28`、真实浏览器 `1/1`、Python `18/18`、
+  邮件 REST stub contract `9/9`，编译、lint、typecheck、生产构建、文档链接和
+  patch hygiene 同时通过。
 
 #### Email/password
 

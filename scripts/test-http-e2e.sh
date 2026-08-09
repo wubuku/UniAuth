@@ -186,6 +186,36 @@ request_status() {
         "${BASE_URL}${path}"
 }
 
+assert_cors_preflight() {
+    local path="$1"
+    local method="$2"
+    local origin="$3"
+    local expected_status="$4"
+    local headers_file="$TEMP_DIR/cors-$(printf '%s' "$path" | tr '/?' '__').headers"
+    local actual_status
+
+    actual_status="$(
+        curl -sS -o /dev/null -D "$headers_file" -w '%{http_code}' \
+            -X OPTIONS "${BASE_URL}${path}" \
+            -H "Origin: $origin" \
+            -H "Access-Control-Request-Method: $method" \
+            -H "Access-Control-Request-Headers: authorization, content-type"
+    )"
+    [ "$actual_status" = "$expected_status" ] \
+        || fail "CORS preflight for $path returned $actual_status instead of $expected_status"
+
+    if [ "$expected_status" = "200" ]; then
+        grep -Fqi "Access-Control-Allow-Origin: $origin" "$headers_file" \
+            || fail "CORS preflight for $path omitted the configured origin"
+        grep -Fqi "Access-Control-Allow-Credentials: true" "$headers_file" \
+            || fail "CORS preflight for $path omitted credential support"
+        grep -Eqi "Access-Control-Allow-Methods:.*(^|[, ])${method}([, ]|$)" "$headers_file" \
+            || fail "CORS preflight for $path omitted method $method"
+    elif grep -qi '^Access-Control-Allow-Origin:' "$headers_file"; then
+        fail "rejected CORS preflight for $path exposed an allow-origin header"
+    fi
+}
+
 assert_auth_cookie_headers() {
     local headers_file="$1"
     local expected_access_max_age="$2"
@@ -484,7 +514,7 @@ echo "HTTP E2E: starting the real application through start.sh"
 start_application
 wait_for_application
 
-echo "1/15 Verify Flyway-owned PostgreSQL startup"
+echo "1/16 Verify Flyway-owned PostgreSQL startup"
 [ "$(db_value "
     SELECT count(*)
     FROM uniauth_flyway_schema_history
@@ -654,7 +684,18 @@ expect_db_rejection "
     COMMIT;
 " "database accepted an invalid provider login-method shape"
 
-echo "2/15 Verify fail-closed HTTP security boundaries"
+echo "2/16 Verify one CORS policy across every security filter chain"
+for cors_case in \
+        "/api/auth/login POST" \
+        "/oauth2/jwks GET" \
+        "/api/user GET" \
+        "/oauth2/authorization/github GET"; do
+    read -r cors_path cors_method <<<"$cors_case"
+    assert_cors_preflight "$cors_path" "$cors_method" "http://localhost:5173" "200"
+    assert_cors_preflight "$cors_path" "$cors_method" "https://evil.example" "403"
+done
+
+echo "3/16 Verify fail-closed HTTP security boundaries"
 [ "$(request_status GET /api/user)" = "401" ] \
     || fail "anonymous current-user request did not return 401"
 [ "$(request_status GET /api/auth/check-user)" = "403" ] \
@@ -670,7 +711,7 @@ jwks_response="$(curl -sS "${BASE_URL}/oauth2/jwks")"
 [ "$(jq -er '.keys[0].alg' <<<"$jwks_response")" = "RS256" ] \
     || fail "JWKS did not expose RS256"
 
-echo "3/15 Register and authenticate a local account"
+echo "4/16 Register and authenticate a local account"
 local_username="shell-user-${RUN_ID}"
 local_email="${local_username}@example.invalid"
 local_password="initial-password-${RUN_ID}"
@@ -721,7 +762,7 @@ access_token="$(jq -er '.accessToken' <<<"$login_response")"
 refresh_token="$(jq -er '.refreshToken' <<<"$login_response")"
 assert_auth_cookie_headers "$login_headers" 3600 604800
 
-echo "4/15 Verify protected APIs, persistence, and JWT contracts"
+echo "5/16 Verify protected APIs, persistence, and JWT contracts"
 current_user="$(
     curl -sS \
         -H "Authorization: Bearer $access_token" \
@@ -768,7 +809,7 @@ introspection="$(
       AND last_used_at IS NOT NULL;
 ")" = "1" ] || fail "successful login did not persist last_used_at"
 
-echo "5/15 Restart the application without replaying migrations or losing data"
+echo "6/16 Restart the application without replaying migrations or losing data"
 stop_application
 start_application
 wait_for_application
@@ -788,7 +829,7 @@ restarted_user="$(
 [ "$(jq -er '.userId' <<<"$restarted_user")" = "$local_user_id" ] \
     || fail "the pre-restart access token did not work after restart"
 
-echo "6/15 Refresh tokens and reject token type confusion"
+echo "7/16 Refresh tokens and reject token type confusion"
 refresh_headers="$TEMP_DIR/refresh-headers.txt"
 refresh_response="$(
     curl -sS -D "$refresh_headers" -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
@@ -833,7 +874,7 @@ access_as_refresh_status="$(
 [ "$access_as_refresh_status" = "401" ] \
     || fail "access token was accepted as a refresh token"
 
-echo "7/15 Authenticate a new Web3 account and reject message tampering"
+echo "8/16 Authenticate a new Web3 account and reject message tampering"
 web3_wallet="$(create_wallet)"
 web3_address="$(jq -er '.address' <<<"$web3_wallet")"
 web3_challenge="$(signed_challenge "$web3_wallet")"
@@ -936,7 +977,7 @@ repeat_web3_login="$(post_json /api/auth/web3/verify "$repeat_web3_challenge")"
 [ "$(jq -er '.isNewUser' <<<"$repeat_web3_login")" = "false" ] \
     || fail "repeat Web3 login was incorrectly marked as new"
 
-echo "8/15 Verify header/cookie identity precedence"
+echo "9/16 Verify header/cookie identity precedence"
 conflicting_identity="$(
     curl -sS \
         -H "Authorization: Bearer $web3_access_token" \
@@ -953,7 +994,7 @@ manual_cookie_identity="$(
 [ "$(jq -er '.userId' <<<"$manual_cookie_identity")" = "$local_user_id" ] \
     || fail "cookie-only authentication selected the wrong identity"
 
-echo "9/15 Bind and manage a Web3 login method for the local account"
+echo "10/16 Bind and manage a Web3 login method for the local account"
 binding_wallet="$(create_wallet)"
 binding_challenge="$(signed_challenge "$binding_wallet")"
 missing_binding_token_status="$(
@@ -1182,7 +1223,7 @@ delete_last_status="$(
 [ "$delete_last_status" = "400" ] \
     || fail "the last login method could be deleted"
 
-echo "10/15 Run the email registration and password-reset HTTP flow"
+echo "11/16 Run the email registration and password-reset HTTP flow"
 email_flow_address="shell-email-${RUN_ID}@example.invalid"
 if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     BASE_URL="$BASE_URL" \
@@ -1219,7 +1260,7 @@ fi
       AND status = 'PENDING';
 ")" = "2" ] || fail "reference email service did not persist rendered template content"
 
-echo "11/15 Run registration and password-reset rejection contracts"
+echo "12/16 Run registration and password-reset rejection contracts"
 if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     BASE_URL="$BASE_URL" \
     EMAIL_EXISTS="$email_flow_address" \
@@ -1229,7 +1270,7 @@ if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     fail "registration/password-reset rejection contract subflow failed"
 fi
 
-echo "12/15 Reject unsupported purpose and failed email acceptance"
+echo "13/16 Reject unsupported purpose and failed email acceptance"
 stop_application
 start_email_stub
 ACTIVE_EMAIL_SERVICE_URL="$EMAIL_STUB_URL"
@@ -1282,7 +1323,7 @@ done
     = "$before_failed_send_count" ] \
     || fail "rejected purpose or delivery attempt changed challenge state"
 
-echo "13/15 Exhaust an invalid email verification retry budget"
+echo "14/16 Exhaust an invalid email verification retry budget"
 retry_email="shell-retry-${RUN_ID}@example.invalid"
 retry_send_payload="$(
     jq -cn \
@@ -1336,7 +1377,7 @@ done
     WHERE email = '$retry_email' AND is_used = false;
 ")" = "0" ] || fail "exhausted email verification challenge remained usable"
 
-echo "14/15 Verify logout cookie clearing"
+echo "15/16 Verify logout cookie clearing"
 logout_headers="$TEMP_DIR/logout-headers.txt"
 logout_response="$(
     curl -sS -D "$logout_headers" \
@@ -1380,7 +1421,7 @@ revoked_introspection="$(
       AND token_type IN ('ACCESS', 'REFRESH');
 ")" = "2" ] || fail "logout did not persist both token revocations"
 
-echo "15/15 Verify final database invariants"
+echo "16/16 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
     || fail "the E2E harness connected to an unexpected database"
 [ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "5" ] \

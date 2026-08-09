@@ -1356,6 +1356,10 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 
 ### H3.3 CORS 单一来源
 
+> 状态（2026-08-09）：已完成。当前由 validated `CorsProperties` 和唯一
+> `CorsConfigurationSource` 解释 UniAuth CORS，四条安全链显式启用，重复 MVC
+> 配置已删除；完整门禁结果以 live 验证文档为准。
+
 **涉及文件**
 
 - `application*.yml`
@@ -1393,6 +1397,12 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 - CORS 行为能由一个配置对象解释。
 
 ### H3.4 OAuth2 state、显式绑定意图与 redirect allowlist
+
+> 状态（2026-08-09）：部分完成。redirect allowlist、统一 success/error/failure
+> policy、主前端 context path 一致回跳、恶意 `state.redirect_uri` 回退和移除未消费
+> `Referer` Session 来源已实现；
+> 显式 binding intent、provider identity/email trust、scope、authorized-client
+> 生命周期及本节其他条目仍是后续工作，不能把本节整体视为完成。
 
 **涉及文件**
 
@@ -2669,6 +2679,10 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 ## 14. Phase 8：运维、密钥、配置与发布演练
 
 ### H8.1 外部化运行配置
+
+> 状态（2026-08-09）：部分完成。provider callback、主前端 URL 和 UniAuth CORS
+> allowlist 已外部化；Web3 domain/URI、JWT issuer、内存 Authorization Server
+> client、出站 HTTP client 和代理/边缘配置仍未完成。
 
 **涉及文件**
 

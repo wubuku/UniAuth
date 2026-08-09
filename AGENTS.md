@@ -81,7 +81,14 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
   `uniauth_flyway_schema_history`。共享部署需要兼容的是非空 schema 下的 Flyway
   history 发现语义，不是表重名。
 - React 生产构建直接写入 `src/main/resources/static/`，该目录是生成物并被 gitignore。
-- OAuth2 callback 和 `app.frontend.url` 当前包含部署域名硬编码；本地 OAuth2 流程需要显式覆盖配置。
+- OAuth2 provider callback、主前端 URL 和 UniAuth CORS allowlist 已外部化：
+  `dev`/`test` 有 loopback 默认值，`prod` 必须显式提供
+  `OAUTH2_CALLBACK_URI`、`APP_FRONTEND_URL` 和 `CORS_ALLOWED_ORIGINS`。
+  `APP_FRONTEND_URL` 可包含部署 context path，成功和错误回跳都必须保留该 base path；
+  CORS 和额外 redirect allowlist 仍只能包含精确 origin。
+  额外 OAuth2 错误回跳 origin 通过
+  `APP_FRONTEND_ALLOWED_REDIRECT_ORIGINS` 配置；不要把 `state` 或 `Referer`
+  当作可信部署来源。
 
 ## Critical Safety Rule
 
@@ -123,7 +130,10 @@ rehearsal 的 fresh 最新迁移结果一致。
 
 `/api/auth/**` 不经过资源服务器链。需要认证的子接口必须像 Web3 bind 一样自行验证凭据，或调整 matcher 设计。
 
-CORS 目前同时存在于 `CorsConfig`、`WebConfig`、`WebMvcConfig` 和 YAML。修改来源、header 或 method 时必须检查全部实现，避免只改一处。
+四条安全链都显式启用 `CorsConfig` 提供的同一个 `CorsConfigurationSource`。
+`CorsProperties` 从 `app.cors` 读取并校验精确 HTTP(S) origin、method、header、
+credentials 和 max-age；`WebConfig` 不再定义 CORS，`WebMvcConfig` 已删除。
+Python 资源服务器是独立进程，继续维护自己的 bearer-only CORS 配置。
 
 ## Identity And Token Invariants
 
@@ -353,8 +363,8 @@ PYTHON_BIN=python3 scripts/verify.sh
 
 当前验证基线（2026-08-09 工作树；每次后续变更仍须重跑）：
 
-- 当前根统一门禁：Maven 151 tests、shared-schema process E2E 4/4、
-  HTTP 15/15、Flyway baseline guard 14/14、Mock Playwright 27/27、
+- 当前根统一门禁：Maven 200 tests、shared-schema process E2E 4/4、
+  HTTP 16/16、Flyway baseline guard 14/14、Mock Playwright 28/28、
   真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 18/18、邮件 REST stub
   contract 9/9；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
   patch hygiene 均通过。
@@ -431,9 +441,15 @@ PYTHON_BIN=python3 scripts/verify.sh
   PostgreSQL/JWT 测试 17/17 通过。前端 refresh 结果只在 Web Lock 内持久化，
   锁外调用方不再重复写回 token；跨标签页 logout 后迟到 refresh continuation
   不能恢复认证状态。修复后的完整根 Maven 为 151/151，统一门禁通过。
-- Shell HTTP E2E：15/15；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
+- 2026-08-09 CORS/OAuth2 redirect 信任边界增量：validated `CorsProperties` 和唯一
+  `CorsConfigurationSource` 覆盖四条安全链；provider callback、主前端 URL 和
+  CORS allowlist 外部化；success/error/failure 共用 `OAuth2RedirectPolicy`，
+  恶意 `state.redirect_uri` 失败关闭，主前端 context path 在成功/失败回跳中保持
+  一致，未消费 `Referer` 不再进入 Session。完整根 Maven 200/200，HTTP 16/16、
+  Mock Playwright 28/28，统一门禁通过。
+- Shell HTTP E2E：16/16；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
 - Flyway baseline guard：14/14。
-- Mock Playwright：27/27；真实邮箱登录浏览器 E2E：1/1。
+- Mock Playwright：28/28；真实邮箱登录浏览器 E2E：1/1。
 - Python 资源服务器：18/18；邮件 REST stub contract：9/9。
 - 前端 ESLint、TypeScript 和生产构建通过。
 - 每个未提交批次仍必须在完整门禁后重新执行连续三轮无修改检查；无问题轮次只记录在
@@ -533,7 +549,11 @@ PYTHON_BIN=python3 scripts/verify.sh
   header/cookie token 来源也可能冲突。前端已用 runtime single-flight 和支持浏览器的
   Web Locks 避免正常同页面/同源标签页重复 refresh，并保证跨标签页 logout 不会被
   迟到 refresh continuation 写回；彻底收敛 transport 仍属于 Batch C 原子切换。
-- CORS 有 YAML 和多个 Java 配置来源；OAuth2 redirect/Referer 缺少统一 allowlist。
+- OAuth2 redirect 已由 `OAuth2RedirectPolicy` 统一约束，恶意/跨 origin
+  `state.redirect_uri` 回退到配置的前端 base path 下的登录页，成功和失败回跳都
+  保留该 context path；授权 resolver 不再保存未消费的 `Referer` origin。更大的
+  OAuth2 显式绑定意图、provider identity/email trust、scope 与 authorized-client
+  生命周期仍未完成。
 - `ApiAuthController` 对 JWT 用户把 provider 默认标成 `local`，不能反映真实主登录方式。
 - 邮件同步接受失败和 challenge 消费并发已经失败关闭/原子化；外部接受后本地事务
   失败、异步 delivery 失败、单一 pending challenge、canonical email 和可靠
@@ -543,7 +563,9 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 登录方式并发 bind、set-primary、delete/delete 和 delete/set-primary 已由数据库
   约束、用户级 revision CAS 和稳定 `409` 冲突映射加固；PostgreSQL 集成测试与
   Shell HTTP E2E 持续断言最终至少一个登录方式且恰好一个 primary。
-- live 端口已统一到后端 `8081`、Python `5002`；部署域名仍需外部化。
+- live 端口已统一到后端 `8081`、Python `5002`；OAuth2 callback、主前端 URL 和
+  UniAuth CORS allowlist 已外部化，Web3 domain/URI、JWT issuer 与内存
+  Authorization Server client redirect 等剩余部署配置仍需收敛。
 
 这些条目是工作提示，不代替针对当前任务的代码阅读和测试。
 

@@ -11,6 +11,10 @@ app:
   auth:
     cookie:
       secure: true
+  frontend:
+    url: ${APP_FRONTEND_URL}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS}
 
 spring:
   datasource:

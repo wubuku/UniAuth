@@ -333,30 +333,42 @@ V5 将 `web3_nonces.message` 设为必填，并在写入时保存服务端签发
 
 ## OAuth2 与前端地址
 
-当前 `application.yml` 包含部署环境硬编码：
+Google、GitHub 和 X 共用同一个 provider callback 配置：
 
-- `app.frontend.url`
-- Google/GitHub/X redirect URI
-- Web3 domain
-- CORS allowed origins
+| 环境变量 | 当前行为 |
+|----------|----------|
+| `OAUTH2_CALLBACK_URI` | provider 控制台注册的后端 callback；`dev`/`test` 默认 `http://localhost:8081/oauth2/callback`，`prod` 必填 |
+| `APP_FRONTEND_URL` | OAuth2 成功回跳和错误回退的主前端地址；`dev`/`test` 默认 `http://localhost:5173`，`prod` 必填 |
+| `APP_FRONTEND_ALLOWED_REDIRECT_ORIGINS` | 可选、逗号分隔的额外精确 HTTP(S) origin；仅用于允许 OAuth2 错误回跳保留受信 origin 上的 path/query |
 
-`application-test.yml` 还对不同 provider 使用了不同部署域名。
+`APP_FRONTEND_URL` 必须是带 host、无 userinfo/query/fragment/控制字符的绝对
+HTTP(S) URL，可以包含部署 context path。成功回跳使用该 base URL，错误回退使用
+该 base path 下的 `/login`；两条路径都不会丢弃配置的 context path。额外 redirect
+origin 必须是无 path/query/fragment 的精确 origin。OAuth2 成功处理器、业务错误
+处理器和 Spring failure handler 共用 `OAuth2RedirectPolicy`；跨 origin、userinfo、
+错误 scheme、空/越界 port 或控制字符形式的 `state.redirect_uri` 会回退到上述登录页。
+授权请求不再把 `Referer` 保存为 Session 中的前端来源。
 
-本地 OAuth2 流程必须显式覆盖这些值，并确保 provider 控制台注册的 callback
-与 `/oauth2/callback` 一致。不要把仓库内历史域名当作可复用默认值。
+`app.web3.domain`、JWT issuer 和 `AuthorizationServerConfig` 中的内存 client
+redirect 仍包含部署假设，不应与上述 provider callback 配置混为一谈。
 
 ## CORS
 
-CORS 来源目前由多处共同定义：
+UniAuth 后端只有一个 CORS 解释路径：
 
-- `application.yml` 的 `app.cors`
-- `CorsConfig`
-- `WebConfig`
-- `WebMvcConfig`
-- Python `app.py`
+- `CorsProperties` 绑定并校验 `app.cors`。
+- `CorsConfig` 创建唯一的 `CorsConfigurationSource`。
+- 四条有序 Spring Security filter chain 都显式启用该 source。
+- `WebConfig` 不定义 CORS，旧 `WebMvcConfig` 已删除。
 
-这些列表已经发生漂移。修改 origin、method、header 或 credentials 时必须同时审查，
-后续加固应收敛为单一配置来源。
+`CORS_ALLOWED_ORIGINS` 是逗号分隔的精确 HTTP(S) origin 列表。`dev`/`test`
+默认只允许 `http://localhost:5173`；`prod` 必须显式提供。带凭据时禁止 wildcard，
+origin 不得包含 userinfo、path、query、fragment 或控制字符。methods、headers、
+exposed headers、credentials 和 max-age 的基线仍位于 `application.yml` 的
+`app.cors`。
+
+Python 资源服务器是独立 bearer-only 服务，在 `python-resource-server/app.py`
+中维护自己的 CORS 配置；它不是 UniAuth Spring 应用的第二个 CORS 来源。
 
 ## JWT 与密钥
 

@@ -8,7 +8,7 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -28,9 +28,9 @@ import org.springframework.security.oauth2.client.registration.ClientRegistratio
 import org.springframework.security.oauth2.client.web.DefaultOAuth2AuthorizationRequestResolver;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestCustomizers;
-import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -55,11 +55,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Configuration
 @EnableWebSecurity
+@EnableConfigurationProperties(FrontendProperties.class)
 @Slf4j
 public class SecurityConfig {
-
-    @Value("${app.frontend.url:}")
-    private String frontendUrl;
 
     @Autowired
     private UserService userService;
@@ -92,6 +90,9 @@ public class SecurityConfig {
 
     @Autowired
     private TokenValidationService tokenValidationService;
+
+    @Autowired
+    private OAuth2RedirectPolicy oauth2RedirectPolicy;
 
     /**
      * 配置AuthenticationManager用于本地用户认证
@@ -208,13 +209,6 @@ public class SecurityConfig {
                         
                         // 检测回调模式：使用Accept头判断
                         String callbackMode = "redirect";
-                        String redirectUri = "/";
-                        
-                        // 使用配置文件中的前端地址
-                        if (frontendUrl != null && !frontendUrl.isEmpty()) {
-                            redirectUri = frontendUrl.endsWith("/") ? frontendUrl : frontendUrl + "/";
-                        }
-                        
                         // 如果没有指定回调模式，使用Accept头判断
                         if ("redirect".equals(callbackMode)) {
                             String acceptHeader = request.getHeader("Accept");
@@ -243,10 +237,9 @@ public class SecurityConfig {
                             ObjectMapper objectMapper = new ObjectMapper();
                             objectMapper.writeValue(response.getWriter(), responseData);
                         } else {
-                            // 重定向模式 - 完全由前端主导
-                            // 使用state参数中指定的redirect_uri，或使用默认值
+                            // 重定向目标只来自经过校验的服务端部署配置。
                             log.debug("OAuth2 redirect response selected");
-                            response.sendRedirect(redirectUri);
+                            response.sendRedirect(oauth2RedirectPolicy.successRedirect());
                         }
                     }
 
@@ -301,11 +294,11 @@ public class SecurityConfig {
              * 处理OAuth2错误，支持JSON响应和重定向
              */
             private void handleOAuth2Error(HttpServletRequest request, HttpServletResponse response, String errorMessage) throws IOException {
-                // 检测回调模式：优先使用state参数中的response_type，其次使用Accept头
+                // 默认 resolver 生成 opaque state；这里只防御性兼容旧 handler 输入。
                 String callbackMode = "redirect";
-                String redirectUri = "/";
+                String requestedRedirect = null;
                 
-                // 解析state参数
+                // 即使旧输入携带 redirect URI，最终目标仍必须通过服务端 allowlist。
                 String state = request.getParameter("state");
                 if (state != null) {
                     try {
@@ -325,7 +318,7 @@ public class SecurityConfig {
                         
                         // 获取重定向URI
                         if (stateData.containsKey("redirect_uri")) {
-                            redirectUri = stateData.get("redirect_uri").toString();
+                            requestedRedirect = stateData.get("redirect_uri").toString();
                         }
                     } catch (Exception e) {
                         // 解析失败，使用默认值
@@ -358,15 +351,21 @@ public class SecurityConfig {
                     ObjectMapper objectMapper = new ObjectMapper();
                     objectMapper.writeValue(response.getWriter(), responseData);
                 } else {
-                    // 重定向模式 - 完全由前端主导
-                    try {
-                        String encodedError = java.net.URLEncoder.encode(errorMessage, "UTF-8");
-                        response.sendRedirect(redirectUri + (redirectUri.contains("?") ? "&" : "?") + "error=" + encodedError);
-                    } catch (Exception ex) {
-                        response.sendRedirect(redirectUri + (redirectUri.contains("?") ? "&" : "?") + "error=oauth2_processing_failed");
-                    }
+                    response.sendRedirect(
+                            oauth2RedirectPolicy.errorRedirect(requestedRedirect, errorMessage)
+                    );
                 }
             }
+        };
+    }
+
+    @Bean
+    public AuthenticationFailureHandler oauth2FailureHandler() {
+        return (request, response, exception) -> {
+            log.warn("OAuth2 login failed");
+            response.sendRedirect(
+                    oauth2RedirectPolicy.loginErrorRedirect("oauth2_failed")
+            );
         };
     }
 
@@ -403,10 +402,7 @@ public class SecurityConfig {
             .oauth2Login(oauth2 -> oauth2
                 .loginPage("/login")
                 .successHandler(oauth2SuccessHandler())
-                .failureHandler((request, response, exception) -> {
-                    log.warn("OAuth2 login failed");
-                    response.sendRedirect("/login?error=oauth2_failed");
-                })
+                .failureHandler(oauth2FailureHandler())
                 .authorizationEndpoint(authz -> authz
                     .authorizationRequestResolver(authorizationRequestResolver(clientRegistrationRepository))
                 )
@@ -566,7 +562,7 @@ public class SecurityConfig {
     }
 
 
-    // 创建OAuth2授权请求解析器 - 支持PKCE和保留前端传入的state参数
+    // 使用 Spring Security 生成的 state，并为支持的客户端启用 PKCE。
     @Bean
     public OAuth2AuthorizationRequestResolver authorizationRequestResolver(ClientRegistrationRepository clientRegistrationRepository) {
         DefaultOAuth2AuthorizationRequestResolver defaultResolver = 
@@ -576,39 +572,7 @@ public class SecurityConfig {
         // 配置自定义的授权请求参数 - 先启用PKCE
         defaultResolver.setAuthorizationRequestCustomizer(OAuth2AuthorizationRequestCustomizers.withPkce());
 
-        // 包装解析器，在解析请求时将前端地址存入Session
-        return new OAuth2AuthorizationRequestResolver() {
-            @Override
-            public OAuth2AuthorizationRequest resolve(HttpServletRequest request) {
-                // 保存前端地址到Session
-                saveFrontendUrl(request);
-                return defaultResolver.resolve(request);
-            }
-
-            @Override
-            public OAuth2AuthorizationRequest resolve(HttpServletRequest request, String clientRegistrationId) {
-                // 保存前端地址到Session
-                saveFrontendUrl(request);
-                return defaultResolver.resolve(request, clientRegistrationId);
-            }
-            
-            private void saveFrontendUrl(HttpServletRequest request) {
-                String referer = request.getHeader("Referer");
-                if (referer != null && !referer.isEmpty()) {
-                    try {
-                        java.net.URL refererUrl = new java.net.URL(referer);
-                        // 只保存协议、主机和端口
-                        String frontendUrl = refererUrl.getProtocol() + "://" + refererUrl.getHost();
-                        if (refererUrl.getPort() != -1) {
-                            frontendUrl += ":" + refererUrl.getPort();
-                        }
-                        request.getSession().setAttribute("OAUTH2_FRONTEND_URL", frontendUrl);
-                    } catch (Exception e) {
-                        log.debug("OAuth2 referer origin could not be parsed");
-                    }
-                }
-            }
-        };
+        return defaultResolver;
     }
 
     /**

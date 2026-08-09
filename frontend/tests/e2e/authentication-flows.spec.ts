@@ -78,6 +78,25 @@ test('local login surfaces a rejected credential response', async ({ page }) => 
   await expect(page).toHaveURL('/login');
 });
 
+test('OAuth provider navigation does not attach client-controlled redirect state', async ({ page }) => {
+  const authorizationRequest = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === '/oauth2/authorization/github'
+  );
+  await page.route(/\/oauth2\/authorization\/github$/, async (route) => {
+    await route.fulfill({
+      status: 204,
+      body: '',
+    });
+  });
+
+  await page.goto('/login');
+  await page.getByRole('button', { name: 'GitHub 登录' }).click();
+
+  const requestUrl = new URL((await authorizationRequest).url());
+  expect(requestUrl.search).toBe('');
+  expect(requestUrl.hash).toBe('');
+});
+
 test('email registration returns to the requested same-origin resource page', async ({ page }) => {
   const email = 'browser-registration@example.invalid';
   let sendCount = 0;

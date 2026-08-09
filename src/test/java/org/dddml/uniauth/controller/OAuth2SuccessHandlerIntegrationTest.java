@@ -20,15 +20,20 @@ import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
+import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
+import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Set;
@@ -36,7 +41,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "app.frontend.url=https://frontend.example.test/console",
+        "app.frontend.allowed-redirect-origins=https://alternate.example.test"
+})
 @ActiveProfiles("test")
 class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
 
@@ -55,6 +63,13 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
 
     @Autowired
     private JwtTokenService jwtTokenService;
+
+    @Autowired
+    private OAuth2AuthorizationRequestResolver authorizationRequestResolver;
+
+    @Autowired
+    @Qualifier("oauth2FailureHandler")
+    private AuthenticationFailureHandler failureHandler;
 
     @ParameterizedTest
     @ValueSource(strings = {"google", "github", "x"})
@@ -158,6 +173,135 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
         assertThat(response.path("authenticated").asBoolean()).isFalse();
         assertThat(response.path("error").asText()).isNotBlank();
         assertThat(loginMethodRepository.count()).isEqualTo(initialCount);
+    }
+
+    @Test
+    void redirectCallbackUsesTheConfiguredFrontendUrl() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/oauth2/callback");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        successHandler.onAuthenticationSuccess(
+                request,
+                response,
+                authentication("github", "github-redirect-" + UUID.randomUUID())
+        );
+
+        assertThat(response.getStatus()).isEqualTo(302);
+        assertThat(response.getRedirectedUrl())
+                .isEqualTo("https://frontend.example.test/console/");
+    }
+
+    @Test
+    void maliciousStateRedirectCannotEscapeTheConfiguredFrontend() throws Exception {
+        String providerSubject = "github-redirect-conflict-" + UUID.randomUUID();
+        executeJsonCallback(authentication("github", providerSubject), null);
+        UserDto secondUser = registerLocalUser("oauth-redirect-conflict");
+        String secondUserToken = jwtTokenService.generateAccessToken(
+                secondUser.getUsername(),
+                secondUser.getEmail(),
+                secondUser.getId(),
+                secondUser.getAuthorities()
+        );
+        String state = URLEncoder.encode(
+                """
+                {"redirect_uri":"https://evil.example/collect","response_type":"redirect"}
+                """,
+                StandardCharsets.UTF_8
+        );
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/oauth2/callback");
+        request.setParameter("state", state);
+        request.setCookies(new Cookie("accessToken", secondUserToken));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        successHandler.onAuthenticationSuccess(
+                request,
+                response,
+                authentication("github", providerSubject)
+        );
+
+        assertThat(response.getStatus()).isEqualTo(302);
+        assertThat(response.getRedirectedUrl())
+                .startsWith("https://frontend.example.test/console/login?error=")
+                .doesNotContain("evil.example");
+    }
+
+    @Test
+    void allowedStateRedirectKeepsItsPathAndExistingQuery() throws Exception {
+        String providerSubject = "github-allowed-redirect-" + UUID.randomUUID();
+        executeJsonCallback(authentication("github", providerSubject), null);
+        UserDto secondUser = registerLocalUser("oauth-allowed-redirect");
+        String secondUserToken = jwtTokenService.generateAccessToken(
+                secondUser.getUsername(),
+                secondUser.getEmail(),
+                secondUser.getId(),
+                secondUser.getAuthorities()
+        );
+        String state = URLEncoder.encode(
+                """
+                {
+                  "redirect_uri":"https://alternate.example.test/oauth/complete?source=github",
+                  "response_type":"redirect"
+                }
+                """,
+                StandardCharsets.UTF_8
+        );
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/oauth2/callback");
+        request.setParameter("state", state);
+        request.setCookies(new Cookie("accessToken", secondUserToken));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        successHandler.onAuthenticationSuccess(
+                request,
+                response,
+                authentication("github", providerSubject)
+        );
+
+        assertThat(response.getStatus()).isEqualTo(302);
+        assertThat(response.getRedirectedUrl())
+                .startsWith(
+                        "https://alternate.example.test/oauth/complete"
+                                + "?source=github&error="
+                );
+    }
+
+    @Test
+    void oauth2FailureHandlerUsesTheConfiguredFrontendLoginPage() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/oauth2/callback");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        failureHandler.onAuthenticationFailure(
+                request,
+                response,
+                new AuthenticationServiceException("provider rejected request")
+        );
+
+        assertThat(response.getStatus()).isEqualTo(302);
+        assertThat(response.getRedirectedUrl())
+                .isEqualTo(
+                        "https://frontend.example.test/console/login?error=oauth2_failed"
+                );
+    }
+
+    @Test
+    void authorizationRequestDoesNotPersistAnUntrustedRefererOrigin() {
+        MockHttpServletRequest request = new MockHttpServletRequest(
+                "GET",
+                "/oauth2/authorization/github"
+        );
+        request.addHeader("Referer", "https://evil.example/account");
+
+        authorizationRequestResolver.resolve(request);
+
+        assertThat(request.getSession(false))
+                .satisfies(session -> {
+                    if (session != null) {
+                        assertThat(session.getAttribute("OAUTH2_FRONTEND_URL")).isNull();
+                    }
+                });
     }
 
     private JsonNode executeJsonCallback(

@@ -165,6 +165,41 @@ class ConfigurationSafetyTest {
     }
 
     @Test
+    void corsAndOauthRedirectsHaveProfileSafeSources() throws IOException {
+        assertThat(property("application.yml", "app.cors.allowed-origins")).isNull();
+        assertThat(property("application-dev.yml", "app.cors.allowed-origins"))
+                .isEqualTo("${CORS_ALLOWED_ORIGINS:http://localhost:5173}");
+        assertThat(property("application-test.yml", "app.cors.allowed-origins"))
+                .isEqualTo("${CORS_ALLOWED_ORIGINS:http://localhost:5173}");
+        assertThat(property("application-prod.yml", "app.cors.allowed-origins"))
+                .isEqualTo("${CORS_ALLOWED_ORIGINS}");
+
+        assertThat(property("application.yml", "app.frontend.url"))
+                .isEqualTo("${APP_FRONTEND_URL:}");
+        assertThat(property("application-dev.yml", "app.frontend.url"))
+                .isEqualTo("${APP_FRONTEND_URL:http://localhost:5173}");
+        assertThat(property("application-test.yml", "app.frontend.url"))
+                .isEqualTo("${APP_FRONTEND_URL:http://localhost:5173}");
+        assertThat(property("application-prod.yml", "app.frontend.url"))
+                .isEqualTo("${APP_FRONTEND_URL}");
+
+        for (String provider : List.of("google", "github", "x")) {
+            String key = "spring.security.oauth2.client.registration."
+                    + provider + ".redirect-uri";
+            assertThat(property("application.yml", key))
+                    .isEqualTo("${OAUTH2_CALLBACK_URI}");
+            assertThat(property("application-dev.yml", key))
+                    .isEqualTo(
+                            "${OAUTH2_CALLBACK_URI:http://localhost:8081/oauth2/callback}"
+                    );
+            assertThat(property("application-test.yml", key))
+                    .isEqualTo(
+                            "${OAUTH2_CALLBACK_URI:http://localhost:8081/oauth2/callback}"
+                    );
+        }
+    }
+
+    @Test
     void developmentAndTestProfilesDoNotEnableSensitiveSqlOrFrameworkDebugLogs() throws IOException {
         assertThat(property("application-dev.yml", "spring.jpa.show-sql")).isEqualTo(false);
         assertThat(property("application-test.yml", "spring.jpa.show-sql")).isEqualTo(false);

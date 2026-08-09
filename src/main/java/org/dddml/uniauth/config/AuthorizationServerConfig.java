@@ -42,6 +42,7 @@ public class AuthorizationServerConfig {
         // 只处理OAuth2授权服务器相关的路径
         http
             .securityMatcher("/oauth2/authorize", "/oauth2/token", "/oauth2/jwks", "/oauth2/revoke", "/oauth2/introspect")
+            .cors(cors -> {})
             .authorizeHttpRequests(authz -> authz
                 .anyRequest().permitAll()
             )
