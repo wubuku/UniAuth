@@ -684,8 +684,10 @@ V3 后数据库同时约束状态元数据：
 - `COMPLETED`: `processed_time` 非空；`next_retry_time`/`error_message` 为空。
 - `FAILED`: `processed_time` 非空且 `next_retry_time` 为空；允许保存最终错误。
 
-`email_logs` 会保存收件人、主题、HTML 内容、供应商、错误和耗时。它包含个人信息和
-可能敏感的验证码内容，必须限制数据库和日志访问，并定义保留/清理策略。
+`email_logs` 会保存收件人、主题、供应商、错误和耗时，但 V5 要求
+`email_content` 始终为 null。完整 HTML 和可能嵌入其中的验证码只在
+`PENDING`/`PROCESSING` 队列中保留；终态队列使用 `<redacted/>`。这些持久化字段仍
+包含个人信息和敏感内容，必须限制数据库访问，并定义保留/清理策略。
 
 异步执行器饱和或关闭时不会把已经提交的入队请求反向变成 HTTP 失败；对应事件会被
 放弃即时执行，由持久队列的 recovery 扫描继续处理。该降级依赖 recovery 保持启用。
