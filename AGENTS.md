@@ -381,15 +381,17 @@ PYTHON_BIN=python3 scripts/test-email-login-browser-e2e.sh
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-当前候选基线（2026-08-09 F2 与 post-F1 邮件 V5 合并树；合并后的完整门禁必须重跑）：
+当前候选基线（2026-08-09 F2 与 post-F1 邮件 V5 合并树；合并后的完整门禁已重跑）：
 
 - 当前根统一门禁：Maven 219 tests、shared-schema process E2E 4/4、
   HTTP 16/16、Flyway baseline guard 16/16、Mock Playwright 28/28、
   生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 20/20、邮件 REST stub
   contract 12/12；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
-  patch hygiene 均通过。
+  patch hygiene 均通过；完整 `scripts/verify.sh` 12/12 以
+  `PASS: complete repository verification gate` 结束。
 - 当前邮件参考服务：154 tests，0 failures/errors/skips；Shell runtime 44/44、
-  HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10。
+  HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；组件门禁以
+  `PASS: email service verification gate` 结束。
 - 以下 2026-08-08 条目保留为加固增量历史，不替代上述当前基线。
 - 邮件参考服务初始纳入基线：94 tests，0 failures/errors/skips；另有 runtime guard 15/15、
   Shell HTTP 8/8 和 Flyway guard 8/8。

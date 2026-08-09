@@ -165,11 +165,11 @@ F2 已按冻结范围完成以下协调切换：
 
 ## 6. 验收证据
 
-2026-08-09 在同一稳定源码快照上执行：
+2026-08-09 在 F2 与 post-F1 邮件 V5 合并后的同一稳定源码快照上执行：
 
 - `scripts/verify.sh`：12/12 完整通过。
 - 根 Maven：219/219，0 failures/errors/skips。
-- reference email-service：150/150；runtime 44/44、HTTP 11/11、Flyway 15/15、
+- reference email-service：154/154；runtime 44/44、HTTP 11/11、Flyway 15/15、
   backup/restore 10/10。
 - shared-schema process E2E：4/4；HTTP/Flyway/Web3/email E2E：16/16；
   Flyway baseline guard：16/16。
@@ -177,6 +177,8 @@ F2 已按冻结范围完成以下协调切换：
   真实邮箱登录跨服务 Playwright 1/1。
 - Python 邮件 stub contract 12/12；Python 资源服务器 20/20。
 - 文档相对链接和 `git diff --check` 通过。
+- 本轮没有继承 F2 与邮件 V5 各自的合并前结果；完整组合树重新运行
+  `scripts/verify.sh` 并以 `PASS: complete repository verification gate` 结束。
 
 本轮按阶段规则不执行连续三轮无修改检查。该检查只在 F1-F5 全部完成并通过阶段统一
 门禁后执行一次。

@@ -277,11 +277,12 @@ F1-F5 全部完成后的阶段末检查发生实质修改时，才将该统一�
 
 - Flyway V7、token family/security version、session claims、rotation/replay/logout、
   Cookie/CSRF、strict introspection、限流和生产诊断路由隔离已完成。
-- 根 Maven 219/219、邮件 Maven 150/150、shared-schema 4/4、HTTP/Flyway 16/16、
+- 根 Maven 219/219、邮件 Maven 154/154、shared-schema 4/4、HTTP/Flyway 16/16、
   Mock Playwright 28/28、生产 Playwright 2/2、真实浏览器 1/1、Python 12/12 +
   20/20 已通过。
-- 完整 `scripts/verify.sh` 12/12 通过。按阶段规则不执行 F2 单轮三次无修改检查，
-  下一步进入 F3。
+- F2 与 post-F1 邮件 V5 的合并树已重新执行完整 `scripts/verify.sh` 并 12/12
+  通过，没有继承合并前结果。按阶段规则不执行 F2 单轮三次无修改检查，下一步进入
+  F3。
 
 ### F3：OAuth2、Web3 与 canonical API 契约（91% -> 95%）
 

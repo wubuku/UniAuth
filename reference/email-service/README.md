@@ -426,18 +426,17 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   baseline。
 - migration checksum 失配时失败关闭，并保留已有 migration history 和业务数据。
 
-2026-08-09 F2 与 post-F1 邮件 V5 合并候选基线：
+2026-08-09 F2 与 post-F1 邮件 V5 合并验证基线：
 
 - 本组件 Maven：154 tests，0 failures/errors/skips。
 - 本组件 Shell runtime 44/44、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
 - PostgreSQL backup/restore rehearsal 10/10。
-- F2 同步前的 UniAuth 根项目：Java 219 tests、shared-schema process E2E 4/4、HTTP 16/16、
+- 合并后的 UniAuth 根项目：Java 219 tests、shared-schema process E2E 4/4、HTTP 16/16、
   Flyway 16/16、Mock Playwright 28/28、真实邮箱登录浏览器 E2E 1/1、
   生产 Playwright 2/2、Python 资源服务器 20/20、邮件 REST stub contract 12/12，
   完整根统一门禁 12/12 已通过。
-- 上述 V5 和 F2 结果来自同步前的两个稳定源码快照；合并后的组合树必须重新运行完整
-  根门禁，不能直接继承两边成功状态。最终加固 F1-F5 不分别执行连续三轮无修改检查；
-  该检查在 F1-F5 全部完成后统一执行。
+- 合并后的组合树已重新运行完整根门禁，没有继承同步前两个源码快照的成功状态。
+  最终加固 F1-F5 不分别执行连续三轮无修改检查；该检查在 F1-F5 全部完成后统一执行。
 - 根 Shell HTTP E2E 的正常邮箱路径使用本参考服务真实 JAR、真实 HTTP 和独立
   PostgreSQL，直接断言模板、idempotency identity 和 delivery status；脚本随后只为
   `503/429` 失败映射切换到受控 loopback REST stub，仍通过真实 UniAuth
