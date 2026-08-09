@@ -15,8 +15,8 @@
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
 | [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md) | Live | 真实 PostgreSQL/UniAuth/Vite/Python/邮件 stub 的注册、登录、回跳与跨域 Bearer 复现 |
-| [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；F1 已完成，F2-F5 仅在后续明确要求时作为独立批次启动 |
-| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 保存完整风险背景；当前执行边界由最终收尾计划控制 |
+| [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md) | Reference | 原冻结范围与退出标准；不再自动执行，F2-F5 仅在未来明确要求时独立启动 |
+| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 保存完整风险背景；不自动形成当前执行范围 |
 | [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Historical | 已完成批次与证据记录；不再驱动开放循环 |
 
 ## 当前关键结论
@@ -40,6 +40,9 @@
   delivery status 查询恢复外部接受后的响应丢失/重启窗口；终态投递失败会使 challenge
   不可验证。普通邮箱加密码登录不需要每次发信。根 HTTP E2E 的正常注册/重置请求使用
   真实参考服务和独立 PostgreSQL 验证模板入队；仅 `503/429` 失败映射使用受控 stub。
+  参考服务 Flyway V5 还将投递日志 HTML 固定为空，并在队列进入
+  `COMPLETED`/`FAILED` 后用 `<redacted/>` 替换 HTML、清空 metadata；待投递或重试
+  队列仍保留实际 HTML。
 - 已建立 PostgreSQL Java 集成测试、真实 HTTP Shell E2E、Mock Playwright 和
   Python 离线 JWT/JWKS/邮件 stub 契约测试；另有真实五服务邮箱登录 Playwright
   套件，验证资源域无认证 Cookie 且跨 origin 请求使用 Bearer header。ESLint 与
@@ -55,7 +58,7 @@
 |------|------|------|
 | [前端 README](../frontend/README.md) | Needs verification | React/Vite 使用说明；以 `vite.config.ts` 为端口和构建事实 |
 | [Python 资源服务器 README](../python-resource-server/README.md) | Needs verification | Flask 示例说明；以 `app.py` 为端口和 JWT claim 事实 |
-| [邮件服务参考实现](../reference/email-service/README.md) | Reference | 独立 Spring Boot REST/SMTP 组件；Flyway V1-V4、幂等投递 identity/status、同 public schema 兼容布局、SMTP/限流 guard、PostgreSQL/GreenMail、Shell E2E 与选择性 backup/restore rehearsal |
+| [邮件服务参考实现](../reference/email-service/README.md) | Reference | 独立 Spring Boot REST/SMTP 组件；Flyway V1-V5、幂等投递 identity/status、终态载荷脱敏、同 public schema 兼容布局、SMTP/限流 guard、PostgreSQL/GreenMail、Shell E2E 与选择性 backup/restore rehearsal |
 | [异构资源服务器验证记录](../VERIFICATION_CHECKLIST.md) | Historical | 2026-01-25 的历史验证快照，不是当前回归证明 |
 
 ## 契约与集成材料

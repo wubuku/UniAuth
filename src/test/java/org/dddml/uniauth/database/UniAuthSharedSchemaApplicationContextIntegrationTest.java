@@ -125,10 +125,10 @@ class UniAuthSharedSchemaApplicationContextIntegrationTest {
             SELECT count(*)
             FROM email_service_flyway_schema_history
             WHERE success
-              AND version IN ('1', '2', '3', '4')
+              AND version IN ('1', '2', '3', '4', '5')
             """,
             Integer.class
-        )).isEqualTo(4);
+        )).isEqualTo(5);
         assertThat(jdbcTemplate.queryForObject(
             "SELECT to_regclass('public.users')",
             String.class

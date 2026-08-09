@@ -199,7 +199,6 @@ public class EmailService {
             .queueId(emailQueue.getId())
             .recipient(emailQueue.getRecipient())
             .subject(emailQueue.getSubject())
-            .emailContent(emailQueue.getHtmlContent())
             .emailType(emailType)
             .retryCount(emailQueue.getRetryCount())
             .mailProvider(getMailProvider())

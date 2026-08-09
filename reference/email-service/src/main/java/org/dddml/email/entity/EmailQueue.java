@@ -25,6 +25,8 @@ import java.time.LocalDateTime;
 @Builder
 public class EmailQueue {
 
+    public static final String REDACTED_HTML_CONTENT = "<redacted/>";
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -95,6 +97,7 @@ public class EmailQueue {
         this.errorMessage = error;
         this.nextRetryTime = null;
         this.processedTime = LocalDateTime.now();
+        redactTerminalPayload();
     }
 
     public void markAsCompleted() {
@@ -102,6 +105,7 @@ public class EmailQueue {
         this.errorMessage = null;
         this.nextRetryTime = null;
         this.processedTime = LocalDateTime.now();
+        redactTerminalPayload();
     }
 
     public void markAsProcessing() {
@@ -109,5 +113,10 @@ public class EmailQueue {
         this.errorMessage = null;
         this.nextRetryTime = null;
         this.processedTime = null;
+    }
+
+    private void redactTerminalPayload() {
+        this.htmlContent = REDACTED_HTML_CONTENT;
+        this.metadata = null;
     }
 }

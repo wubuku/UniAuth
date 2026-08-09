@@ -127,14 +127,14 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - `EMAIL_DATABASE_LAYOUT` 默认 `dedicated`，要求 `EMAIL_POSTGRES_*` 指向邮件专用
   PostgreSQL 16 数据库。只有显式设置 `shared-uniauth` 时才允许复用获准的 UniAuth
   数据库：目标 `public` schema 可以为空，由任一侧先迁移；若已存在 peer，则必须是
-  完整且 history 精确的 UniAuth V1-V6 或邮件 V1-V4。两侧使用独立 Flyway history
+  完整且 history 精确的 UniAuth V1-V6 或邮件 V1-V5。两侧使用独立 Flyway history
   table 和 advisory-lock 串行化。`blacksheep*`、系统库、未知 layout、H2 和其他
   非 PostgreSQL datasource 均在 Flyway 前拒绝。
 - 邮件侧业务 relation 是 `email_queue`、`email_logs` 及其序列/索引/约束，与
   UniAuth V1-V6 的表、序列和索引名称没有冲突。不能据此直接移除迁移保护：后启动
   Flyway 仍会遇到“schema 非空但缺少自身 history”的启动冲突。
 - Flyway location 是 `classpath:db/migration/postgresql`，history table 是
-  `email_service_flyway_schema_history`，当前 migration 为 V1 + V2 + V3 + V4。
+  `email_service_flyway_schema_history`，当前 migration 为 V1 + V2 + V3 + V4 + V5。
 - UniAuth history 是 `uniauth_flyway_schema_history`。共享布局中，后启动一侧只有在
   对端核心 relation 和 history 精确匹配、本侧 managed relation 不存在时，才在双方
   共用的 PostgreSQL advisory lock 内创建 baseline V0 并继续 migrate。peer history
@@ -146,6 +146,10 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - V3 规范化历史队列元数据并约束状态行形状：终态必须有 `processed_time`，只有
   `PENDING` 可以保留 `next_retry_time`，只有 `FAILED` 可以保留
   `error_message`。该要求是参考实现的数据库契约，不是外部 REST 协议的表结构要求。
+- V4 增加幂等 delivery identity。V5 清空历史 `email_logs.email_content`，并将历史
+  `COMPLETED`/`FAILED` 队列的 HTML 替换为 `<redacted/>`、清空 metadata；数据库约束
+  阻止后续日志保存 HTML 或终态队列保留实际载荷。`PENDING`/`PROCESSING` 必须继续
+  保留渲染 HTML，供真实投递和重试使用。
 - Flyway 缺失 location 和非法 migration 文件命名都必须使启动失败：
   `fail-on-missing-locations=true`、`validate-migration-naming=true`。
 - 所有 profile 使用 Hibernate `validate`，SQL init 关闭。
@@ -172,9 +176,10 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - `backup-postgres.sh` 支持 `dedicated` 和显式 `shared-uniauth`，但固定只导出
   `email_queue`、`email_logs`、对应序列和
   `email_service_flyway_schema_history`。共享库中的 UniAuth 用户/认证表不会进入
-  组件 archive；history 必须精确匹配当前 V1-V4 链，共享布局另允许至多一个 V0
+  组件 archive；history 必须精确匹配当前 V1-V5 链，共享布局另允许至多一个 V0
   baseline，未知或额外 migration 会失败关闭。共享数据库的整库备份与恢复仍必须
-  由仓库外、经授权的运维流程负责。
+  由仓库外、经授权的运维流程负责。archive 仍可能包含收件人、主题、错误文本和
+  待投递/重试队列的 HTML 或验证码；V5 只保证投递日志 HTML 为空、终态队列载荷脱敏。
 - `pg_dump` 和 `pg_restore` major 必须与源 PostgreSQL major 一致；可通过
   `EMAIL_PG_DUMP_BIN`、`EMAIL_PG_RESTORE_BIN` 选择正确客户端。默认 restore
   自动化只在 disposable 空库中执行，不覆盖现有数据库。
@@ -287,7 +292,7 @@ base 配置固定 `JSESSIONID`、`HttpOnly=true`、`Path=/`、`SameSite=Lax`；
 Spring Session 两张表已进入 V1，不再由框架或部署脚本旁路创建。
 UniAuth 的 migration strategy 会在执行 migration 前拒绝上述关键 Flyway 配置被
 高优先级配置覆盖。共享 schema 中一旦存在邮件服务 history，后续启动会重新核对其
-V1-V4 history 和核心 relation。
+V1-V5 history 和核心 relation。
 
 ### 演示数据
 

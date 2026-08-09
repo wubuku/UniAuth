@@ -111,7 +111,7 @@ class EmailQueueRepositoryTest {
         EmailQueue completed = EmailQueue.builder()
                 .recipient("user3@example.com")
                 .subject("Subject3")
-                .htmlContent("Content3")
+                .htmlContent(EmailQueue.REDACTED_HTML_CONTENT)
                 .status("COMPLETED")
                 .processedTime(LocalDateTime.now())
                 .priority(5)
@@ -212,7 +212,7 @@ class EmailQueueRepositoryTest {
         EmailQueue completed = EmailQueue.builder()
                 .recipient("user2@example.com")
                 .subject("Completed")
-                .htmlContent("Content")
+                .htmlContent(EmailQueue.REDACTED_HTML_CONTENT)
                 .status("COMPLETED")
                 .processedTime(LocalDateTime.now())
                 .priority(5)
@@ -287,10 +287,31 @@ class EmailQueueRepositoryTest {
         EmailQueue invalidQueue = EmailQueue.builder()
                 .recipient("invalid-terminal@example.com")
                 .subject("Missing processed time")
-                .htmlContent("<p>Invalid terminal state</p>")
+                .htmlContent(EmailQueue.REDACTED_HTML_CONTENT)
                 .status("COMPLETED")
                 .priority(5)
                 .retryCount(0)
+                .maxRetries(3)
+                .build();
+
+        assertThrows(
+            ConstraintViolationException.class,
+            () -> entityManager.persistAndFlush(invalidQueue)
+        );
+    }
+
+    @Test
+    void postgresSchemaRejectsUnredactedTerminalPayloads() {
+        EmailQueue invalidQueue = EmailQueue.builder()
+                .recipient("invalid-redaction@example.com")
+                .subject("Unredacted terminal payload")
+                .htmlContent("<p>verification-code-112358</p>")
+                .metadata("{\"verificationCode\":\"112358\"}")
+                .status("FAILED")
+                .processedTime(LocalDateTime.now())
+                .errorMessage("SMTP failed")
+                .priority(5)
+                .retryCount(3)
                 .maxRetries(3)
                 .build();
 

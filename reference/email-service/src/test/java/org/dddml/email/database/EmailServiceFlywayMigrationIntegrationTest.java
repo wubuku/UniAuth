@@ -28,7 +28,7 @@ class EmailServiceFlywayMigrationIntegrationTest {
             .withPassword("email_migration_test");
 
     @Test
-    void freshMigrationCreatesV4ConstraintsIndexesAndHistory() throws Exception {
+    void freshMigrationCreatesV5ConstraintsIndexesAndHistory() throws Exception {
         String schema = newSchema();
 
         flyway(schema, null).migrate();
@@ -39,18 +39,20 @@ class EmailServiceFlywayMigrationIntegrationTest {
                 SELECT COUNT(*)
                 FROM email_service_flyway_schema_history
                 WHERE success = TRUE
-                  AND version IN ('1', '2', '3', '4')
-                """)).isEqualTo(4);
+                  AND version IN ('1', '2', '3', '4', '5')
+                """)).isEqualTo(5);
             assertThat(queryInt(statement, """
                 SELECT COUNT(*)
                 FROM pg_constraint
                 WHERE conname IN (
                     'chk_email_queue_retry_bounds',
                     'chk_email_queue_lifecycle_state',
-                    'fk_email_logs_queue'
+                    'fk_email_logs_queue',
+                    'chk_email_logs_content_redacted',
+                    'chk_email_queue_terminal_payload_redacted'
                 )
                   AND connamespace = current_schema()::regnamespace
-                """)).isEqualTo(3);
+                """)).isEqualTo(5);
             assertThat(queryInt(statement, """
                 SELECT COUNT(*)
                 FROM pg_indexes
@@ -75,7 +77,7 @@ class EmailServiceFlywayMigrationIntegrationTest {
     }
 
     @Test
-    void v1ToV4UpgradeNormalizesLifecycleMetadataAndPreservesRows() throws Exception {
+    void v1ToV5UpgradeNormalizesLifecycleMetadataAndPreservesRows() throws Exception {
         String schema = newSchema();
         flyway(schema, MigrationVersion.fromVersion("1")).migrate();
 
@@ -127,11 +129,94 @@ class EmailServiceFlywayMigrationIntegrationTest {
                 SELECT COUNT(*)
                 FROM email_service_flyway_schema_history
                 WHERE success = TRUE
-                  AND version IN ('1', '2', '3', '4')
-                """)).isEqualTo(4);
+                  AND version IN ('1', '2', '3', '4', '5')
+                """)).isEqualTo(5);
             statement.executeUpdate("DELETE FROM email_queue WHERE id = 1");
             assertThat(queryInt(statement,
                 "SELECT COUNT(*) FROM email_logs WHERE queue_id IS NULL")).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void v4ToV5UpgradeRedactsHistoricalTerminalPayloadsAndLogs() throws Exception {
+        String schema = newSchema();
+        flyway(schema, MigrationVersion.fromVersion("4")).migrate();
+
+        try (Connection connection = connection(schema);
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("""
+                INSERT INTO email_queue (
+                    recipient, subject, html_content, email_type, status, priority,
+                    retry_count, max_retries, created_time, updated_time,
+                    processed_time, error_message, metadata
+                ) VALUES
+                    (
+                        'completed@example.test', 'Completed',
+                        '<p>verification-code-314159</p>', 'VERIFICATION',
+                        'COMPLETED', 5, 0, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        CURRENT_TIMESTAMP, NULL, '{"verificationCode":"314159"}'
+                    ),
+                    (
+                        'failed@example.test', 'Failed',
+                        '<p>reset-code-271828</p>', 'PASSWORD_RESET',
+                        'FAILED', 5, 3, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        CURRENT_TIMESTAMP, 'SMTP failed',
+                        '{"verificationCode":"271828"}'
+                    ),
+                    (
+                        'pending@example.test', 'Pending',
+                        '<p>retry-code-161803</p>', 'PASSWORD_RESET',
+                        'PENDING', 5, 1, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        NULL, NULL, '{"verificationCode":"161803"}'
+                    )
+                """);
+            statement.executeUpdate("""
+                INSERT INTO email_logs (
+                    queue_id, recipient, subject, status, sent_time, retry_count,
+                    email_content, email_type, mail_provider, send_method
+                )
+                SELECT
+                    id, recipient, subject,
+                    CASE WHEN status = 'COMPLETED' THEN 'SUCCESS' ELSE 'FAILED' END,
+                    CURRENT_TIMESTAMP, retry_count, html_content, email_type,
+                    'fixture', 'SCHEDULED'
+                FROM email_queue
+                WHERE status IN ('COMPLETED', 'FAILED')
+                """);
+        }
+
+        flyway(schema, null).migrate();
+
+        try (Connection connection = connection(schema);
+             Statement statement = connection.createStatement()) {
+            assertThat(queryInt(statement, """
+                SELECT COUNT(*)
+                FROM email_queue
+                WHERE status IN ('COMPLETED', 'FAILED')
+                  AND html_content = '<redacted/>'
+                  AND metadata IS NULL
+                """)).isEqualTo(2);
+            assertThat(queryInt(statement, """
+                SELECT COUNT(*)
+                FROM email_queue
+                WHERE status = 'PENDING'
+                  AND html_content = '<p>retry-code-161803</p>'
+                  AND metadata = '{"verificationCode":"161803"}'
+                """)).isEqualTo(1);
+            assertThat(queryInt(statement, """
+                SELECT COUNT(*)
+                FROM email_logs
+                WHERE email_content IS NULL
+                """)).isEqualTo(2);
+            assertThat(queryInt(statement, """
+                SELECT COUNT(*)
+                FROM pg_constraint
+                WHERE conname IN (
+                    'chk_email_logs_content_redacted',
+                    'chk_email_queue_terminal_payload_redacted'
+                )
+                  AND connamespace = current_schema()::regnamespace
+                """)).isEqualTo(2);
         }
     }
 

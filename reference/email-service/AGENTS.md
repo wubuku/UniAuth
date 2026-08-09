@@ -53,11 +53,14 @@
   可以保留 `next_retry_time`，只有 `FAILED` 可以保留 `error_message`。claim、retry、
   完成和永久失败转换必须同步维护这些字段。V4 增加可空的幂等请求 identity；
   同一 idempotency key 只能对应一个稳定 request fingerprint 和 queue identity。
-  不得改写已发布的 V1/V2/V3/V4。
+  V5 清空历史日志 HTML，规范化历史终态队列，并通过 PostgreSQL 约束固定敏感载荷
+  最小化：`email_logs.email_content` 始终为 null；`PENDING`/`PROCESSING` 保留
+  投递所需 HTML，`COMPLETED`/`FAILED` 必须使用 `<redacted/>` 并清空 metadata。
+  不得改写已发布的 V1/V2/V3/V4/V5。
 - PostgreSQL 备份使用 `scripts/backup-postgres.sh`：它支持 `dedicated` 和显式
   `shared-uniauth`，但无论哪种布局都只导出 `email_queue`、`email_logs`、对应序列
   和 `email_service_flyway_schema_history`，不得把共享库的 UniAuth 表带入组件备份。
-  history 必须精确匹配 SQL V1-V4；shared layout 只额外允许 0 或 1 个 V0 baseline，
+  history 必须精确匹配 SQL V1-V5；shared layout 只额外允许 0 或 1 个 V0 baseline，
   缺失、重复、失败、未知 versioned 或 repeatable migration 都必须失败关闭。
   它不得隐式读取 `.env`，只能读取显式环境变量或显式
   `EMAIL_SERVICE_ENV_FILE`，并拒绝未知布局、缺失邮件 schema、相对/符号链接/
@@ -116,7 +119,7 @@ Surefire XML 和非伪造的退出状态；artifact 写入失败必须令验证�
 
 Flyway 是邮件组件对象的 PostgreSQL schema owner，history table 是
 `email_service_flyway_schema_history`；所有 profile 的 Hibernate 都使用 `validate`。
-已发布 migration 不得改写；新增 schema 变更使用 V4+。Java/Shell guard 必须在迁移
+已发布 migration 不得改写；新增 schema 变更使用 V6+。Java/Shell guard 必须在迁移
 前拒绝 schema-owner 配置覆盖；checksum drift 测试必须
 证明失败启动不会自动改写 history，只有显式恢复后才能重新通过验证。E2E 必须经过
 真实 HTTP、Flyway/PostgreSQL、真实 Spring Beans、Thymeleaf、异步事件和

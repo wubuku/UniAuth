@@ -58,7 +58,7 @@ UniAuth/邮件服务双进程 shared-schema E2E，并证明表/序列/索引无�
 - `scripts/test-flyway-baseline-guard.sh`：dirty schema 拒绝、V2 坏数据失败关闭和
   forward-fix；在 V1 migrated 应用启用 API key 后仍拒绝重复同名凭据。
 - `scripts/test-backup-restore-rehearsal.sh`：显式 shared-uniauth 选择性备份、排除
-  UniAuth 表、精确 V1-V4 history（含未知 versioned/repeatable 拒绝）、owner-only
+  UniAuth 表、精确 V1-V5 history（含未知 versioned/repeatable 拒绝）、owner-only
   archive、空库恢复和恢复后真实应用继续写入。
 
 ### 前端
@@ -123,10 +123,10 @@ Cookie 误当成跨域 Bearer transport。详细复现见
 
 ### 收敛检查
 
-通常交付遵守下面的三轮规则。当前冻结的最终加固 F1-F5 使用一次性阶段收敛：
-F1-F4 各轮只需通过该轮完整自动化验收，不分别执行三轮检查；F5 完成全部剩余实现并
-通过统一阶段门禁后，再对 F1-F5 的整体实现、测试、配置、迁移和文档执行唯一一次
-连续三轮无修改检查。验收中发现的问题仍须立即修复并重跑受影响门槛。
+通常交付遵守下面的三轮规则。历史最终加固计划中的 F1 已完成，F2-F5 不再自动执行。
+2026-08-09 post-F1 邮件 V5 收尾在完整统一门禁通过后，对本次固定范围执行一次连续
+三轮无修改检查；检查通过并交付后即退出邮箱固化阶段。未来若明确启动 F2-F5 中的
+某一批，应作为独立 feature/fix/maintenance 需求重新规划和验收。
 
 三轮实现检查只能在以下基础门槛全部通过后开始：
 
@@ -183,7 +183,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 16/16；覆盖 exact schema、V2/V4/V6 初始及 apply 前只读预检、PostgreSQL major、确认 token、V2-V6 grouped rollback 与临时凭据清理 |
 | Flyway integration | 通过 | fresh V1→V6、existing baseline V1→V6、V3→V6、Hibernate validate、Session、checksum/failure recovery |
 | Shared-schema process E2E | 通过 | 4/4；UniAuth-first 与 email-first 两种启动顺序、独立 history、受控 baseline V0、重启与业务表共存 |
-| 邮件参考服务 | 通过 | 150 tests；Shell runtime 44/44、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；Flyway V1-V4、idempotency identity、schema-owner、migration discovery/naming、精确 peer history、半成品 peer、队列生命周期行形状、database layout 和非 PostgreSQL datasource 拒绝矩阵通过 |
+| 邮件参考服务 | 通过 | 154 tests；Shell runtime 44/44、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；Flyway V1-V5、idempotency identity、终态载荷脱敏、schema-owner、migration discovery/naming、精确 peer history、半成品 peer、队列生命周期行形状、database layout 和非 PostgreSQL datasource 拒绝矩阵通过 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
@@ -269,7 +269,7 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
 独立参考实现补充了默认无外部副作用的组件级 E2E：
 
 - 完整 Spring ApplicationContext 和随机真实 HTTP 端口。
-- Flyway V1/V2/V3/V4、独立 history table、PostgreSQL 16 和 Hibernate `validate`。
+- Flyway V1/V2/V3/V4/V5、独立 history table、PostgreSQL 16 和 Hibernate `validate`。
 - 两个必需模板经过真实 service/repository/event Bean、Thymeleaf、队列和 GreenMail 收件。
 - API key、输入和分页边界、未知模板拒绝、SMTP 连接失败后的失败日志和可重试状态。
 - 配置 API key 时，真实 Tomcat HTTP 入口只接受恰好一个精确匹配的
@@ -284,7 +284,8 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
 - `EmailQueueRepositoryTest` 和 `EmailLogRepositoryTest` 使用 disposable PostgreSQL
   + Flyway + Hibernate `validate`，直接验证 retry bound check constraint 和
   `email_logs.queue_id` 外键拒绝 orphan row，以及队列终态处理时间、claim 后重试调度
-  清理和非失败状态错误文本约束；repository 测试不再依赖 H2 `create-drop`。
+  清理、非失败状态错误文本、日志 HTML 必须为空和终态队列载荷脱敏约束；
+  repository 测试不再依赖 H2 `create-drop`。
 - `EmailServiceRuntimeGuardTest` 对所有 profile 固定 PostgreSQL-only JDBC URL 约束；
   独立 `ApplicationContextRunner` 测试装配真实 configuration properties 和 guard
   Bean，证明 `test` profile 注入 H2 URL 时 Context 在 Flyway 前失败。
@@ -297,6 +298,9 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
 - 原子队列 claim、stuck `PROCESSING` 恢复和配置化最大重试次数。
 - Flyway V3 对 V1/V2 历史队列行做生命周期元数据规范化，并由 PostgreSQL check
   constraint、真实 delivery/recovery Bean 和 Shell Flyway guard 固定四种合法状态。
+- Flyway V5 对 V4 历史日志和终态队列做敏感载荷规范化；真实 GreenMail 收件仍断言
+  SMTP 使用原始渲染内容，而 PostgreSQL 日志不保存 HTML，成功和永久失败队列在终态
+  脱敏，只有可重试队列继续保留 HTML。
 - 恢复候选按优先级处理；邮件总开关或队列关闭时，存量 pending/stuck 邮件不投递。
 - event 与 recovery 并发竞争同一 PostgreSQL 队列记录时，只有一个投递者成功，
   最终只产生一条成功日志和一封 SMTP 邮件。
@@ -646,7 +650,8 @@ HTTP E2E、Flyway baseline guard、frontend lint/type/build/Mock Playwright、�
 5. 结果可由其他开发者在隔离环境复现。
 6. 与改动范围对应的后端集成测试、前端构建/浏览器测试或跨端验证没有被静默跳过。
 7. 适用三轮规则时，收敛检查是在基础验证门槛通过后执行，并且确实连续三轮无修改；
-   最终加固 F1-F4 按本页明确例外，只记录该轮完整自动化验收。
+   历史 F1 按当时记录的例外只执行完整自动化验收，但该例外不延续到未启动的 F2-F5；
+   本次 post-F1 邮件 V5 收尾仍须执行三轮检查。
 
 过去的验证记录保留为 Historical，不自动继承为当前版本状态。
 

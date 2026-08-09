@@ -120,10 +120,10 @@ class UniAuthSharedSchemaFlywayBootstrapIntegrationTest
                 case "unknown-version" -> addHistoryRow(
                     jdbc,
                     "email_service_flyway_schema_history",
-                    "5",
+                    "6",
                     "unexpected migration",
                     "SQL",
-                    "V5__unexpected_migration.sql",
+                    "V6__unexpected_migration.sql",
                     true
                 );
                 case "duplicate-version" -> addHistoryRow(

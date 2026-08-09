@@ -233,8 +233,8 @@ start_application
 wait_for_application
 
 echo "1/11 Verify Flyway-owned startup"
-[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
-    || fail "Flyway did not record V1 through V4"
+[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "5" ] \
+    || fail "Flyway did not record V1 through V5"
 [ "$(db_value "
     SELECT count(*)
     FROM pg_constraint
@@ -245,6 +245,14 @@ echo "1/11 Verify Flyway-owned startup"
     FROM pg_constraint
     WHERE conname = 'chk_email_queue_idempotency_shape';
 ")" = "1" ] || fail "Flyway did not create the idempotency shape constraint"
+[ "$(db_value "
+    SELECT count(*)
+    FROM pg_constraint
+    WHERE conname IN (
+        'chk_email_logs_content_redacted',
+        'chk_email_queue_terminal_payload_redacted'
+    );
+")" = "2" ] || fail "Flyway did not create the terminal payload redaction constraints"
 
 echo "2/11 Verify API-key enforcement"
 [ "$(request_status GET /api/email/health)" = "401" ] \
@@ -484,14 +492,14 @@ echo "9/11 Enforce bounded log pagination"
     || fail "oversized log page was accepted"
 
 echo "10/11 Verify Flyway history remains stable before restart"
-[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
+[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "5" ] \
     || fail "Flyway history changed before restart"
 
 echo "11/11 Restart without replaying migrations or losing the queue"
 stop_application
 start_application
 wait_for_application
-[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
+[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "5" ] \
     || fail "restart changed Flyway history"
 [ "$(db_value "SELECT count(*) FROM email_queue WHERE id = $queue_id;")" = "1" ] \
     || fail "restart lost the queued email"

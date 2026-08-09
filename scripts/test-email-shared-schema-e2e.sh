@@ -248,8 +248,8 @@ stop_application
 [ "$(db_value "$ROOT_FIRST_DATABASE" "
     SELECT count(*)
     FROM email_service_flyway_schema_history
-    WHERE type = 'SQL' AND version IN ('1', '2', '3', '4') AND success;
-")" = "4" ] || fail "email service did not apply V1 through V4"
+    WHERE type = 'SQL' AND version IN ('1', '2', '3', '4', '5') AND success;
+")" = "5" ] || fail "email service did not apply V1 through V5"
 start_uniauth "$ROOT_FIRST_DATABASE"
 stop_application
 start_email_service "$ROOT_FIRST_DATABASE"
@@ -263,7 +263,7 @@ stop_application
     SELECT count(*)
     FROM email_service_flyway_schema_history
     WHERE success;
-")" = "5" ] || fail "root-first restart changed email-service Flyway history"
+")" = "6" ] || fail "root-first restart changed email-service Flyway history"
 
 echo "3/4 Start the email service first on an empty shared public schema"
 start_email_service "$EMAIL_FIRST_DATABASE"
@@ -304,7 +304,7 @@ stop_application
     SELECT count(*)
     FROM email_service_flyway_schema_history
     WHERE success;
-")" = "4" ] || fail "email-first restart changed email-service Flyway history"
+")" = "5" ] || fail "email-first restart changed email-service Flyway history"
 [ "$(db_value "$EMAIL_FIRST_DATABASE" "
     SELECT count(*)
     FROM uniauth_flyway_schema_history

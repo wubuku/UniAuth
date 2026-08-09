@@ -242,4 +242,19 @@ class EmailLogRepositoryTest {
             () -> entityManager.persistAndFlush(orphanLog)
         );
     }
+
+    @Test
+    void postgresSchemaRejectsPersistedEmailContent() {
+        EmailLog sensitiveLog = EmailLog.builder()
+                .recipient("sensitive@example.test")
+                .subject("Sensitive")
+                .status("SUCCESS")
+                .emailContent("<p>verification-code-246810</p>")
+                .build();
+
+        assertThrows(
+            ConstraintViolationException.class,
+            () -> entityManager.persistAndFlush(sensitiveLog)
+        );
+    }
 }

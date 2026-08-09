@@ -191,13 +191,24 @@ class EmailServiceEndToEndIntegrationTest {
             SELECT COUNT(*)
             FROM email_service_flyway_schema_history
             WHERE success = TRUE
-              AND version IN ('1', '2', '3', '4')
+              AND version IN ('1', '2', '3', '4', '5')
             """,
             Integer.class
         );
 
         assertThat(tableCount).isEqualTo(2);
-        assertThat(migrationCount).isEqualTo(4);
+        assertThat(migrationCount).isEqualTo(5);
+        assertThat(jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*)
+            FROM pg_constraint
+            WHERE conname IN (
+                'chk_email_logs_content_redacted',
+                'chk_email_queue_terminal_payload_redacted'
+            )
+            """,
+            Integer.class
+        )).isEqualTo(2);
         assertThat(environment.getProperty("spring.flyway.enabled", Boolean.class))
             .isTrue();
         assertThat(
@@ -485,6 +496,8 @@ class EmailServiceEndToEndIntegrationTest {
             .isEqualTo(4);
         assertThat(emailQueueRepository.findById(resetQueueId).orElseThrow().getMaxRetries())
             .isEqualTo(4);
+        assertTerminalPayloadRedacted(verificationQueueId);
+        assertTerminalPayloadRedacted(resetQueueId);
     }
 
     @Test
@@ -672,13 +685,56 @@ class EmailServiceEndToEndIntegrationTest {
                 assertThat(queue.getNextRetryTime()).isNotNull();
                 assertThat(queue.getProcessedTime()).isNull();
                 assertThat(queue.getErrorMessage()).isNull();
+                assertThat(queue.getHtmlContent()).contains("161803");
                 assertThat(logs).singleElement().satisfies(log -> {
                     assertThat(log.getStatus()).isEqualTo("FAILED");
                     assertThat(log.getSendMethod()).isEqualTo("EVENT");
                     assertThat(log.getErrorMessage()).isNotBlank();
+                    assertThat(log.getEmailContent()).isNull();
                 });
             });
 
+            assertThat(SMTP.getReceivedMessages()).isEmpty();
+        } finally {
+            mailSender.setPort(workingSmtpPort);
+        }
+    }
+
+    @Test
+    void exhaustedSmtpFailureRedactsTerminalQueuePayloadUsingRealBeans() {
+        EmailQueue queue = emailQueueRepository.saveAndFlush(
+            EmailQueue.builder()
+                .recipient("terminal-failure@example.test")
+                .subject("Terminal failure")
+                .htmlContent("<p>verification-code-424242</p>")
+                .metadata("{\"verificationCode\":\"424242\"}")
+                .emailType("VERIFICATION")
+                .status("PROCESSING")
+                .priority(5)
+                .retryCount(4)
+                .maxRetries(4)
+                .build()
+        );
+        int workingSmtpPort = mailSender.getPort();
+        mailSender.setPort(1);
+
+        try {
+            assertThat(emailDeliveryService.deliver(queue.getId(), "SCHEDULED"))
+                .isEqualTo(EmailDeliveryService.DeliveryOutcome.FAILED);
+
+            EmailQueue persisted = emailQueueRepository.findById(queue.getId())
+                .orElseThrow();
+            assertThat(persisted.getStatus()).isEqualTo("FAILED");
+            assertThat(persisted.getProcessedTime()).isNotNull();
+            assertThat(persisted.getHtmlContent())
+                .isEqualTo(EmailQueue.REDACTED_HTML_CONTENT);
+            assertThat(persisted.getMetadata()).isNull();
+            assertThat(emailLogRepository.findByQueueId(queue.getId()))
+                .singleElement()
+                .satisfies(log -> {
+                    assertThat(log.getStatus()).isEqualTo("FAILED");
+                    assertThat(log.getEmailContent()).isNull();
+                });
             assertThat(SMTP.getReceivedMessages()).isEmpty();
         } finally {
             mailSender.setPort(workingSmtpPort);
@@ -698,6 +754,7 @@ class EmailServiceEndToEndIntegrationTest {
                     .priority(5)
                     .retryCount(0)
                     .maxRetries(4)
+                    .metadata("{\"verificationCode\":\"112358\"}")
                     .build(),
                 EmailQueue.builder()
                     .recipient("subject-injection@example.test")
@@ -728,6 +785,7 @@ class EmailServiceEndToEndIntegrationTest {
                     .priority(5)
                     .retryCount(0)
                     .maxRetries(4)
+                    .metadata("{\"verificationCode\":\"223606\"}")
                     .build()
             )
         );
@@ -832,15 +890,23 @@ class EmailServiceEndToEndIntegrationTest {
             assertThat(persisted.getProcessedTime()).isNotNull();
             assertThat(persisted.getNextRetryTime()).isNull();
             assertThat(persisted.getErrorMessage()).isNull();
+            assertThat(persisted.getHtmlContent())
+                .isEqualTo(EmailQueue.REDACTED_HTML_CONTENT);
+            assertThat(persisted.getMetadata()).isNull();
             assertThat(emailLogRepository.findByQueueId(queue.getId()))
                 .singleElement()
                 .satisfies(log -> {
                     assertThat(log.getStatus()).isEqualTo("SUCCESS");
                     assertThat(log.getEmailType()).isEqualTo("GENERAL");
                     assertThat(log.getSendMethod()).isEqualTo("SCHEDULED");
+                    assertThat(log.getEmailContent()).isNull();
                 });
             assertThat(findMessage(queue.getRecipient())
                 .getHeader("X-Email-Type", null)).isEqualTo("GENERAL");
+            assertThat(GreenMailUtil.getBody(findMessage(queue.getRecipient())))
+                .contains(queue.getRecipient().startsWith("missing")
+                    ? "missing email type"
+                    : "blank email type");
         }
     }
 
@@ -1231,6 +1297,15 @@ class EmailServiceEndToEndIntegrationTest {
         assertThat(persisted.getStatus()).isEqualTo("PENDING");
         assertThat(emailLogRepository.findByQueueId(queueId)).isEmpty();
         assertThat(SMTP.getReceivedMessages()).isEmpty();
+    }
+
+    private void assertTerminalPayloadRedacted(long queueId) {
+        EmailQueue queue = emailQueueRepository.findById(queueId).orElseThrow();
+        assertThat(queue.getHtmlContent())
+            .isEqualTo(EmailQueue.REDACTED_HTML_CONTENT);
+        assertThat(queue.getMetadata()).isNull();
+        assertThat(emailLogRepository.findByQueueId(queueId))
+            .allSatisfy(log -> assertThat(log.getEmailContent()).isNull());
     }
 
     private EmailDeliveryService.DeliveryOutcome claimAndDeliver(

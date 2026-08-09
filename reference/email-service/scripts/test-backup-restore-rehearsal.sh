@@ -408,8 +408,8 @@ echo "1/10 Create a Flyway-owned source database with all queue lifecycle states
 start_application "$SOURCE_DATABASE" shared-uniauth
 wait_for_application
 [ "$(db_value "$SOURCE_DATABASE" \
-    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
-    || fail "source database did not apply Flyway V1 through V4"
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "5" ] \
+    || fail "source database did not apply Flyway V1 through V5"
 db_command "$SOURCE_DATABASE" -c "
     INSERT INTO email_queue (
         recipient, subject, html_content, email_type, status, priority,
@@ -429,18 +429,18 @@ db_command "$SOURCE_DATABASE" -c "
             CURRENT_TIMESTAMP - INTERVAL '1 minute', NULL, '{\"state\":\"processing\"}'
         ),
         (
-            'completed@example.test', 'Completed', '<p>completed</p>', 'TEST',
+            'completed@example.test', 'Completed', '<redacted/>', 'TEST',
             'COMPLETED', 7, 0, 3, NULL, NULL,
             CURRENT_TIMESTAMP - INTERVAL '5 minutes',
             CURRENT_TIMESTAMP - INTERVAL '1 minute',
-            CURRENT_TIMESTAMP - INTERVAL '1 minute', '{\"state\":\"completed\"}'
+            CURRENT_TIMESTAMP - INTERVAL '1 minute', NULL
         ),
         (
-            'failed@example.test', 'Failed', '<p>failed</p>', 'TEST',
+            'failed@example.test', 'Failed', '<redacted/>', 'TEST',
             'FAILED', 6, 3, 3, NULL, 'SMTP failed',
             CURRENT_TIMESTAMP - INTERVAL '5 minutes',
             CURRENT_TIMESTAMP - INTERVAL '1 minute',
-            CURRENT_TIMESTAMP - INTERVAL '1 minute', '{\"state\":\"failed\"}'
+            CURRENT_TIMESTAMP - INTERVAL '1 minute', NULL
         );
 
     INSERT INTO email_logs (
@@ -456,7 +456,7 @@ db_command "$SOURCE_DATABASE" -c "
         CASE WHEN status = 'COMPLETED' THEN NULL ELSE 'fixture audit' END,
         CURRENT_TIMESTAMP,
         retry_count,
-        html_content,
+        NULL,
         email_type,
         'fixture',
         10,
@@ -476,6 +476,16 @@ db_command "$SOURCE_DATABASE" -c "
     || fail "source queue fixture was not created"
 [ "$(db_value "$SOURCE_DATABASE" "SELECT count(*) FROM email_logs;")" = "2" ] \
     || fail "source log fixture was not created"
+[ "$(db_value "$SOURCE_DATABASE" "
+    SELECT count(*)
+    FROM email_queue
+    WHERE status IN ('COMPLETED', 'FAILED')
+      AND html_content = '<redacted/>'
+      AND metadata IS NULL;
+")" = "2" ] || fail "source terminal queue fixtures are not redacted"
+[ "$(db_value "$SOURCE_DATABASE" \
+    "SELECT count(*) FROM email_logs WHERE email_content IS NULL;")" = "2" ] \
+    || fail "source log fixtures retained rendered content"
 db_command "$SOURCE_DATABASE" -c "
     CREATE TABLE users (
         id character varying(36) PRIMARY KEY,
@@ -529,7 +539,7 @@ if run_backup \
         >"$TEMP_DIR/history.out" 2>"$TEMP_DIR/history.err"; then
     fail "backup accepted duplicate V2 history with missing V3"
 fi
-grep -Fq "email service Flyway history must match the expected V1 through V4 chain" \
+grep -Fq "email service Flyway history must match the expected V1 through V5 chain" \
     "$TEMP_DIR/history.err" \
     || fail "incomplete history rejection did not report the Flyway guard"
 assert_no_backup_artifacts "$history_dir"
@@ -554,10 +564,10 @@ db_command "$SOURCE_DATABASE" -c "
     )
     SELECT
         max(installed_rank) + 1,
-        '5',
+        '6',
         'unexpected future migration',
         'SQL',
-        'V5__unexpected_future_migration.sql',
+        'V6__unexpected_future_migration.sql',
         0,
         current_user,
         0,
@@ -575,13 +585,13 @@ if run_backup \
         2>"$TEMP_DIR/unexpected-history.err"; then
     fail "backup accepted an unknown future Flyway migration"
 fi
-grep -Fq "email service Flyway history must match the expected V1 through V4 chain" \
+grep -Fq "email service Flyway history must match the expected V1 through V5 chain" \
     "$TEMP_DIR/unexpected-history.err" \
     || fail "unexpected history rejection did not report the Flyway guard"
 assert_no_backup_artifacts "$history_dir"
 db_command "$SOURCE_DATABASE" -c "
     DELETE FROM email_service_flyway_schema_history
-    WHERE version = '5'
+    WHERE version = '6'
       AND description = 'unexpected future migration';
 " >/dev/null
 
@@ -620,7 +630,7 @@ if run_backup \
         2>"$TEMP_DIR/repeatable-history.err"; then
     fail "backup accepted an unknown repeatable Flyway migration"
 fi
-grep -Fq "email service Flyway history must match the expected V1 through V4 chain" \
+grep -Fq "email service Flyway history must match the expected V1 through V5 chain" \
     "$TEMP_DIR/repeatable-history.err" \
     || fail "repeatable history rejection did not report the Flyway guard"
 assert_no_backup_artifacts "$history_dir"
@@ -744,13 +754,21 @@ PGPASSWORD="$DATABASE_PASSWORD" "$PG_RESTORE_WRAPPER" \
 [ "$(database_fingerprint "$RESTORE_DATABASE")" = "$SOURCE_FINGERPRINT" ] \
     || fail "restored queue/log data differs from the source"
 [ "$(db_value "$RESTORE_DATABASE" \
-    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "5" ] \
     || fail "restored Flyway history is incomplete"
 [ "$(db_value "$RESTORE_DATABASE" "
     SELECT count(*)
     FROM pg_constraint
     WHERE conname = 'chk_email_queue_lifecycle_state';
 ")" = "1" ] || fail "restored lifecycle constraint is missing"
+[ "$(db_value "$RESTORE_DATABASE" "
+    SELECT count(*)
+    FROM pg_constraint
+    WHERE conname IN (
+        'chk_email_logs_content_redacted',
+        'chk_email_queue_terminal_payload_redacted'
+    );
+")" = "2" ] || fail "restored payload redaction constraints are missing"
 [ "$(db_value "$RESTORE_DATABASE" \
     "SELECT to_regclass('public.users') IS NULL;")" = "t" ] \
     || fail "component restore unexpectedly created UniAuth users"
@@ -803,7 +821,7 @@ stop_application
 start_application "$RESTORE_DATABASE" dedicated
 wait_for_application
 [ "$(db_value "$RESTORE_DATABASE" \
-    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "5" ] \
     || fail "restored restart changed Flyway history"
 [ "$(db_value "$RESTORE_DATABASE" "SELECT count(*) FROM email_queue;")" = "5" ] \
     || fail "restored restart lost queue data"

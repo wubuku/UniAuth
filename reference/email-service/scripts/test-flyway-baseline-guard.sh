@@ -338,6 +338,9 @@ echo "4/15 Verify the V1-only history and schema shape"
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '4';")" = "0" ] \
     || fail "V1-only startup unexpectedly applied V4"
 [ "$(db_value "$V2_DATABASE" \
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '5';")" = "0" ] \
+    || fail "V1-only startup unexpectedly applied V5"
+[ "$(db_value "$V2_DATABASE" \
     "SELECT to_regclass('public.email_queue') IS NOT NULL;")" = "t" ] \
     || fail "V1 migration did not create the queue table"
 [ "$(db_value "$V2_DATABASE" "
@@ -396,7 +399,7 @@ echo "7/15 Preserve V1 history and source data after failed V2"
     "SELECT count(*) FROM email_queue WHERE retry_count = 2 AND max_retries = 1;")" = "1" ] \
     || fail "failed V2 changed source data"
 
-echo "8/15 Forward-fix retry data, apply V2/V3/V4, and exercise the UniAuth template contract"
+echo "8/15 Forward-fix retry data, apply V2/V3/V4/V5, and exercise the UniAuth template contract"
 db_command "$V2_DATABASE" -c "
     UPDATE email_queue
     SET retry_count = max_retries,
@@ -417,7 +420,9 @@ db_command "$V2_DATABASE" -c "
         next_retry_time,
         error_message,
         created_time,
-        updated_time
+        updated_time,
+        processed_time,
+        metadata
     ) VALUES (
         'completed-lifecycle@example.test',
         'Completed lifecycle normalization',
@@ -430,8 +435,36 @@ db_command "$V2_DATABASE" -c "
         CURRENT_TIMESTAMP + INTERVAL '5 minutes',
         'stale completed failure',
         CURRENT_TIMESTAMP - INTERVAL '2 minutes',
-        CURRENT_TIMESTAMP - INTERVAL '1 minute'
+        CURRENT_TIMESTAMP - INTERVAL '1 minute',
+        NULL,
+        '{\"verificationCode\":\"314159\"}'
     );
+
+    INSERT INTO email_logs (
+        queue_id,
+        recipient,
+        subject,
+        status,
+        sent_time,
+        retry_count,
+        email_content,
+        email_type,
+        mail_provider,
+        send_method
+    )
+    SELECT
+        id,
+        recipient,
+        subject,
+        'SUCCESS',
+        CURRENT_TIMESTAMP,
+        retry_count,
+        html_content,
+        email_type,
+        'fixture',
+        'SCHEDULED'
+    FROM email_queue
+    WHERE recipient = 'completed-lifecycle@example.test';
 " >/dev/null
 v2_success_log="$TEMP_DIR/v2-success.log"
 start_application "$V2_DATABASE" "$v2_success_log"
@@ -480,13 +513,16 @@ stop_application
 [ "$(db_value "$V2_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '4' AND success;")" = "1" ] \
     || fail "forward-fixed database did not apply V4"
+[ "$(db_value "$V2_DATABASE" \
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '5' AND success;")" = "1" ] \
+    || fail "forward-fixed database did not apply V5"
 [ "$(db_value "$V2_DATABASE" "
     SELECT count(*)
     FROM pg_constraint
     WHERE conname = 'chk_email_queue_retry_bounds';
 ")" = "1" ] || fail "V2 retry-bound constraint is missing"
 
-echo "9/15 Verify V3 normalizes stale lifecycle metadata and enforces the row shape"
+echo "9/15 Verify V3/V4/V5 normalize and enforce lifecycle, identity, and payload shape"
 [ "$(db_value "$V2_DATABASE" "
     SELECT count(*)
     FROM pg_constraint
@@ -504,6 +540,14 @@ echo "9/15 Verify V3 normalizes stale lifecycle metadata and enforces the row sh
 ")" = "1" ] || fail "V4 idempotency key index is missing"
 [ "$(db_value "$V2_DATABASE" "
     SELECT count(*)
+    FROM pg_constraint
+    WHERE conname IN (
+        'chk_email_logs_content_redacted',
+        'chk_email_queue_terminal_payload_redacted'
+    );
+")" = "2" ] || fail "V5 payload redaction constraints are missing"
+[ "$(db_value "$V2_DATABASE" "
+    SELECT count(*)
     FROM email_queue
     WHERE recipient = 'invalid@example.test'
       AND status = 'PENDING'
@@ -518,8 +562,33 @@ echo "9/15 Verify V3 normalizes stale lifecycle metadata and enforces the row sh
       AND status = 'COMPLETED'
       AND processed_time = updated_time
       AND next_retry_time IS NULL
-      AND error_message IS NULL;
-")" = "1" ] || fail "V3 did not normalize stale completed lifecycle metadata"
+      AND error_message IS NULL
+      AND html_content = '<redacted/>'
+      AND metadata IS NULL;
+")" = "1" ] || fail "V3/V5 did not normalize the completed queue row"
+[ "$(db_value "$V2_DATABASE" "
+    SELECT count(*)
+    FROM email_logs
+    WHERE recipient = 'completed-lifecycle@example.test'
+      AND email_content IS NULL;
+")" = "1" ] || fail "V5 did not redact historical delivery log content"
+if db_command "$V2_DATABASE" -c "
+    INSERT INTO email_logs (
+        recipient, subject, status, sent_time, retry_count, email_content
+    ) VALUES (
+        'constraint@example.test', 'Constraint', 'SUCCESS',
+        CURRENT_TIMESTAMP, 0, '<p>must fail</p>'
+    );
+" >/dev/null 2>&1; then
+    fail "V5 accepted rendered content in email_logs"
+fi
+if db_command "$V2_DATABASE" -c "
+    UPDATE email_queue
+    SET html_content = '<p>must fail</p>'
+    WHERE recipient = 'completed-lifecycle@example.test';
+" >/dev/null 2>&1; then
+    fail "V5 accepted an unredacted terminal queue payload"
+fi
 
 echo "10/15 Reject V1 logs that reference a missing queue row"
 migrate_to_v1 "$ORPHAN_DATABASE"
@@ -551,7 +620,7 @@ grep -Fq "fk_email_logs_queue" "$orphan_failure_log" \
     "SELECT count(*) FROM email_logs WHERE queue_id = 999;")" = "1" ] \
     || fail "orphan-log failure changed source data"
 
-echo "11/15 Forward-fix the orphan reference and apply V2/V3/V4 successfully"
+echo "11/15 Forward-fix the orphan reference and apply V2/V3/V4/V5 successfully"
 db_command "$ORPHAN_DATABASE" \
     -c "UPDATE email_logs SET queue_id = NULL WHERE queue_id = 999;" \
     >/dev/null
@@ -568,6 +637,9 @@ stop_application
 [ "$(db_value "$ORPHAN_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '4' AND success;")" = "1" ] \
     || fail "forward-fixed orphan database did not apply V4"
+[ "$(db_value "$ORPHAN_DATABASE" \
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '5' AND success;")" = "1" ] \
+    || fail "forward-fixed orphan database did not apply V5"
 [ "$(db_value "$ORPHAN_DATABASE" \
     "SELECT count(*) FROM email_logs WHERE queue_id IS NULL;")" = "1" ] \
     || fail "forward-fixed orphan log was not preserved"
@@ -621,7 +693,7 @@ grep -Fq "Migration checksum mismatch" "$checksum_failure_log" \
     "SELECT count(*) FROM email_queue WHERE recipient = 'checksum@example.test';")" = "1" ] \
     || fail "checksum validation failure changed migrated data"
 [ "$(db_value "$CHECKSUM_DATABASE" \
-    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "5" ] \
     || fail "checksum validation failure changed Flyway history"
 [ "$(db_value "$CHECKSUM_DATABASE" "
     SELECT checksum

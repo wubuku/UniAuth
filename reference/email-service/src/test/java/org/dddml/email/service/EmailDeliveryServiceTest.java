@@ -56,6 +56,7 @@ class EmailDeliveryServiceTest {
     void successfulDeliveryMarksTheQueueCompleted() {
         queue.setNextRetryTime(LocalDateTime.now().plusMinutes(10));
         queue.setErrorMessage("stale failure");
+        queue.setMetadata("{\"verificationCode\":\"123456\"}");
         when(emailService.sendEmailDirectly(queue, "EVENT"))
             .thenReturn(EmailLog.builder().status("SUCCESS").build());
 
@@ -65,6 +66,9 @@ class EmailDeliveryServiceTest {
         assertThat(queue.getProcessedTime()).isNotNull();
         assertThat(queue.getNextRetryTime()).isNull();
         assertThat(queue.getErrorMessage()).isNull();
+        assertThat(queue.getHtmlContent())
+            .isEqualTo(EmailQueue.REDACTED_HTML_CONTENT);
+        assertThat(queue.getMetadata()).isNull();
         verify(emailQueueRepository).save(queue);
     }
 
@@ -82,12 +86,14 @@ class EmailDeliveryServiceTest {
         assertThat(queue.getNextRetryTime()).isNotNull();
         assertThat(queue.getProcessedTime()).isNull();
         assertThat(queue.getErrorMessage()).isNull();
+        assertThat(queue.getHtmlContent()).isEqualTo("<p>Content</p>");
     }
 
     @Test
     void exhaustedDeliveryMarksTheQueueFailed() {
         queue.setRetryCount(3);
         queue.setNextRetryTime(LocalDateTime.now().plusMinutes(10));
+        queue.setMetadata("{\"verificationCode\":\"654321\"}");
         when(emailService.sendEmailDirectly(queue, "SCHEDULED"))
             .thenReturn(EmailLog.builder().status("FAILED").errorMessage("SMTP failed").build());
 
@@ -97,5 +103,8 @@ class EmailDeliveryServiceTest {
         assertThat(queue.getErrorMessage()).isEqualTo("SMTP failed");
         assertThat(queue.getProcessedTime()).isNotNull();
         assertThat(queue.getNextRetryTime()).isNull();
+        assertThat(queue.getHtmlContent())
+            .isEqualTo(EmailQueue.REDACTED_HTML_CONTENT);
+        assertThat(queue.getMetadata()).isNull();
     }
 }

@@ -72,7 +72,7 @@ Authorization Server 协议已经完整接通。
 UniAuth 主应用内的 `RestTemplateEmailServiceImpl` 只是 HTTP 客户端，不直接连接
 SMTP 或邮件供应商。外部服务必须提供 health、模板邮件端点、模板和约定的 JSON 响应；
 仓库提供一个独立的[邮件服务参考实现](../reference/email-service/README.md)，其 schema
-由独立 Flyway V1/V2/V3/V4 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP
+由独立 Flyway V1/V2/V3/V4/V5 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP
 E2E 验证。数据库默认使用独立 PostgreSQL；显式 `shared-uniauth` 可在获准的空
 `public` schema 先启动任一侧，或与完整 UniAuth V1-V6 peer 使用独立 history table
 共存。两种启动顺序由共享 advisory lock 串行化，并有真实 ApplicationContext 与
@@ -114,6 +114,11 @@ generation 并幂等释放，因此旧窗口迟到释放不会误释放新窗口
 可以保留下次重试时间，只有 `FAILED` 可以保留最终错误；worker claim 和所有状态转换
 会清除对新状态已无意义的元数据。该约束属于参考实现内部持久化模型，不要求其他兼容
 REST 服务采用相同表结构。
+V5 进一步固定敏感载荷生命周期：投递前的 `PENDING`/`PROCESSING` 队列仍保留渲染
+HTML；进入 `COMPLETED`/`FAILED` 后，HTML 必须替换为 `<redacted/>` 且 metadata
+必须为空。`email_logs.email_content` 在所有状态下都必须为空。V5 会先规范化 V4
+历史数据再建立约束；收件人、主题、错误文本和重试中队列 HTML 仍属于需要保护的
+持久化数据。
 参考实现另提供只读、owner-only、同 PostgreSQL major 的 custom backup 工具。该工具
 在独立或共享布局下都只导出邮件队列、日志、序列和邮件 Flyway history，不会导出
 UniAuth 用户/认证表；disposable 空库恢复后会启动真实 Spring 应用验证 history、

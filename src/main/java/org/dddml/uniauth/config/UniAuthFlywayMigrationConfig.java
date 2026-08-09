@@ -106,7 +106,7 @@ public class UniAuthFlywayMigrationConfig {
     );
 
     private static final List<String> REQUIRED_PEER_VERSIONS =
-            List.of("1", "2", "3", "4");
+            List.of("1", "2", "3", "4", "5");
 
     @Bean
     FlywayMigrationStrategy uniAuthFlywayMigrationStrategy(Environment environment) {

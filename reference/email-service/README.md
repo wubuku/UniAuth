@@ -252,7 +252,7 @@ Flyway 是本组件唯一的 schema owner：
 - location：`classpath:db/migration/postgresql`
 - history table：`email_service_flyway_schema_history`
 - 当前 migration：V1 建表 + V2 队列/日志完整性 + V3 队列生命周期行形状 +
-  V4 幂等 delivery identity
+  V4 幂等 delivery identity + V5 终态敏感载荷最小化
 - `fail-on-missing-locations=true`
 - `baseline-on-migrate=false`
 - `baseline-version=0`
@@ -284,12 +284,16 @@ V1 创建 `email_queue`、`email_logs`、基础检查约束和查询索引。V2 
 `processed_time`，非终态不得有 `processed_time`。缺少终态处理时间的历史行使用
 `updated_time`、`created_time` 或迁移时间依次补齐。已发布 migration 不得改写；
 V4 增加 `idempotency_key`、`request_fingerprint`、行形状约束和 partial unique
-index，固定重复请求的稳定 queue identity；后续 schema 变更必须新增 V5+。默认独立
+index，固定重复请求的稳定 queue identity。V5 清空历史
+`email_logs.email_content`，将历史 `COMPLETED`/`FAILED` 队列的 HTML 替换为
+`<redacted/>` 并清空 metadata，再增加约束阻止后续日志或终态队列保留实际 HTML。
+`PENDING`/`PROCESSING` 队列仍保留渲染内容，以支持首次投递和可重试失败；后续 schema
+变更必须新增 V6+。默认独立
 布局要求邮件专用数据库。显式
-`shared-uniauth` 在空 `public` schema 上可先迁移邮件 V1-V4，不创建 baseline；
+`shared-uniauth` 在空 `public` schema 上可先迁移邮件 V1-V5，不创建 baseline；
 若 UniAuth V1-V6 已存在，则先验证其完整 relation 和成功 history，再以 baseline V0
-建立独立 `email_service_flyway_schema_history` 并迁移 V1-V4。UniAuth 后启动时也会
-验证邮件 V1-V4 后建立自己的 V0 history。两侧使用同一 PostgreSQL advisory lock
+建立独立 `email_service_flyway_schema_history` 并迁移 V1-V5。UniAuth 后启动时也会
+验证邮件 V1-V5 后建立自己的 V0 history。两侧使用同一 PostgreSQL advisory lock
 串行化首次迁移，拒绝 managed relation 冲突、不完整 peer 和不精确 history。
 peer history 必须恰好包含当前预期的成功 SQL 版本，另只允许 0 或 1 个成功 V0
 baseline；失败、重复、未知 versioned 或 repeatable 记录均被拒绝。存在 peer
@@ -322,7 +326,7 @@ EMAIL_BACKUP_DIR=/secure/email-service-backups \
 scripts/backup-postgres.sh
 ```
 
-脚本支持 `dedicated` 和显式 `shared-uniauth`。两种布局都要求邮件 V1-V4 relation
+脚本支持 `dedicated` 和显式 `shared-uniauth`。两种布局都要求邮件 V1-V5 relation
 和成功 history 精确匹配当前 migration 链；共享布局另允许至多一个 V0 baseline，
 失败、重复、缺失或未知/额外 migration 都会失败关闭。脚本固定只导出
 `email_queue`、`email_logs`、对应序列和
@@ -336,7 +340,9 @@ UniAuth 数据库、Blacksheep/系统库、相对路径、符号链接或 group/
 `.dump` 与 `.dump.sha256`，两者权限均为 `0600`。任何失败会清理临时文件和不完整的
 最终文件。
 
-archive 包含收件人、主题、完整 HTML、错误和验证码等敏感数据。脚本只提供完整性与
+archive 仍包含收件人、主题和错误文本；`PENDING`/`PROCESSING` 队列还会包含完整
+HTML 和可能嵌入其中的验证码。V5 只保证投递日志 HTML 为空，并对
+`COMPLETED`/`FAILED` 队列使用 `<redacted/>`、清空 metadata。脚本只提供完整性与
 本机访问权限基线，不负责静态加密、远端复制、KMS、保留周期或销毁；部署方必须在
 仓库外实现这些策略。`pg_dump` 会取得常规 schema/table 锁，生产计划仍需评估 DDL
 窗口和容量。
@@ -351,7 +357,7 @@ scripts/test-backup-restore-rehearsal.sh
 该脚本不读取 `.env`，使用 PostgreSQL 16 容器内同 major 客户端，验证共享库缺少
 显式 layout 时拒绝、客户端版本拒绝、连接失败无残留、符号链接目录拒绝、
 owner-only 原子选择性备份、archive 不含 UniAuth `users`、空库
-`pg_restore --exit-on-error --single-transaction`、队列/日志数据与 Flyway V1-V4
+`pg_restore --exit-on-error --single-transaction`、队列/日志数据与 Flyway V1-V5
 history/约束一致、恢复后真实 Spring HTTP 写入和重启。仓库不提供覆盖任意现有库的
 自动 restore 命令；真实恢复必须在隔离空库中执行同类步骤并经过独立授权。该组件
 archive 也不能替代 shared-uniauth 数据库的整库灾备。
@@ -385,8 +391,8 @@ scripts/verify.sh
 
 ApplicationContext/PostgreSQL/SMTP 覆盖：
 
-- fresh V1→V3、V1→V3 数据保留/生命周期规范化、独立 history table 和
-  Hibernate `validate`。
+- fresh V1→V5、V1→V3 数据保留/生命周期规范化、V4→V5 敏感载荷规范化、
+  独立 history table 和 Hibernate `validate`。
 - `GET /api/email/health` 与必需模板列表的真实 HTTP 契约。
 - API key 配置后的单值精确匹配：缺失、错误、重复正确值和正确/错误混合 header
   均返回 `401`，单个正确 header 继续通过。
@@ -398,6 +404,9 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - SMTP 连接失败、配置化重试、原子 claim 和 stuck `PROCESSING` 恢复。
 - PostgreSQL 约束拒绝缺少处理时间的终态、带重试调度的 `PROCESSING` 和在非失败
   状态残留错误文本；claim、retry、完成和永久失败都维护同一行形状。
+- PostgreSQL 约束拒绝日志保存 HTML，以及 `COMPLETED`/`FAILED` 队列保留真实 HTML
+  或 metadata；GreenMail 仍收到原始模板内容，可重试队列仍保留 HTML，成功或永久
+  失败后队列载荷脱敏。
 - Java/Shell runtime guard 的 STARTTLS、implicit SSL、生产加密和 server identity
   拒绝矩阵；真实 `JavaMailSender` Bean 保留身份校验属性。
 - Java/Shell runtime guard 的 SMTP host/port 拒绝矩阵；PostgreSQL
@@ -417,7 +426,20 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   baseline。
 - migration checksum 失配时失败关闭，并保留已有 migration history 和业务数据。
 
-2026-08-09 F1 完成组合基线：
+2026-08-09 post-F1 V5 收尾当前组合基线：
+
+- 本组件 Maven：154 tests，0 failures/errors/skips。
+- 本组件 Shell runtime 44/44、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
+- PostgreSQL backup/restore rehearsal 10/10。
+- UniAuth 根项目完整统一门禁通过：Java 212 tests、shared-schema process E2E 4/4、
+  HTTP 16/16、Flyway 16/16、Mock Playwright 28/28、真实邮箱登录浏览器 E2E 1/1、
+  Python 资源服务器 18/18、邮件 REST stub contract 12/12。
+- 该基线通过一次连续三轮无修改检查并交付后即结束邮箱固化阶段；不会自动启动
+  历史计划中的 F2-F5。
+
+2026-08-09 F1 完成历史组合基线：
+
+以下只记录 F1 当时的验收事实和原计划，不代表 F2-F5 仍会自动启动。
 
 - 本组件 Maven：150 tests，0 failures/errors/skips。
 - 本组件 Shell runtime 44/44、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
@@ -695,7 +717,8 @@ V3 后数据库同时约束状态元数据：
   外部存储、保留/销毁、跨主机或共享数据库整库灾难恢复演练。
 - GreenMail E2E 证明本地 SMTP 协议链，不证明供应商鉴权、TLS 策略、退信处理或
   外部真实收件。
-- 邮件队列和发送日志会保存完整 HTML；验证码清理和数据保留策略尚未实现。
+- 待投递和可重试队列仍需保存完整 HTML，且收件人、主题、错误和 retention 生命周期
+  仍需部署方治理；终态队列 HTML 与所有发送日志 HTML 已由 V5 最小化。
 
 ## 与来源版本的调整
 
@@ -704,7 +727,7 @@ V3 后数据库同时约束状态元数据：
 
 - 使用显式环境变量和显式 profile。
 - 默认只监听 loopback。
-- 启用 Flyway V1/V2/V3/V4 作为唯一 schema owner，并让所有 profile 使用
+- 启用 Flyway V1/V2/V3/V4/V5 作为唯一 schema owner，并让所有 profile 使用
   Hibernate `validate`。
 - 增加 PostgreSQL/Flyway/HTTP/GreenMail 的完整 ApplicationContext E2E。
 - 增加 owner-only PostgreSQL custom backup 和 disposable 空库 restore rehearsal。

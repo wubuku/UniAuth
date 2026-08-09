@@ -14,9 +14,10 @@
   Python API Bearer 访问和独立服务脚本。
 - `docs/drafts/README.md`: 既有计划、调查和历史记录索引。
 - `docs/drafts/DOCUMENTATION_PLAN.md`: 文档体系建设计划。
-- `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md`: 已冻结的五批最终加固收尾范围和退出条件。
-- `docs/drafts/F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md`: 当前 F1 的不可变基线、
-  固定实施切片、迁移边界和验收矩阵。
+- `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md`: 已停止自动执行的五批加固参考计划；
+  F2-F5 只有在未来明确提出对应需求时才单独启动。
+- `docs/drafts/F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md`: 已完成 F1 的不可变
+  基线、实施记录，以及 post-F1 邮件 V5 收尾。
 - `docs/drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md`: 历史批次执行记录；不再驱动开放循环。
 - `docs/archive/database/README.md`: 旧 SQL 的历史归档和当前替代路径。
 - `reference/email-service/README.md`: 外部邮件 REST 服务的独立参考实现、Flyway 和 E2E。
@@ -73,7 +74,7 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
   PostgreSQL ApplicationContext 断言配置进入真实 `JavaMailSender`。
 - 参考邮件服务的 `dev`、`test`、`prod` profile 只接受 PostgreSQL datasource；
   H2 不再是测试后端。默认 `EMAIL_DATABASE_LAYOUT=dedicated` 要求邮件专用数据库；
-  `shared-uniauth` 是显式 opt-in，可在获准的空 `public` schema 先迁移邮件 V1-V4，
+  `shared-uniauth` 是显式 opt-in，可在获准的空 `public` schema 先迁移邮件 V1-V5，
   也可加入完整 UniAuth V1-V6 peer。两种启动顺序都使用独立 history；后启动一侧
   验证完整 peer 后创建自己的 V0 baseline，两侧通过同一 PostgreSQL advisory lock
   串行化首次 baseline/migrate。Java guard 会在 Flyway 前拒绝非 PostgreSQL、未知
@@ -231,7 +232,7 @@ ApplicationContext、PostgreSQL 和真实业务 Bean，只 mock 最外层 `Email
 直接断言模板进入其 `email_queue`；只有参考实现不会自然产生的 `503/429` 失败映射
 场景才切换到受控 loopback stub。这些测试不证明真实供应商最终送达。
 
-参考邮件服务的 schema 由其自己的 Flyway V1/V2/V3/V4 管理，history table 是
+参考邮件服务的 schema 由其自己的 Flyway V1/V2/V3/V4/V5 管理，history table 是
 `email_service_flyway_schema_history`；所有 profile 使用 Hibernate `validate`，
 SQL init 关闭。默认使用独立 PostgreSQL；显式 `shared-uniauth` 允许在获准的空
 `public` schema 先启动任一侧，或与完整 UniAuth V1-V6 peer 共存，且不得连接
@@ -255,16 +256,20 @@ HTML。最终 SMTP 投递不得只信任 HTTP 入队校验；从 PostgreSQL 读�
 subject、HTML 和自定义 header token 必须在构造 MIME 前重新校验。
 Flyway V3 约束队列生命周期行形状：终态必须有 `processed_time`，只有 `PENDING`
 可以保留 `next_retry_time`，只有 `FAILED` 可以保留 `error_message`；claim、retry、
-完成和永久失败转换必须维护同一规则。
+完成和永久失败转换必须维护同一规则。V4 增加幂等 delivery identity；V5 清理历史
+`email_logs.email_content`，并要求日志内容始终为 null。`PENDING`/`PROCESSING`
+队列仍保留渲染 HTML 以支持投递和重试；`COMPLETED`/`FAILED` 队列必须把 HTML
+替换为 `<redacted/>` 并清空 metadata。不得改写已发布的 V1-V5。
 邮件 PostgreSQL 组件备份使用
 `reference/email-service/scripts/backup-postgres.sh`：它只读取显式配置，支持
 `dedicated` 和显式 `shared-uniauth`，但只导出邮件队列、日志、对应序列和邮件
 Flyway history，不包含 UniAuth 用户或认证表。脚本拒绝未知布局、缺失邮件 schema、
-非精确 V1-V4 migration 链、不安全目录和 PostgreSQL client/server major 不一致，
+非精确 V1-V5 migration 链、不安全目录和 PostgreSQL client/server major 不一致，
 以临时文件校验后发布 `0600` archive/checksum。共享库的整库灾备仍由仓库外经过
 授权的数据库运维流程负责；组件
 备份不能替代整库备份。默认 restore 自动化只在 disposable 空库 rehearsal 中执行，
-不得覆盖现有共享或生产数据库。
+不得覆盖现有共享或生产数据库。组件 archive 仍可能包含收件人、主题、错误文本，
+以及尚未进入终态的队列 HTML/验证码；终态队列 HTML 已脱敏，日志不再保存 HTML。
 非法队列载荷的失败审计只保留 queue id、通用错误和安全占位字段，不复制恶意
 recipient、subject、HTML 或 header token；非法 `sendMethod` 必须降级为
 `UNKNOWN`，不能让 `email_logs` 写入失败并回滚 retry。
@@ -368,14 +373,14 @@ PYTHON_BIN=python3 scripts/test-email-login-browser-e2e.sh
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-当前验证基线（2026-08-09 F1 完成工作树；每次后续变更仍须重跑）：
+当前验证基线（2026-08-09 post-F1 邮件 V5 收尾工作树；每次后续变更仍须重跑）：
 
 - 当前根统一门禁：Maven 212 tests、shared-schema process E2E 4/4、
   HTTP 16/16、Flyway baseline guard 16/16、Mock Playwright 28/28、
   真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 18/18、邮件 REST stub
   contract 12/12；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
   patch hygiene 均通过。
-- 当前邮件参考服务：150 tests，0 failures/errors/skips；Shell runtime 44/44、
+- 当前邮件参考服务：154 tests，0 failures/errors/skips；Shell runtime 44/44、
   HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10。
 - 以下 2026-08-08 条目保留为加固增量历史，不替代上述当前基线。
 - 邮件参考服务初始纳入基线：94 tests，0 failures/errors/skips；另有 runtime guard 15/15、
@@ -464,9 +469,8 @@ PYTHON_BIN=python3 scripts/verify.sh
 - Mock Playwright：28/28；真实邮箱登录浏览器 E2E：1/1。
 - Python 资源服务器：18/18；邮件 REST stub contract：12/12。
 - 前端 ESLint、TypeScript 和生产构建通过。
-- 最终加固 F1-F4 每批只执行固定范围验收和完整门禁，不分别执行连续三轮无修改检查；
-  F1-F5 全部实现并通过各自验收后，由 F5 统一执行一次阶段末连续三轮检查。无问题轮次
-  只记录在当次工作报告，不为留痕修改仓库文件。
+- F1 历史计划只执行了其固定范围；F2-F5 未自动启动。邮件参考服务 V5 收尾完成后，
+  当前邮箱固化阶段即结束，后续工作回到普通 feature/fix/maintenance 计划。
 - 前端 lockfile 已通过严格 `npm ci`；已显式升级受影响的 Axios、Ethers、
   React Router、Vite 和相关传递依赖，`npm audit --audit-level=high` 通过。
 - npm audit 仍报告 2 个 React Router moderate advisories。当前 SPA 只使用
@@ -547,9 +551,9 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 触达 Python 资源服务器时必须通过离线 RSA/JWKS/Flask 测试，真实 JWKS 网络验证只能显式 opt in。
 - 需要启动服务时，只能使用显式 profile 和隔离可丢弃数据库；联调不能替代两端各自的自动化验证。
 - 不把可自动化的首轮验收转交给用户；“已完成”必须有可复现的测试证据。
-- 一般交付在基础验证全部通过后执行固定范围的三轮收敛检查。当前最终加固阶段是明确
-  例外：F1-F4 每轮只以该轮自动化验收收口；F1-F5 全部完成后，由 F5 在完整阶段门禁
-  通过后统一执行三轮检查。阶段末检查中的任何实质修改都令计数器归零。
+- 一般交付在基础验证全部通过后执行固定范围的三轮收敛检查。历史 F1 曾按当时冻结
+  计划只以自动化验收收口；该例外不延续到未启动的 F2-F5。本次 post-F1 邮件 V5
+  收尾仍须在完整门禁后执行三轮检查，任何实质修改都令计数器归零。
 
 ## Current Rough Edges
 
@@ -586,12 +590,13 @@ PYTHON_BIN=python3 scripts/verify.sh
   Authorization Server client redirect 等剩余部署配置仍需收敛。
 - Spring Authorization Server 当前仍注册固定 `auth-client`、`{noop}auth-secret`、
   localhost redirect、password grant 和无 PKCE 客户端。自定义 JWT 才是当前主要
-  业务签发路径；F4 必须默认关闭未明确启用的 Authorization Server 客户端能力，或将
-  其完整配置、grant 和凭据失败关闭，不能把当前固定值带入生产。
+  业务签发路径；未来明确处理该风险时（原计划 F4），必须默认关闭未明确启用的
+  Authorization Server 客户端能力，或将其完整配置、grant 和凭据失败关闭，不能把
+  当前固定值带入生产。
 - 自定义 `/oauth2/introspect` 和 `/oauth2/api/introspect` 当前无需客户端鉴权，并兼容
-  query/form/raw body 多种 token 输入。F2 必须改成受鉴权、严格单值的服务到服务
-  endpoint，禁止 query token、浏览器 Cookie 和重复凭据，不能把当前公开接口用于实时
-  撤销判断。
+  query/form/raw body 多种 token 输入。未来明确处理该风险时（原计划 F2），必须改成
+  受鉴权、严格单值的服务到服务 endpoint，禁止 query token、浏览器 Cookie 和重复
+  凭据，不能把当前公开接口用于实时撤销判断。
 
 这些条目是工作提示，不代替针对当前任务的代码阅读和测试。
 
@@ -600,20 +605,19 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 多步骤任务持续使用 plan 工具；关键提醒必须写入本文件或任务实施文档。
 - 每次状态汇报都给出诚实的粗略完成百分比；发现遗漏或风险时允许回退，但必须说明
   当前固定范围和下一步如何继续收敛。
-- 加固阶段不再开放循环。剩余范围以
-  `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md` 冻结的 F1-F5 为准；完成五批后必须退出
-  加固阶段，不得自动创建第六批。
+- 当前邮箱固化阶段不得再开放循环。V5 敏感载荷最小化、完整门禁、三轮检查和交付
+  完成后即退出；`docs/drafts/FINAL_HARDENING_EXIT_PLAN.md` 仅保留为参考，
+  F2-F5 必须由未来明确需求分别启动，不得自动续跑。
 - 只有数据丢失、认证/授权绕过、凭据泄露、门禁伪成功或当前批直接引入的实质回归
   可以并入正在执行的固定批次。其他发现进入加固后的普通 backlog，不能借“继续探索”
   延长阶段。
-- F1-F4 每批执行：固定范围 -> PostgreSQL 集成测试与夹具 -> Shell/Flyway E2E ->
-  Playwright/Python/供应链工具 -> 完整硬门槛 -> 文档更新与提交推送。各批不分别
-  执行连续三轮无修改检查；F5 完成全部剩余实现和统一门禁后，再对整个 F 阶段执行
-  唯一一次连续三轮检查。百分比按最终退出范围诚实评估，不通过零碎条目虚增。
-- 当前总原则是先全面加固已有功能，不增加新功能。
+- 未来若明确启动 F2-F5 中的某一批，仍按“固定范围 -> PostgreSQL 集成测试与夹具 ->
+  Shell/Flyway E2E -> Playwright/Python/供应链工具 -> 完整硬门槛 -> 文档与交付”
+  执行，但不得把未启动批次当作当前阻塞项。百分比按当前明确范围诚实评估。
+- 当前总原则是完成邮箱参考服务 V5 收尾后回到正常新功能/需求开发。
 - 实施前先建立集成测试、Shell E2E 和 Playwright 保护；测试必须覆盖本次修改。
-- F1-F4 的基础门禁通过后直接进入下一冻结批次；只在 F1-F5 全部完成后的阶段末检查中
-  使用连续三轮计数器，任何实质修改都将该阶段末计数归零。
+- 本次邮箱参考服务收尾在完整门禁后执行一次连续三轮无修改检查；任何实质修改都将
+  计数归零。通过后不得以一般性“继续加固”为由开启下一轮。
 - 并发修复优先数据库约束、条件更新和 CAS，不默认使用悲观锁，也不机械引入 `@Version`。
 - 未经用户允许，不运行真实高成本外部调用；真实 OAuth/mail 也不是默认门禁。
 - 外部依赖下载遇到网络阻断时，可使用用户提供的本机 `http_proxy`、`https_proxy`

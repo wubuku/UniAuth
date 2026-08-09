@@ -135,7 +135,7 @@
   RSC/SSR data-router/外部输入决定目标 URL 路径；后续版本升级继续跟踪。
 - UniAuth 主应用只包含外部邮件服务 HTTP 适配器；仓库已纳入独立参考实现。
   live guides 已明确邮箱注册/重置的运行依赖、端点和模板契约、普通密码登录边界，
-  API key/超时、参考组件自己的 Flyway V1-V4、默认 `dedicated` 与显式
+  API key/超时、参考组件自己的 Flyway V1-V5、默认 `dedicated` 与显式
   `shared-uniauth` 数据库布局、运行保护、完整 ApplicationContext E2E 和 Shell
   进程门禁；URL 结构、恢复开关和敏感对象字符串
   约束也已纳入当前指南。生产 SMTP 的强制 STARTTLS/implicit SSL 二选一、
@@ -150,11 +150,16 @@
   HTTP/Flyway guard 分别达到 10/10 和 11/11，覆盖 queue detail 披露边界、响应
   安全 header、重复鉴权 header，以及 checksum drift 失败关闭、原样保持与显式
   恢复；当前组合计数见下一条。
-- 参考服务当前组合门禁为 Maven 150 tests、Shell runtime 44/44、HTTP 11/11、
+- 参考服务当前组合门禁为 Maven 154 tests、Shell runtime 44/44、HTTP 11/11、
   Flyway guard 15/15、backup/restore rehearsal 10/10；根 shared-schema 双进程
   E2E 4/4。所有 profile 均拒绝 H2 和其他非 PostgreSQL datasource。
   Flyway 唯一 schema owner、缺失 location、migration 命名校验和 datasource 类型的
   固定配置与外部覆盖拒绝已由 Java/Shell/ApplicationContext/Flyway 层共同验证。
+- 邮件参考服务 V5 的数据生命周期已进入 live guides：日志不持久化 HTML；
+  `PENDING`/`PROCESSING` 队列保留投递内容；`COMPLETED`/`FAILED` 队列使用
+  `<redacted/>` 并清空 metadata。共享 schema、peer inventory 和选择性备份均要求
+  精确 V1-V5 history，且文档明确 archive 仍可能包含收件人、主题、错误和重试中
+  队列的 HTML/验证码。
 - 根 `scripts/test-http-e2e.sh` 的正常邮箱注册/重置路径已使用真实
   `reference/email-service` JAR、独立 PostgreSQL 和真实 HTTP；仅失败/限流映射路径
   使用受控 stub。参考服务队列中的模板持久化已成为根 E2E 的直接断言。
@@ -172,9 +177,11 @@
   复核与 token transport、domain allowlist 等相邻边界的交互。
 - `blacksheep_dev` 只读 baseline rehearsal 已通过，但 baseline apply 尚未执行。
 
-这些问题的总路线图见 `HARDENING_IMPLEMENTATION_PLAN.md`，剩余固定范围和退出顺序见
-`FINAL_HARDENING_EXIT_PLAN.md`；`NEXT_HARDENING_IMPLEMENTATION_PLAN.md` 只保留
-历史批次和验证记录。
+这些问题的总路线图见 `HARDENING_IMPLEMENTATION_PLAN.md`，原冻结范围和退出顺序见
+`FINAL_HARDENING_EXIT_PLAN.md`；两者现均为参考材料，不自动驱动后续批次。
+`NEXT_HARDENING_IMPLEMENTATION_PLAN.md` 只保留历史批次和验证记录。当前邮箱参考
+服务收尾完成后，文档工作回到按具体 feature/fix/maintenance 需求更新，不继续开放
+一般性加固循环。
 
 ## 验证计划
 

@@ -1,9 +1,13 @@
 # UniAuth 加固阶段最终收尾计划
 
-> 状态：F1 completed；F2-F5 scope frozen but deferred，只有后续明确要求才启动
+> 状态：Reference，不再自动执行
+> F1 已完成；2026-08-09 的邮件参考服务 V5 收尾只完成终态敏感载荷最小化、完整门禁
+> 和交付，不会自动启动 F2-F5。后续工作回到普通 feature/fix/maintenance 计划；
+> F2-F5 只有在未来明确提出对应需求时才各自重新规划。本文其余内容保留原冻结范围和
+> 历史退出标准，不代表当前仍处于持续加固循环。
 > 冻结日期：2026-08-09
-> 当前总体进度：约 86%
-> 目标：只加固、修复和验证现有功能；完成本文五个批次后退出加固阶段
+> 历史总体进度口径：F1 完成时约 86%
+> 原目标：只加固、修复和验证现有功能；完成本文五个批次后退出加固阶段
 > 上位路线图：[全面加固实施规划](HARDENING_IMPLEMENTATION_PLAN.md)
 > 历史执行记录：[下一轮加固实施计划](NEXT_HARDENING_IMPLEMENTATION_PLAN.md)
 
@@ -440,7 +444,7 @@ PYTHON_BIN=python3 scripts/verify.sh
    继续只允许已授权的只读检查，不属于自动化发布或回滚测试目标。
 6. root 或邮件组件新增 migration 时，同批更新双方 shared-schema peer-history inventory、
    Java/Shell runtime guard、Flyway baseline guard、HTTP migration 断言和受影响的
-   backup/restore inventory；任何一处仍只接受旧 V1-V5/V1-V3 链都必须使门禁失败，
+   backup/restore inventory；任何一处仍只接受旧版本链都必须使门禁失败，
    不能通过放宽为“存在 history 即接受”来绕过精确版本与 relation 校验。
 
 F1-F4 每批通过固定范围验收后直接进入下一批，不分别执行三轮无修改检查。F5 完成
@@ -462,9 +466,10 @@ while counter < 3:
 无问题轮次不修改仓库文档。行号和纯格式细节不触发重置；正确性、安全性、可执行性、
 覆盖缺口、错误声明和门禁伪成功会触发重置。
 
-## 7. 退出条件
+## 7. 原计划退出条件
 
-只有同时满足以下条件才退出加固阶段：
+以下是原 F1-F5 整体计划的退出条件，现作为未来按需启动批次时的参考，不再阻止当前
+邮箱参考服务收尾后退出：
 
 1. F1-F5 全部完成，没有新增第六批。
 2. 现有功能的关键成功、失败、并发、重放、持久化和恢复路径有自动化证据。
