@@ -128,7 +128,7 @@ export function useAuth() {
     if (isTokenExpiring()) {
       try {
         console.log('Token is expiring, refreshing...');
-        const result = await AuthService.refreshToken();
+        await AuthService.refreshToken();
         console.log('Token refresh successful');
 
         // 刷新token后，获取用户信息（但不调用checkAuth避免循环）

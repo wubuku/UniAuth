@@ -115,7 +115,8 @@ npm run dev
 npm run test:e2e
 ```
 
-该命令启动隔离 Vite server，并使用 Mock API 覆盖核心账户页面。
+该命令启动隔离 Vite server，并使用 Mock API 覆盖核心账户页面、同页/同源标签页
+refresh 协调，以及跨标签页 refresh/logout 竞态后的最终认证存储状态。
 
 真实邮箱注册、登录、回跳和跨 origin Python API 验证由仓库根聚合器运行：
 

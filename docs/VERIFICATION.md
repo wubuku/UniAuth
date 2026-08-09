@@ -184,7 +184,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `npm audit --audit-level=high` | 通过 | 0 high/critical；2 个 React Router moderate advisories 见下文 |
 | `npx tsc --noEmit` | 通过 | 无 TypeScript 错误 |
 | `npm run build` | 通过 | Vite 生产构建成功，保留 chunk warning |
-| `npm run test:e2e` | 通过 | 26/26 Chrome-channel Mock Playwright tests；同页面与同源双标签页只消费一次 refresh，logout 保留无关存储 |
+| `npm run test:e2e` | 通过 | 27/27 Chrome-channel Mock Playwright tests；同页面与同源双标签页只消费一次 refresh，logout 保留无关存储，跨标签页 logout 不会被迟到 refresh continuation 恢复 |
 | 邮箱登录浏览器 E2E | 通过 | 1/1；真实 PostgreSQL/UniAuth/Vite/Python/stub，注册、验证码、同源回跳、跨 hostname Bearer、`credentials: omit`、资源域哨兵 Cookie 不随请求发送、邮箱密码再次登录 |
 | Python | 通过 | 18/18 离线 RSA/JWKS/Flask tests；refresh、缺失 `type`/`jti` 和非法 Bearer 格式失败关闭 |
 | 邮件 REST stub contract | 通过 | 9/9；既有 API key/health/接受/拒绝/限流/坏请求/chunked/header 契约，加上既有文件权限收紧为 `0600` 的临时捕获文件 |
@@ -218,6 +218,9 @@ disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列�
   false 时，ApplicationContext 启动失败。
 - 前端启动、local/email/Web3/OAuth2、401 refresh 后都不保留
   `localStorage.refreshToken`；当前 access token localStorage 演示兼容性保持不变。
+- refresh 成功响应在 Web Lock 持有期间写入 access token；hook、OAuth callback 和
+  Axios 401 retry 不在锁释放后重复持久化。跨标签页 logout 与延迟 refresh 并发时，
+  最终 `auth_user`、access token 和 legacy refresh token 均保持清空。
 - Python 资源服务器在签名、kid、issuer、audience 和 expiry 正确时仍拒绝
   refresh token 和缺少 `type` 的 token。
 

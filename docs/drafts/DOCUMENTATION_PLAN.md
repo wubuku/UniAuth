@@ -123,9 +123,10 @@
 - Java 已有 PostgreSQL/Testcontainers 集成测试；当前完整 Maven 为
   151/151，0 failures/errors/skips。
 - HTTP Shell E2E 当前 15/15、Flyway baseline guard 14/14、Mock Playwright
-  26/26、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 18/18、邮件 REST stub
-  contract 9/9；同页面和同源双标签页 refresh 协调、logout 存储边界、
-  Python `jti` 契约与跨 hostname Bearer/Cookie 隔离均已进入统一门禁。
+  27/27、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 18/18、邮件 REST stub
+  contract 9/9；同页面和同源双标签页 refresh 协调、跨标签页 refresh/logout
+  迟到写回拒绝、logout 存储边界、Python `jti` 契约与跨 hostname
+  Bearer/Cookie 隔离均已进入统一门禁。
 - 前端严格 `npm ci`、high/critical 依赖审计、lint、typecheck 和生产构建通过；
   `scripts/verify.sh` 与 GitHub Actions 使用统一验证入口。
 - npm audit 仍有 2 个 React Router moderate advisories；当前客户端路由 pathname

@@ -354,7 +354,7 @@ PYTHON_BIN=python3 scripts/verify.sh
 当前验证基线（2026-08-09 工作树；每次后续变更仍须重跑）：
 
 - 当前根统一门禁：Maven 151 tests、shared-schema process E2E 4/4、
-  HTTP 15/15、Flyway baseline guard 14/14、Mock Playwright 26/26、
+  HTTP 15/15、Flyway baseline guard 14/14、Mock Playwright 27/27、
   真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 18/18、邮件 REST stub
   contract 9/9；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
   patch hygiene 均通过。
@@ -428,10 +428,12 @@ PYTHON_BIN=python3 scripts/verify.sh
   blacklist 和 disabled-user 结论。前端同 runtime single-flight 与 Web Locks 覆盖
   同页面/同源标签页，Python 同步要求 `jti`。随后发现并修复 Bearer auth scheme
   大小写解析漂移，Resource Server/logout/Web3 bind 已复用同一提取器，定向
-  PostgreSQL/JWT 测试 17/17 通过；修复后的完整根 Maven 为 151/151，统一门禁通过。
+  PostgreSQL/JWT 测试 17/17 通过。前端 refresh 结果只在 Web Lock 内持久化，
+  锁外调用方不再重复写回 token；跨标签页 logout 后迟到 refresh continuation
+  不能恢复认证状态。修复后的完整根 Maven 为 151/151，统一门禁通过。
 - Shell HTTP E2E：15/15；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
 - Flyway baseline guard：14/14。
-- Mock Playwright：26/26；真实邮箱登录浏览器 E2E：1/1。
+- Mock Playwright：27/27；真实邮箱登录浏览器 E2E：1/1。
 - Python 资源服务器：18/18；邮件 REST stub contract：9/9。
 - 前端 ESLint、TypeScript 和生产构建通过。
 - 每个未提交批次仍必须在完整门禁后重新执行连续三轮无修改检查；无问题轮次只记录在
@@ -529,8 +531,8 @@ PYTHON_BIN=python3 scripts/verify.sh
   blacklist，只能依赖 access token 剩余 TTL。
 - refresh token 仍出现在 JSON；access token 仍为演示目的写入 localStorage，
   header/cookie token 来源也可能冲突。前端已用 runtime single-flight 和支持浏览器的
-  Web Locks 避免正常同页面/同源标签页重复 refresh；彻底收敛 transport 仍属于
-  Batch C 原子切换。
+  Web Locks 避免正常同页面/同源标签页重复 refresh，并保证跨标签页 logout 不会被
+  迟到 refresh continuation 写回；彻底收敛 transport 仍属于 Batch C 原子切换。
 - CORS 有 YAML 和多个 Java 配置来源；OAuth2 redirect/Referer 缺少统一 allowlist。
 - `ApiAuthController` 对 JWT 用户把 provider 默认标成 `local`，不能反映真实主登录方式。
 - 邮件同步接受失败和 challenge 消费并发已经失败关闭/原子化；外部接受后本地事务

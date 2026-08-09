@@ -6,7 +6,9 @@
 > 生命周期行形状、Batch C
 > 认证 Cookie/浏览器 refresh 存储预备切片和 Web3/SIWE challenge 加固切片已完成；
 > 五轮收敛第 2 轮的 refresh replay/logout blacklist 切片实现与统一门禁已完成，
-> 第一次检查发现 Bearer scheme 大小写解析缺口并已修复，完整门禁重新执行中
+> 第一次检查发现 Bearer scheme 大小写解析缺口并已修复；随后补齐前端跨标签页
+> refresh/logout 迟到写回保护，2026-08-09 完整 12/12 门禁已通过；提交前仍须
+> 执行连续三轮无修改检查
 > 事实基线：2026-08-07；邮件 SMTP、持久化投递和限流异常路径增量：2026-08-08
 > 范围：只加固、修复和验证现有功能，不增加新的用户功能
 > 前置成果：PostgreSQL 16-only、Flyway V1 baseline + V2 + V3 + V4 + V5、Testcontainers、
@@ -36,13 +38,13 @@ HTTP 安全、邮箱和 Web3 正确性修复。顺序不可倒置：
 | 当前 migration | V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束/索引对齐 + V5 Web3/SIWE message 绑定 |
 | Flyway history | `uniauth_flyway_schema_history` |
 | ORM/初始化 | Hibernate `validate`；SQL init 和 Spring Session 自动建表关闭 |
-| Java | `mvn clean compile test-compile` 和 140 tests 已通过 |
+| Java | `mvn clean compile test-compile` 和 151/151 tests 已通过 |
 | 邮件参考服务 | Flyway V1/V2/V3；148 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E；1 个 shared-schema ApplicationContext test；6 个 shared-schema bootstrap tests；5 个 PostgreSQL repository constraint tests；Java runtime guard 30 tests；1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 43/43、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10 |
 | Shared-schema E2E | `scripts/test-email-shared-schema-e2e.sh` 4/4 已通过，覆盖 UniAuth/email 两种启动顺序、独立 history 和 baseline V0 |
 | HTTP E2E | `scripts/test-http-e2e.sh` 15/15 已通过 |
-| Flyway guard | `scripts/test-flyway-baseline-guard.sh` 13/13 已通过 |
-| 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、21 个 Mock Playwright tests 已通过 |
-| Python | 16 个离线 JWT/JWKS/Flask tests 和 8 个邮件 REST stub contract tests 已通过 |
+| Flyway guard | `scripts/test-flyway-baseline-guard.sh` 14/14 已通过 |
+| 前端 | 严格 `npm ci`、high/critical audit、ESLint、TypeScript、生产构建、27/27 Mock Playwright tests 已通过 |
+| Python | 18/18 离线 JWT/JWKS/Flask tests 和 9/9 邮件 REST stub contract tests 已通过 |
 | 统一入口 | `scripts/verify.sh` 本地通过；CI 使用同一入口 |
 | 既有库演练 | `blacksheep_dev` 只读 rehearsal 已通过 |
 | Schema fingerprint | `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |

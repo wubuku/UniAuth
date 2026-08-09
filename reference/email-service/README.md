@@ -421,7 +421,7 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
 - 本组件 Shell runtime 43/43、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
 - PostgreSQL backup/restore rehearsal 10/10。
 - UniAuth 根项目：Java 151 tests、shared-schema process E2E 4/4、HTTP 15/15、
-  Flyway 14/14、Mock Playwright 26/26、真实邮箱登录浏览器 E2E 1/1、
+  Flyway 14/14、Mock Playwright 27/27、真实邮箱登录浏览器 E2E 1/1、
   Python 资源服务器 18/18、邮件 REST stub contract 9/9；
   本轮稳定源码快照的完整根统一门禁已通过；连续三轮无修改检查仍是提交前门槛。
 - 根 Shell HTTP E2E 的正常邮箱路径使用本参考服务真实 JAR、真实 HTTP 和独立
