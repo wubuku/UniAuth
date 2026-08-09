@@ -15,6 +15,8 @@
 - `docs/drafts/README.md`: 既有计划、调查和历史记录索引。
 - `docs/drafts/DOCUMENTATION_PLAN.md`: 文档体系建设计划。
 - `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md`: 已冻结的五批最终加固收尾范围和退出条件。
+- `docs/drafts/F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md`: 当前 F1 的不可变基线、
+  固定实施切片、迁移边界和验收矩阵。
 - `docs/drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md`: 历史批次执行记录；不再驱动开放循环。
 - `docs/archive/database/README.md`: 旧 SQL 的历史归档和当前替代路径。
 - `reference/email-service/README.md`: 外部邮件 REST 服务的独立参考实现、Flyway 和 E2E。

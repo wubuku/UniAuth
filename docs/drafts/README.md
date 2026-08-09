@@ -22,6 +22,7 @@
 |------|------|------|
 | [DOCUMENTATION_PLAN.md](DOCUMENTATION_PLAN.md) | Live | 文档体系范围、维护规则和当前校准状态 |
 | [FINAL_HARDENING_EXIT_PLAN.md](FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；五个最终收尾批次、范围控制和加固退出条件 |
+| [F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md](F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md) | Draft | F1 邮箱与身份完整性的不可变基线、固定切片、迁移规则和验收矩阵 |
 | [HARDENING_IMPLEMENTATION_PLAN.md](HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 完整风险路线图；当前实施范围由最终收尾计划控制 |
 | [NEXT_HARDENING_IMPLEMENTATION_PLAN.md](NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Historical | 既有测试优先批次和验收记录；不再驱动开放循环 |
 
