@@ -117,14 +117,113 @@ class EmailServiceStubContractTest(unittest.TestCase):
                 "templateName": "email/email-verify",
                 "variables": {"verificationCode": "123456"},
                 "emailType": "VERIFICATION",
+                "idempotencyKey": "stub-contract-1",
             },
             self.api_key,
         )
         self.assertEqual(200, status)
         self.assertTrue(body["success"])
         self.assertIsInstance(body["queueId"], int)
+        self.assertEqual("PENDING", body["status"])
         self.assertNotIn("variables", body)
         self.assertNotIn("verificationCode", json.dumps(body))
+
+    def test_idempotent_retry_and_status_lookup_share_one_queue_identity(self) -> None:
+        payload = {
+            "to": "idempotent@example.test",
+            "subject": "Verify",
+            "templateName": "email/email-verify",
+            "variables": {"verificationCode": "123456"},
+            "emailType": "VERIFICATION",
+            "idempotencyKey": "stub-idempotent-1",
+        }
+        first_status, first_body = self.request(
+            "POST",
+            "/api/email/template",
+            payload,
+            self.api_key,
+        )
+        second_status, second_body = self.request(
+            "POST",
+            "/api/email/template",
+            payload,
+            self.api_key,
+        )
+        lookup_status, lookup_body = self.request(
+            "GET",
+            "/api/email/delivery/status?idempotencyKey=stub-idempotent-1",
+            api_key=self.api_key,
+        )
+
+        self.assertEqual(200, first_status)
+        self.assertEqual(200, second_status)
+        self.assertEqual(first_body["queueId"], second_body["queueId"])
+        self.assertEqual(200, lookup_status)
+        self.assertEqual(first_body["queueId"], lookup_body["queueId"])
+        self.assertEqual("PENDING", lookup_body["status"])
+
+        conflict_status, conflict_body = self.request(
+            "POST",
+            "/api/email/template",
+            {**payload, "subject": "Conflicting replay"},
+            self.api_key,
+        )
+        self.assertEqual(409, conflict_status)
+        self.assertEqual("IDEMPOTENCY_CONFLICT", conflict_body["error"])
+
+    def test_status_lookup_reports_missing_and_final_failure(self) -> None:
+        missing_status, missing_body = self.request(
+            "GET",
+            "/api/email/delivery/status?idempotencyKey=missing",
+            api_key=self.api_key,
+        )
+        self.assertEqual(404, missing_status)
+        self.assertEqual("NOT_FOUND", missing_body["error"])
+
+        accepted_status, accepted_body = self.request(
+            "POST",
+            "/api/email/template",
+            {
+                "to": "delivery-failed-contract@example.test",
+                "subject": "Failed",
+                "templateName": "email/email-verify",
+                "variables": {"verificationCode": "123456"},
+                "emailType": "VERIFICATION",
+                "idempotencyKey": "stub-failed-1",
+            },
+            self.api_key,
+        )
+        self.assertEqual(200, accepted_status)
+        self.assertEqual("FAILED", accepted_body["status"])
+
+    def test_status_reconciles_acceptance_after_the_enqueue_response_is_lost(self) -> None:
+        payload = {
+            "to": "accepted-timeout-contract@example.test",
+            "subject": "Verify",
+            "templateName": "email/email-verify",
+            "variables": {"verificationCode": "123456"},
+            "emailType": "VERIFICATION",
+            "idempotencyKey": "stub-response-lost-1",
+        }
+        enqueue_status, enqueue_body = self.request(
+            "POST",
+            "/api/email/template",
+            payload,
+            self.api_key,
+        )
+        lookup_status, lookup_body = self.request(
+            "GET",
+            "/api/email/delivery/status?idempotencyKey=stub-response-lost-1",
+            api_key=self.api_key,
+        )
+
+        self.assertEqual(503, enqueue_status)
+        self.assertEqual(
+            "RESPONSE_LOST_AFTER_ACCEPTANCE",
+            enqueue_body["error"],
+        )
+        self.assertEqual(200, lookup_status)
+        self.assertEqual("PENDING", lookup_body["status"])
 
     def test_optional_capture_file_records_an_accepted_template_request(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -152,6 +251,7 @@ class EmailServiceStubContractTest(unittest.TestCase):
                         "templateName": "email/email-verify",
                         "variables": {"verificationCode": "654321"},
                         "emailType": "VERIFICATION",
+                        "idempotencyKey": "capture-contract-1",
                     },
                     self.api_key,
                 )
@@ -166,6 +266,11 @@ class EmailServiceStubContractTest(unittest.TestCase):
             self.assertEqual(body["queueId"], captured["queueId"])
             self.assertEqual("capture@example.test", captured["to"])
             self.assertEqual("email/email-verify", captured["templateName"])
+            self.assertEqual(
+                "capture-contract-1",
+                captured["idempotencyKey"],
+            )
+            self.assertEqual("PENDING", captured["status"])
             self.assertEqual(
                 "654321",
                 captured["variables"]["verificationCode"],

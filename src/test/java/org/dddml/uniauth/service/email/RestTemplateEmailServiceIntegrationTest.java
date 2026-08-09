@@ -97,6 +97,31 @@ class RestTemplateEmailServiceIntegrationTest {
         assertThat(result).isEqualTo(EmailSendResult.RATE_LIMITED);
     }
 
+    @Test
+    void durableDeliveryUsesIdempotencyAndStatusContracts() {
+        EmailDeliveryReceipt receipt = emailService.enqueueTemplateEmail(
+            "durable@example.test",
+            "Verify",
+            "email/email-verify",
+            Map.of("verificationCode", "123456"),
+            "VERIFICATION",
+            "email-challenge:durable-test"
+        );
+
+        assertThat(receipt.deliveryId()).isEqualTo("1");
+        assertThat(receipt.state())
+            .isEqualTo(EmailDeliveryReceipt.DeliveryState.PENDING);
+        assertThat(LAST_REQUEST_BODY.get())
+            .contains("\"idempotencyKey\":\"email-challenge:durable-test\"");
+
+        assertThat(emailService.findDeliveryByIdempotencyKey(
+            "email-challenge:durable-test"
+        )).contains(new EmailDeliveryReceipt(
+            "1",
+            EmailDeliveryReceipt.DeliveryState.PENDING
+        ));
+    }
+
     private static HttpServer startServer() {
         try {
             HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -106,7 +131,19 @@ class RestTemplateEmailServiceIntegrationTest {
                     respond(exchange, 429, "{\"success\":false}");
                     return;
                 }
-                respond(exchange, 200, "{\"success\":true,\"queueId\":1}");
+                respond(
+                    exchange,
+                    200,
+                    "{\"success\":true,\"queueId\":1,\"status\":\"PENDING\"}"
+                );
+            });
+            server.createContext("/mail/api/email/delivery/status", exchange -> {
+                capture(exchange);
+                respond(
+                    exchange,
+                    200,
+                    "{\"success\":true,\"queueId\":1,\"status\":\"PENDING\"}"
+                );
             });
             server.createContext("/mail/api/email/health", exchange -> {
                 capture(exchange);

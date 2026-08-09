@@ -233,13 +233,18 @@ start_application
 wait_for_application
 
 echo "1/11 Verify Flyway-owned startup"
-[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "3" ] \
-    || fail "Flyway did not record V1 through V3"
+[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
+    || fail "Flyway did not record V1 through V4"
 [ "$(db_value "
     SELECT count(*)
     FROM pg_constraint
     WHERE conname = 'chk_email_queue_lifecycle_state';
 ")" = "1" ] || fail "Flyway did not create the queue lifecycle constraint"
+[ "$(db_value "
+    SELECT count(*)
+    FROM pg_constraint
+    WHERE conname = 'chk_email_queue_idempotency_shape';
+")" = "1" ] || fail "Flyway did not create the idempotency shape constraint"
 
 echo "2/11 Verify API-key enforcement"
 [ "$(request_status GET /api/email/health)" = "401" ] \
@@ -303,7 +308,8 @@ payload="$(
         username: "shell@example.test",
         expiryMinutes: 10
       },
-      emailType: "VERIFICATION"
+      emailType: "VERIFICATION",
+      idempotencyKey: "shell-verification-1"
     }'
 )"
 response="$(
@@ -317,6 +323,40 @@ response="$(
 [ "$(jq -er '.success' <<<"$response")" = "true" ] \
     || fail "template endpoint did not return success=true"
 queue_id="$(jq -er '.queueId' <<<"$response")"
+[ "$(jq -er '.status' <<<"$response")" = "PENDING" ] \
+    || fail "template endpoint did not return the accepted queue state"
+
+duplicate_response="$(
+    curl -fsS \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-Email-Service-Key: $API_KEY" \
+        --data "$payload" \
+        "http://127.0.0.1:${SERVER_PORT}/api/email/template"
+)"
+[ "$(jq -er '.queueId' <<<"$duplicate_response")" = "$queue_id" ] \
+    || fail "identical idempotent retry created a different queue identity"
+conflicting_payload="$(
+    jq -c '.subject = "Conflicting replay"' <<<"$payload"
+)"
+[ "$(request_status POST /api/email/template \
+    -H "Content-Type: application/json" \
+    -H "X-Email-Service-Key: $API_KEY" \
+    --data "$conflicting_payload")" = "409" ] \
+    || fail "conflicting payload with the same idempotency key was not rejected"
+delivery_status="$(
+    curl -fsS \
+        -H "X-Email-Service-Key: $API_KEY" \
+        "http://127.0.0.1:${SERVER_PORT}/api/email/delivery/status?idempotencyKey=shell-verification-1"
+)"
+[ "$(jq -er '.queueId' <<<"$delivery_status")" = "$queue_id" ] \
+    || fail "delivery status lookup returned the wrong queue identity"
+[ "$(jq -er '.status' <<<"$delivery_status")" = "PENDING" ] \
+    || fail "delivery status lookup returned the wrong queue state"
+[ "$(request_status GET \
+    '/api/email/delivery/status?idempotencyKey=missing-delivery' \
+    -H "X-Email-Service-Key: $API_KEY")" = "404" ] \
+    || fail "unknown delivery identity did not return 404"
 
 echo "6/11 Verify rendered content and configured queue policy in PostgreSQL"
 [ "$(db_value "SELECT status FROM email_queue WHERE id = $queue_id;")" = "PENDING" ] \
@@ -325,10 +365,14 @@ echo "6/11 Verify rendered content and configured queue policy in PostgreSQL"
     SELECT count(*)
     FROM email_queue
     WHERE id = $queue_id
+      AND idempotency_key = 'shell-verification-1'
+      AND length(request_fingerprint) = 64
       AND processed_time IS NULL
       AND next_retry_time IS NULL
       AND error_message IS NULL;
 ")" = "1" ] || fail "new pending queue row violated lifecycle metadata invariants"
+[ "$(db_value "SELECT count(*) FROM email_queue;")" = "1" ] \
+    || fail "idempotent replay created an additional queue row"
 [ "$(db_value "SELECT max_retries FROM email_queue WHERE id = $queue_id;")" = "4" ] \
     || fail "configured retry limit was not persisted"
 [ "$(db_value "SELECT position('246810' in html_content) > 0 FROM email_queue WHERE id = $queue_id;")" = "t" ] \
@@ -440,14 +484,14 @@ echo "9/11 Enforce bounded log pagination"
     || fail "oversized log page was accepted"
 
 echo "10/11 Verify Flyway history remains stable before restart"
-[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "3" ] \
+[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
     || fail "Flyway history changed before restart"
 
 echo "11/11 Restart without replaying migrations or losing the queue"
 stop_application
 start_application
 wait_for_application
-[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "3" ] \
+[ "$(db_value "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
     || fail "restart changed Flyway history"
 [ "$(db_value "SELECT count(*) FROM email_queue WHERE id = $queue_id;")" = "1" ] \
     || fail "restart lost the queued email"

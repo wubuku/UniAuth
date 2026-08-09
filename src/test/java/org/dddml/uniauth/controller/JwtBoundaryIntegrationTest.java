@@ -180,6 +180,7 @@ class JwtBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
                 username + "@example.invalid",
                 "integration-password",
                 "JWT Boundary User",
+                null,
                 null
         ));
     }

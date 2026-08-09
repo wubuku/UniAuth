@@ -16,6 +16,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 public class WebSecurityConfig {
 
     private final CustomUserDetailsService customUserDetailsService;
+    private final PasswordPolicyProperties passwordPolicyProperties;
 
     /**
      * 密码编码器
@@ -23,6 +24,8 @@ public class WebSecurityConfig {
      */
     @Bean
     public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+        return new BCryptPasswordEncoder(
+                passwordPolicyProperties.getBcryptStrength()
+        );
     }
 }

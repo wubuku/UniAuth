@@ -55,27 +55,30 @@ Authorization Server 协议已经完整接通。
 
 ### 邮箱注册、密码登录与密码重置
 
-1. 邮箱地址注册先由 `EmailAuthController` 请求验证码。
-2. `EmailVerificationCodeService` 生成验证码，并通过 `EmailService` 请求外部邮件服务。
-3. 只有外部服务同步返回 `SUCCESS`/`QUEUED`，后端才把 challenge 保存到
-   `email_verification_codes`；拒绝、限流、超时、网络异常和空结果都失败关闭。
-4. 用户提交验证码后，`verifyCode` 按已选 challenge id 和 code 做 PostgreSQL
-   条件更新；注册事务随后创建用户及 `LOCAL` 登录方式并签发 JWT。controller 不再
-   按 email/purpose 二次标记，避免消费验证期间新建的 challenge。
-5. 已建立账户后的登录走普通本地用户名/密码流程，邮箱只是 `local_username`，
+1. `EmailAuthController` 规范化邮箱并创建 opaque challenge handle。
+2. `EmailVerificationCodeService` 在同一事务中保存 HMAC digest challenge 和
+   `email_delivery_outbox`，初始状态为 `PENDING_DELIVERY`。
+3. outbox worker 使用稳定 idempotency key 调用外部邮件服务，并查询 delivery
+   status 恢复响应丢失窗口；确认接受后 challenge 才进入 `ACTIVE`，终态失败会使其
+   不可验证。
+4. 用户提交 handle、canonical email、purpose 和验证码后，服务按 retry budget、
+   HMAC digest 与状态做 PostgreSQL 条件消费；注册事务随后创建用户及 `LOCAL`
+   登录方式并签发 JWT。
+5. 已建立账户后的登录走统一 JSON credential/password policy 流程，邮箱只是
+   `local_username`，
    不会在每次登录时发送验证码。
 6. 密码重置复用同一邮件服务边界和验证码表，purpose 为 `PASSWORD_RESET`。
 
 UniAuth 主应用内的 `RestTemplateEmailServiceImpl` 只是 HTTP 客户端，不直接连接
 SMTP 或邮件供应商。外部服务必须提供 health、模板邮件端点、模板和约定的 JSON 响应；
 仓库提供一个独立的[邮件服务参考实现](../reference/email-service/README.md)，其 schema
-由独立 Flyway V1/V2/V3 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP
+由独立 Flyway V1/V2/V3/V4 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP
 E2E 验证。数据库默认使用独立 PostgreSQL；显式 `shared-uniauth` 可在获准的空
-`public` schema 先启动任一侧，或与完整 UniAuth V1-V5 peer 使用独立 history table
+`public` schema 先启动任一侧，或与完整 UniAuth V1-V6 peer 使用独立 history table
 共存。两种启动顺序由共享 advisory lock 串行化，并有真实 ApplicationContext 与
 双进程 E2E。邮件组件只创建
 `email_queue`、`email_logs`、对应序列/索引/约束和
-`email_service_flyway_schema_history`；这些 relation 名称与 UniAuth V1-V5 无冲突。
+`email_service_flyway_schema_history`；这些 relation 名称与 UniAuth V1-V6 无冲突。
 原始兼容问题是后启动 Flyway 面对非空 `public` schema 且缺少自身 history，而不是
 业务表重名。受控兼容路径只在 peer 完整、本侧 relation 不存在且 history 无失败记录
 时创建 baseline V0，`baseline-on-migrate` 仍保持 `false`。非 PostgreSQL datasource 会
@@ -91,16 +94,14 @@ V0 baseline，失败、重复、未知 versioned 或 repeatable 记录均被拒�
 不能选择首值或末值继续处理。类型化配置在 ApplicationContext 启动时拒绝无 host、
 非 HTTP/HTTPS、含 userinfo/query/fragment 的 URL 和越界 timeout，也拒绝超过
 1024 字符或包含 CR/LF 的 API key。详细契约见
-[配置基线](CONFIGURATION.md#邮件服务依赖)。虽然
-`VerificationPurpose.LOGIN` 和前端联合类型仍存在，当前没有受支持的邮箱验证码
-无密码登录 endpoint。
+[配置基线](CONFIGURATION.md#邮件服务依赖)。当前 verification purpose 只允许
+`REGISTRATION` 和 `PASSWORD_RESET`，没有受支持的邮箱验证码无密码登录 endpoint。
 
-当前发送流程只把外部 `success=true` 解释为“已接受/入队”，不证明最终送达。
-同步拒绝、限流、超时、网络异常和空结果不会保存 challenge，也不会返回发送成功。
-该流程仍不是可靠投递状态机：外部服务已经接受后，如果本地 challenge 事务失败，
-用户可能收到无法验证的验证码；外部服务后续异步投递失败也不会自动撤销已保存的
-challenge。解决这些窗口需要 transactional outbox 或 delivery/challenge 双状态机，
-不属于当前实现。
+外部 `success=true` 只解释为“已接受/入队”，不证明最终送达。UniAuth 已使用
+transactional outbox、稳定 idempotency key 和 delivery status reconciliation
+协调本地 challenge 与邮件服务接受状态；同步拒绝、限流、超时、响应丢失、重启和
+终态失败均有可恢复或失败关闭语义。该状态机仍不证明真实供应商收件、退信、外部 TLS
+或生产容量。
 参考服务自己的恢复 worker 只有在邮件总开关、队列和 recovery 都启用时才处理
 存量，避免停用投递后定时任务继续发送。参考服务提供至少一次而非恰好一次投递：
 SMTP 已接受后若数据库提交或进程失败，stuck recovery 可能使用相同 queue id 再次发送。
@@ -241,14 +242,17 @@ access token 默认 1 小时，refresh token 默认 7 天。
 
 - 演示数据默认关闭；显式启用时只允许 disposable test/demo 数据库并只 upsert 受管账户。
 - Flyway 当前为 dev-derived V1 baseline + V2 登录方式约束 + V3 登录方式 revision
-  CAS + V4 实体约束与索引对齐 + V5 Web3/SIWE challenge message 绑定；不得修改
-  已发布的 V1/V2/V3/V4/V5。
+  CAS + V4 实体约束与索引对齐 + V5 Web3/SIWE challenge message 绑定 + V6 邮箱身份/
+  challenge/outbox/限流/安全事件加固；不得修改已发布的 V1/V2/V3/V4/V5/V6。
 - V2 已对齐登录方式的时区/nullability，并增加 provider/行形状与 primary 唯一约束；
   V3 已保护 remove/set-primary 组合并发；V4 已对齐 users、Web3 nonce、email
   verification 和 token blacklist 的目标 nullability/default/check，并补齐 email 查询
   索引、移除可证明冗余的索引。其余 schema 和数据预检仍归后续 H1.4 切片。
 - V5 将 Web3 nonce 与服务端完整 SIWE message 绑定；nonce 生成采用 PostgreSQL
   upsert，验证采用带 message 和有效期条件的原子删除，V5 migration 会失效旧 challenge。
+- V6 规范化 contact email 与 email-shaped LOCAL username，分离 synthetic identity，
+  退役明文 code/metadata，并增加唯一 active challenge、transactional outbox、
+  PostgreSQL 认证限流和 append-only security event。
 - Spring Session 表由 Flyway V1 管理，框架自动建表关闭。
 - `blacksheep_dev` 已通过只读 baseline rehearsal，尚未执行 baseline apply。
 

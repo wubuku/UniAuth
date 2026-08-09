@@ -76,6 +76,12 @@ public class EmailQueue {
     @Column(columnDefinition = "TEXT")
     private String metadata;
 
+    @Column(name = "idempotency_key", length = 128)
+    private String idempotencyKey;
+
+    @Column(name = "request_fingerprint", length = 64)
+    private String requestFingerprint;
+
     public void incrementRetry(int delayMinutes) {
         this.retryCount++;
         this.nextRetryTime = LocalDateTime.now().plusMinutes(delayMinutes);

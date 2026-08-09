@@ -1,14 +1,22 @@
 package org.dddml.uniauth.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.Cookie;
+import org.dddml.uniauth.entity.EmailDeliveryOutbox;
 import org.dddml.uniauth.entity.EmailVerificationCode;
+import org.dddml.uniauth.entity.UserEntity;
+import org.dddml.uniauth.entity.UserLoginMethod;
+import org.dddml.uniauth.repository.EmailDeliveryOutboxRepository;
 import org.dddml.uniauth.repository.EmailVerificationCodeRepository;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.repository.UserRepository;
+import org.dddml.uniauth.service.EmailDeliveryOutboxProcessor;
+import org.dddml.uniauth.service.EmailVerificationCodeProtector;
 import org.dddml.uniauth.service.EmailVerificationCodeService;
 import org.dddml.uniauth.service.UserService;
-import org.dddml.uniauth.service.email.EmailSendResult;
+import org.dddml.uniauth.service.email.EmailDeliveryClientException;
+import org.dddml.uniauth.service.email.EmailDeliveryReceipt;
 import org.dddml.uniauth.service.email.EmailService;
 import org.dddml.uniauth.support.PostgreSqlIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,7 +24,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -28,12 +35,16 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-import java.util.Map;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -44,13 +55,13 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -59,13 +70,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(properties = {
     "app.email.verification.max-retry-attempts=3",
     "app.email.verification.expiry-minutes=2",
-    "app.email.verification.resend-cooldown-seconds=7"
+    "app.email.verification.resend-cooldown-seconds=7",
+    "app.email.verification.hmac-key=test-only-email-authentication-key",
+    "app.email.verification.hmac-key-id=test-email-key-1",
+    "app.email.delivery.max-attempts=1"
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
 
     private static final int MAX_RETRY_ATTEMPTS = 3;
+    private static final String REGISTRATION_EMAIL_TYPE = "VERIFICATION";
+    private static final String PASSWORD_RESET_EMAIL_TYPE = "PASSWORD_RESET";
 
     @Autowired
     private MockMvc mockMvc;
@@ -75,6 +91,12 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
 
     @Autowired
     private EmailVerificationCodeRepository verificationCodeRepository;
+
+    @Autowired
+    private EmailDeliveryOutboxRepository outboxRepository;
+
+    @Autowired
+    private EmailDeliveryOutboxProcessor outboxProcessor;
 
     @Autowired
     private UserLoginMethodRepository loginMethodRepository;
@@ -90,95 +112,74 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
     private EmailVerificationCodeService verificationCodeService;
 
     @Autowired
+    private EmailVerificationCodeProtector codeProtector;
+
+    @Autowired
     private PasswordEncoder passwordEncoder;
 
     @MockBean
     private EmailService emailService;
 
+    private final Map<String, String> deliveredCodes = new ConcurrentHashMap<>();
+
     @BeforeEach
+    @SuppressWarnings("unchecked")
     void configureEmailBoundary() {
         reset(emailService);
-        when(emailService.isAvailable()).thenReturn(true);
-        when(emailService.sendTemplateEmail(
+        deliveredCodes.clear();
+        doReturn(true).when(emailService).isAvailable();
+        doReturn(Optional.empty()).when(emailService)
+                .findDeliveryByIdempotencyKey(anyString());
+        doAnswer(invocation -> {
+            String email = invocation.getArgument(0);
+            Map<String, Object> variables = invocation.getArgument(3);
+            String emailType = invocation.getArgument(4);
+            deliveredCodes.put(
+                    deliveryKey(email, emailType),
+                    String.valueOf(variables.get("verificationCode"))
+            );
+            return new EmailDeliveryReceipt(
+                    UUID.randomUUID().toString(),
+                    EmailDeliveryReceipt.DeliveryState.PENDING
+            );
+        }).when(emailService).enqueueTemplateEmail(
                 anyString(),
                 anyString(),
                 anyString(),
                 any(),
+                anyString(),
                 anyString()
-        )).thenReturn(EmailSendResult.QUEUED);
+        );
     }
 
     @Test
-    @SuppressWarnings({"rawtypes", "unchecked"})
-    void emailRegistrationAndPasswordResetUseThePersistedCodeEndToEnd()
+    void emailRegistrationAndPasswordResetUseOpaqueChallengesEndToEnd()
             throws Exception {
-        String email = "email-flow@example.invalid";
+        String email = uniqueEmail("email-flow");
         String initialPassword = "initial-password";
         String newPassword = "updated-password";
 
-        mockMvc.perform(post("/api/auth/send-verification-code")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "email", email,
-                                "purpose", "REGISTRATION",
-                                "password", initialPassword,
-                                "displayName", "Email Flow"
-                        ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.expiresIn").value(120))
-                .andExpect(jsonPath("$.resendAfter").value(7));
+        DeliveredChallenge registration = sendRegistrationChallenge(email);
+        EmailVerificationCode registrationRow =
+                verificationCodeRepository.findById(registration.handle())
+                        .orElseThrow();
+        assertThat(registrationRow.getCodeDigest())
+                .isNotBlank()
+                .doesNotContain(registration.code());
 
-        EmailVerificationCode registrationCode = verificationCodeRepository
-                .findFirstByEmailAndPurposeAndIsUsedFalseOrderByCreatedAtDesc(
-                        email,
-                        EmailVerificationCode.VerificationPurpose.REGISTRATION
-                )
-                .orElseThrow();
-
-        ArgumentCaptor<Map<String, Object>> registrationVariables =
-                ArgumentCaptor.forClass((Class) Map.class);
-        verify(emailService).sendTemplateEmail(
-                eq(email),
-                eq("Verify your email"),
-                eq("email/email-verify"),
-                registrationVariables.capture(),
-                eq("VERIFICATION")
+        MvcResult verifyResult = completeRegistration(
+                registration,
+                email,
+                email,
+                initialPassword,
+                "Email Flow"
         );
-        assertThat(registrationVariables.getValue().get("code"))
-                .isEqualTo(registrationCode.getVerificationCode());
-
-        mockMvc.perform(post("/api/auth/check-verification-code")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "email", email,
-                                "verificationCode", registrationCode.getVerificationCode(),
-                                "purpose", "REGISTRATION"
-                        ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.valid").value(true))
-                .andExpect(jsonPath("$.status").value("VALID"));
-
-        MvcResult verifyResult = mockMvc.perform(post("/api/auth/verify-email")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "email", email,
-                                "verificationCode", registrationCode.getVerificationCode()
-                        ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.user.id").isNotEmpty())
-                .andExpect(jsonPath("$.user.username").value(email))
-                .andExpect(jsonPath("$.user.email").value(email))
-                .andExpect(jsonPath("$.accessToken").isNotEmpty())
-                .andExpect(jsonPath("$.refreshToken").isNotEmpty())
-                .andReturn();
         assertTokenCookies(verifyResult);
 
-        assertThat(verificationCodeRepository.findById(registrationCode.getId()))
+        assertThat(verificationCodeRepository.findById(registration.handle()))
                 .get()
-                .extracting(EmailVerificationCode::getIsUsed)
-                .isEqualTo(true);
+                .extracting(EmailVerificationCode::getUsageStatus)
+                .isEqualTo(EmailVerificationCode.UsageStatus.USED);
         assertThat(loginMethodRepository.findByLocalUsername(email))
                 .get()
                 .satisfies(method -> assertThat(passwordEncoder.matches(
@@ -186,122 +187,93 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                         method.getLocalPasswordHash()
                 )).isTrue());
 
-        mockMvc.perform(post("/api/auth/login")
-                        .param("username", email)
-                        .param("password", initialPassword))
-                .andExpect(status().isOk());
+        login(email, initialPassword).andExpect(status().isOk());
 
         clearInvocations(emailService);
-        mockMvc.perform(post("/api/auth/forgot-password")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("email", email))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.expiresIn").value(120))
-                .andExpect(jsonPath("$.resendAfter").value(7));
-
-        EmailVerificationCode resetCode = verificationCodeRepository
-                .findFirstByEmailAndPurposeAndIsUsedFalseOrderByCreatedAtDesc(
-                        email,
-                        EmailVerificationCode.VerificationPurpose.PASSWORD_RESET
-                )
-                .orElseThrow();
-
-        ArgumentCaptor<Map<String, Object>> resetVariables =
-                ArgumentCaptor.forClass((Class) Map.class);
-        verify(emailService).sendTemplateEmail(
-                eq(email),
-                eq("重置您的密码"),
-                eq("email/password-reset"),
-                resetVariables.capture(),
-                eq("PASSWORD_RESET")
-        );
-        assertThat(resetVariables.getValue().get("verificationCode"))
-                .isEqualTo(resetCode.getVerificationCode());
-
+        DeliveredChallenge reset = requestPasswordReset(email);
         mockMvc.perform(post("/api/auth/verify-reset-code")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "email", email,
-                                "verificationCode", resetCode.getVerificationCode(),
+                                "challengeHandle", reset.handle(),
+                                "verificationCode", reset.code(),
                                 "newPassword", newPassword
                         ))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
 
-        mockMvc.perform(post("/api/auth/login")
-                        .param("username", email)
-                        .param("password", initialPassword))
-                .andExpect(status().isUnauthorized());
-        mockMvc.perform(post("/api/auth/login")
-                        .param("username", email)
-                        .param("password", newPassword))
-                .andExpect(status().isOk());
+        login(email, initialPassword).andExpect(status().isUnauthorized());
+        login(email, newPassword).andExpect(status().isOk());
     }
 
     @Test
-    void invalidCodeConsumesTheRetryBudgetAndDeletesTheChallenge() throws Exception {
+    void invalidCodeConsumesTheRetryBudgetAndInvalidatesTheChallenge()
+            throws Exception {
         String email = uniqueEmail("retry-budget");
-        sendRegistrationCode(email);
-
-        EmailVerificationCode code = latestCode(
-                email,
-                EmailVerificationCode.VerificationPurpose.REGISTRATION
-        );
-        String invalidCode = "000000".equals(code.getVerificationCode())
-                ? "111111"
-                : "000000";
+        DeliveredChallenge challenge = sendRegistrationChallenge(email);
+        String invalidCode = differentCode(challenge.code());
 
         for (int attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
-            int expectedRemaining = Math.max(0, MAX_RETRY_ATTEMPTS - attempt);
-            mockMvc.perform(post("/api/auth/verify-email")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(Map.of(
-                                    "email", email,
-                                    "verificationCode", invalidCode
-                            ))))
-                    .andExpect(status().isBadRequest())
-                    .andExpect(jsonPath("$.success").value(false))
-                    .andExpect(jsonPath("$.remainingAttempts").value(expectedRemaining));
+            completeRegistrationRequest(
+                    challenge.handle(),
+                    invalidCode,
+                    email,
+                    email,
+                    "integration-password",
+                    "Retry Budget"
+            ).andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.detail")
+                            .value("Invalid or expired verification challenge"));
+
+            EmailVerificationCode persisted =
+                    verificationCodeRepository.findById(challenge.handle())
+                            .orElseThrow();
+            assertThat(persisted.getRetryCount()).isEqualTo(attempt);
         }
 
-        assertThat(verificationCodeRepository.findById(code.getId())).isEmpty();
+        assertThat(verificationCodeRepository.findById(challenge.handle()))
+                .get()
+                .extracting(EmailVerificationCode::getUsageStatus)
+                .isEqualTo(EmailVerificationCode.UsageStatus.INVALIDATED);
     }
 
     @Test
-    void expiredChallengeIsRejectedAndRemoved() throws Exception {
+    void expiredChallengeIsRejectedAndMarkedExpired() throws Exception {
         String email = uniqueEmail("expired");
-        sendRegistrationCode(email);
-        EmailVerificationCode code = latestCode(
+        DeliveredChallenge challenge = sendRegistrationChallenge(email);
+        EmailVerificationCode row = verificationCodeRepository
+                .findById(challenge.handle())
+                .orElseThrow();
+        row.setExpiresAt(Instant.now().minusSeconds(1));
+        verificationCodeRepository.saveAndFlush(row);
+
+        completeRegistrationRequest(
+                challenge.handle(),
+                challenge.code(),
                 email,
-                EmailVerificationCode.VerificationPurpose.REGISTRATION
-        );
-        code.setExpiresAt(Instant.now().minusSeconds(1));
-        verificationCodeRepository.saveAndFlush(code);
+                email,
+                "integration-password",
+                "Expired Challenge"
+        ).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail")
+                        .value("Invalid or expired verification challenge"));
 
-        mockMvc.perform(post("/api/auth/verify-email")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "email", email,
-                                "verificationCode", code.getVerificationCode()
-                        ))))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value("Verification code expired"));
-
-        assertThat(verificationCodeRepository.findById(code.getId())).isEmpty();
+        assertThat(verificationCodeRepository.findById(challenge.handle()))
+                .get()
+                .extracting(EmailVerificationCode::getUsageStatus)
+                .isEqualTo(EmailVerificationCode.UsageStatus.EXPIRED);
     }
 
     @Test
-    void resendCooldownPreventsASecondPendingChallenge() throws Exception {
+    void resendCooldownPreventsASecondActiveChallenge() throws Exception {
         String email = uniqueEmail("cooldown");
-        sendRegistrationCode(email);
+        sendRegistrationChallenge(email);
 
         mockMvc.perform(post("/api/auth/send-verification-code")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "email", email,
-                                "purpose", "REGISTRATION",
-                                "password", "integration-password"
+                                "purpose", "REGISTRATION"
                         ))))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.success").value(false))
@@ -311,185 +283,148 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
-    void emailStatusAndReadOnlyCodeCheckTrackThePersistedChallenge() throws Exception {
-        String email = uniqueEmail("status");
-        sendRegistrationCode(email);
-        EmailVerificationCode code = latestCode(
-                email,
-                EmailVerificationCode.VerificationPurpose.REGISTRATION
-        );
-        String invalidCode = "000000".equals(code.getVerificationCode())
-                ? "111111"
-                : "000000";
+    void publicStatusAndReadOnlyCodeOraclesStayClosed() throws Exception {
+        String email = uniqueEmail("oracle");
+        DeliveredChallenge challenge = sendRegistrationChallenge(email);
 
         mockMvc.perform(get("/api/auth/email/status/{email}", email))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.email").value(email))
-                .andExpect(jsonPath("$.hasPendingVerification").value(true));
-
+                .andExpect(status().isNotFound());
         mockMvc.perform(post("/api/auth/check-verification-code")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "email", email,
-                                "verificationCode", invalidCode,
+                                "challengeHandle", challenge.handle(),
+                                "verificationCode", differentCode(challenge.code()),
                                 "purpose", "REGISTRATION"
                         ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.valid").value(false))
-                .andExpect(jsonPath("$.status").value("INVALID"))
-                .andExpect(jsonPath("$.remainingAttempts").value(MAX_RETRY_ATTEMPTS));
+                .andExpect(status().isNotFound());
 
-        assertThat(verificationCodeRepository.findById(code.getId()))
+        assertThat(verificationCodeRepository.findById(challenge.handle()))
                 .get()
                 .extracting(EmailVerificationCode::getRetryCount)
                 .isEqualTo(0);
-
-        mockMvc.perform(post("/api/auth/verify-email")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "email", email,
-                                "verificationCode", code.getVerificationCode()
-                        ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
-
-        mockMvc.perform(get("/api/auth/email/status/{email}", email))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.hasPendingVerification").value(false));
     }
 
     @Test
     void emailBoundaryExceptionDoesNotPersistAUsableChallenge() throws Exception {
         String email = uniqueEmail("delivery-exception");
-        when(emailService.sendTemplateEmail(
-                anyString(),
-                anyString(),
-                anyString(),
-                any(),
-                anyString()
-        )).thenThrow(new IllegalStateException("simulated email boundary failure"));
+        doThrow(new IllegalStateException("simulated email boundary failure"))
+                .when(emailService)
+                .enqueueTemplateEmail(
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        any(),
+                        anyString(),
+                        anyString()
+                );
 
-        mockMvc.perform(post("/api/auth/send-verification-code")
+        MvcResult result = mockMvc.perform(post("/api/auth/send-verification-code")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "email", email,
-                                "purpose", "REGISTRATION",
-                                "password", "integration-password"
+                                "purpose", "REGISTRATION"
                         ))))
-                .andExpect(status().isServiceUnavailable())
-                .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.error").value("EMAIL_SERVICE_UNAVAILABLE"));
-
-        assertThat(verificationCodeRepository.findByEmail(email)).isEmpty();
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andReturn();
+        String handle = responseJson(result).path("challengeHandle").asText();
+        processChallenge(handle);
+        assertFailedChallenge(handle);
     }
 
     @Test
     void passwordResetDeliveryFailureDoesNotPersistAChallenge() throws Exception {
         String email = uniqueEmail("password-reset-delivery");
-        sendRegistrationCode(email);
-        EmailVerificationCode registrationCode = latestCode(
-            email,
-            EmailVerificationCode.VerificationPurpose.REGISTRATION
-        );
-        mockMvc.perform(post("/api/auth/verify-email")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "email", email,
-                                "verificationCode", registrationCode.getVerificationCode()
-                        ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
-
-        when(emailService.sendTemplateEmail(
+        createLocalUser(email, email, "integration-password");
+        doThrow(new EmailDeliveryClientException("DELIVERY_FAILED", false))
+                .when(emailService).enqueueTemplateEmail(
                 anyString(),
                 anyString(),
                 anyString(),
                 any(),
+                anyString(),
                 anyString()
-        )).thenReturn(EmailSendResult.FAILED);
+        );
 
-        mockMvc.perform(post("/api/auth/forgot-password")
+        MvcResult result = mockMvc.perform(post("/api/auth/forgot-password")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of("email", email))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.message").value("发送失败，请稍后重试"));
-
-        assertThat(verificationCodeRepository
-                .findFirstByEmailAndPurposeAndIsUsedFalseOrderByCreatedAtDesc(
-                    email,
-                    EmailVerificationCode.VerificationPurpose.PASSWORD_RESET
-                ))
-            .isEmpty();
+                .andReturn();
+        String handle = responseJson(result).path("challengeHandle").asText();
+        processChallenge(handle);
+        assertFailedChallenge(handle);
     }
 
     @Test
-    void legacyRegisterWithCodeRollsBackChallengeWhenUserCreationFails() throws Exception {
+    void registerWithCodeRollsBackChallengeWhenIdentityAlreadyExists()
+            throws Exception {
         String email = uniqueEmail("registration-rollback");
         userService.getOrCreateOAuthUser(
-            "GITHUB",
-            "registration-rollback-" + UUID.randomUUID(),
-            email,
-            "Existing OAuth User",
-            null
+                "GITHUB",
+                "registration-rollback-" + UUID.randomUUID(),
+                email,
+                "Existing OAuth User",
+                null
         );
-        sendRegistrationCode(email);
-        EmailVerificationCode code = latestCode(
-            email,
-            EmailVerificationCode.VerificationPurpose.REGISTRATION
-        );
+        DeliveredChallenge challenge = sendRegistrationChallenge(email);
 
-        mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "username", email,
-                                "email", email,
-                                "password", "integration-password",
-                                "displayName", "Conflicting Registration",
-                                "verificationCode", code.getVerificationCode()
-                        ))))
-                .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.errorCode").value("INTERNAL_ERROR"));
+        completeRegistrationRequest(
+                challenge.handle(),
+                challenge.code(),
+                email,
+                email,
+                "integration-password",
+                "Conflicting Registration"
+        ).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail")
+                        .value("Registration could not be completed"));
 
-        assertThat(verificationCodeRepository.findById(code.getId()))
-            .get()
-            .satisfies(persisted -> {
-                assertThat(persisted.getIsUsed()).isFalse();
-                assertThat(persisted.getRetryCount()).isZero();
-            });
+        assertThat(verificationCodeRepository.findById(challenge.handle()))
+                .get()
+                .satisfies(persisted -> {
+                    assertThat(persisted.getUsageStatus())
+                            .isEqualTo(EmailVerificationCode.UsageStatus.UNUSED);
+                    assertThat(persisted.getRetryCount()).isZero();
+                });
         assertThat(loginMethodRepository.findByLocalUsername(email)).isEmpty();
     }
 
     @ParameterizedTest
     @MethodSource("rejectedDeliveryResults")
     void rejectedEmailDeliveryDoesNotPersistAUsableChallenge(
-            EmailSendResult result,
-            int expectedStatus) throws Exception {
-        String email = uniqueEmail("delivery-" + result.name().toLowerCase());
-        when(emailService.sendTemplateEmail(
-                anyString(),
-                anyString(),
-                anyString(),
-                any(),
-                anyString()
-        )).thenReturn(result);
+            String errorCode,
+            boolean retryable) throws Exception {
+        String email = uniqueEmail("delivery-" + errorCode.toLowerCase());
+        doThrow(new EmailDeliveryClientException(errorCode, retryable))
+                .when(emailService).enqueueTemplateEmail(
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        any(),
+                        anyString(),
+                        anyString()
+                );
 
-        mockMvc.perform(post("/api/auth/send-verification-code")
+        MvcResult result = mockMvc.perform(post("/api/auth/send-verification-code")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "email", email,
-                                "purpose", "REGISTRATION",
-                                "password", "integration-password"
+                                "purpose", "REGISTRATION"
                         ))))
-                .andExpect(status().is(expectedStatus))
-                .andExpect(jsonPath("$.success").value(false));
-
-        assertThat(verificationCodeRepository.findByEmail(email)).isEmpty();
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andReturn();
+        String handle = responseJson(result).path("challengeHandle").asText();
+        processChallenge(handle);
+        assertFailedChallenge(handle);
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"LOGIN", "PASSWORD_RESET", "UNKNOWN"})
-    void registrationSendEndpointRejectsUnsupportedPurpose(String purpose) throws Exception {
+    void registrationSendEndpointRejectsUnsupportedPurpose(String purpose)
+            throws Exception {
         String email = uniqueEmail("unsupported-purpose");
 
         mockMvc.perform(post("/api/auth/send-verification-code")
@@ -502,12 +437,13 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.error").value("UNSUPPORTED_PURPOSE"));
 
-        verify(emailService, never()).sendTemplateEmail(
-            anyString(),
-            anyString(),
-            anyString(),
-            any(),
-            anyString()
+        verify(emailService, never()).enqueueTemplateEmail(
+                anyString(),
+                anyString(),
+                anyString(),
+                any(),
+                anyString(),
+                anyString()
         );
         assertThat(verificationCodeRepository.findByEmail(email)).isEmpty();
     }
@@ -515,136 +451,258 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
     @Test
     void concurrentVerificationConsumesTheChallengeExactlyOnce() throws Exception {
         String email = uniqueEmail("concurrent-success");
-        sendRegistrationCode(email);
-        EmailVerificationCode code = latestCode(
-            email,
-            EmailVerificationCode.VerificationPurpose.REGISTRATION
+        DeliveredChallenge challenge = sendRegistrationChallenge(email);
+        String payload = registrationPayload(
+                challenge.handle(),
+                challenge.code(),
+                email,
+                email,
+                "integration-password",
+                "Concurrent Success"
         );
-        String payload = objectMapper.writeValueAsString(Map.of(
-            "email", email,
-            "verificationCode", code.getVerificationCode()
-        ));
 
         List<Integer> statuses = runConcurrently(
-            () -> verifyEmailStatus(payload),
-            () -> verifyEmailStatus(payload)
+                () -> verifyEmailStatus(payload),
+                () -> verifyEmailStatus(payload)
         );
 
         assertThat(statuses).containsExactlyInAnyOrder(200, 400);
         assertThat(userRepository.findByEmail(email)).isPresent();
         assertThat(loginMethodRepository.findByLocalUsername(email)).isPresent();
-        assertThat(verificationCodeRepository.findById(code.getId()))
-            .get()
-            .extracting(EmailVerificationCode::getIsUsed)
-            .isEqualTo(true);
+        assertThat(verificationCodeRepository.findById(challenge.handle()))
+                .get()
+                .extracting(EmailVerificationCode::getUsageStatus)
+                .isEqualTo(EmailVerificationCode.UsageStatus.USED);
     }
 
     @Test
-    void verifyEmailDoesNotConsumeAChallengeCreatedAfterAtomicVerification() throws Exception {
+    void verifyEmailDoesNotConsumeAChallengeCreatedAfterAtomicVerification()
+            throws Exception {
         String email = uniqueEmail("verify-email-replacement");
-        sendRegistrationCode(email);
-        EmailVerificationCode original = latestCode(
-            email,
-            EmailVerificationCode.VerificationPurpose.REGISTRATION
-        );
-        AtomicReference<String> replacementId = insertReplacementAfterSuccessfulVerification(
-            email,
-            original
+        DeliveredChallenge original = sendRegistrationChallenge(email);
+        AtomicReference<String> replacementId =
+                insertReplacementAfterSuccessfulVerification(email, original);
+
+        completeRegistration(
+                original,
+                email,
+                email,
+                "integration-password",
+                "Replacement Test"
         );
 
-        mockMvc.perform(post("/api/auth/verify-email")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "email", email,
-                                "verificationCode", original.getVerificationCode()
-                        ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
-
-        assertConsumedOriginalAndPendingReplacement(original.getId(), replacementId);
+        assertConsumedOriginalAndActiveReplacement(
+                original.handle(),
+                replacementId
+        );
     }
 
     @Test
-    void legacyRegisterDoesNotConsumeAChallengeCreatedAfterAtomicVerification() throws Exception {
-        String email = uniqueEmail("legacy-register-replacement");
-        sendRegistrationCode(email);
-        EmailVerificationCode original = latestCode(
-            email,
-            EmailVerificationCode.VerificationPurpose.REGISTRATION
-        );
-        AtomicReference<String> replacementId = insertReplacementAfterSuccessfulVerification(
-            email,
-            original
-        );
+    void registerEndpointDoesNotConsumeAReplacementChallenge() throws Exception {
+        String email = uniqueEmail("register-replacement");
+        DeliveredChallenge original = sendRegistrationChallenge(email);
+        AtomicReference<String> replacementId =
+                insertReplacementAfterSuccessfulVerification(email, original);
 
         MvcResult registerResult = mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "username", email,
-                                "email", email,
-                                "password", "integration-password",
-                                "displayName", "Legacy Registration",
-                                "verificationCode", original.getVerificationCode()
-                        ))))
+                        .content(registrationPayload(
+                                original.handle(),
+                                original.code(),
+                                email,
+                                email,
+                                "integration-password",
+                                "Register Replacement"
+                        )))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.user.email").value(email))
                 .andReturn();
         assertTokenCookies(registerResult);
 
-        assertConsumedOriginalAndPendingReplacement(original.getId(), replacementId);
+        assertConsumedOriginalAndActiveReplacement(
+                original.handle(),
+                replacementId
+        );
     }
 
     @Test
     void concurrentInvalidAttemptsDoNotLoseRetryCount() throws Exception {
         String email = uniqueEmail("concurrent-invalid");
-        sendRegistrationCode(email);
-        EmailVerificationCode code = latestCode(
-            email,
-            EmailVerificationCode.VerificationPurpose.REGISTRATION
-        );
-        String invalidCode = "000000".equals(code.getVerificationCode())
-            ? "111111"
-            : "000000";
-        String payload = objectMapper.writeValueAsString(Map.of(
-            "email", email,
-            "verificationCode", invalidCode
-        ));
-
-        List<Integer> remainingAttempts = runConcurrently(
-            () -> verifyEmailRemainingAttempts(payload),
-            () -> verifyEmailRemainingAttempts(payload)
+        DeliveredChallenge challenge = sendRegistrationChallenge(email);
+        String payload = registrationPayload(
+                challenge.handle(),
+                differentCode(challenge.code()),
+                email,
+                email,
+                "integration-password",
+                "Concurrent Invalid"
         );
 
-        assertThat(remainingAttempts).containsExactlyInAnyOrder(1, 2);
-        assertThat(verificationCodeRepository.findById(code.getId()))
-            .get()
-            .extracting(EmailVerificationCode::getRetryCount)
-            .isEqualTo(2);
+        List<Integer> statuses = runConcurrently(
+                () -> verifyEmailStatus(payload),
+                () -> verifyEmailStatus(payload)
+        );
+
+        assertThat(statuses).containsOnly(400);
+        assertThat(verificationCodeRepository.findById(challenge.handle()))
+                .get()
+                .extracting(EmailVerificationCode::getRetryCount)
+                .isEqualTo(2);
     }
 
-    private void sendRegistrationCode(String email) throws Exception {
-        mockMvc.perform(post("/api/auth/send-verification-code")
+    private DeliveredChallenge sendRegistrationChallenge(String email)
+            throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/auth/send-verification-code")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "email", email,
-                                "purpose", "REGISTRATION",
-                                "password", "integration-password",
-                                "displayName", "Email Boundary User"
+                                "purpose", "REGISTRATION"
                         ))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.challengeHandle").isNotEmpty())
+                .andExpect(jsonPath("$.expiresIn").value(120))
+                .andExpect(jsonPath("$.resendAfter").value(7))
+                .andReturn();
+        JsonNode body = responseJson(result);
+        processChallenge(body.path("challengeHandle").asText());
+        return new DeliveredChallenge(
+                body.path("challengeHandle").asText(),
+                deliveredCode(email, REGISTRATION_EMAIL_TYPE)
+        );
     }
 
-    private EmailVerificationCode latestCode(
+    private DeliveredChallenge requestPasswordReset(String email) throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/auth/forgot-password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("email", email))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.challengeHandle").isNotEmpty())
+                .andExpect(jsonPath("$.expiresIn").value(120))
+                .andExpect(jsonPath("$.resendAfter").value(7))
+                .andReturn();
+        String handle = responseJson(result).path("challengeHandle").asText();
+        processChallenge(handle);
+        return new DeliveredChallenge(
+                handle,
+                deliveredCode(email, PASSWORD_RESET_EMAIL_TYPE)
+        );
+    }
+
+    private MvcResult completeRegistration(
+            DeliveredChallenge challenge,
             String email,
-            EmailVerificationCode.VerificationPurpose purpose) {
-        return verificationCodeRepository
-                .findFirstByEmailAndPurposeAndIsUsedFalseOrderByCreatedAtDesc(email, purpose)
+            String username,
+            String password,
+            String displayName) throws Exception {
+        return completeRegistrationRequest(
+                challenge.handle(),
+                challenge.code(),
+                email,
+                username,
+                password,
+                displayName
+        ).andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.user.id").isNotEmpty())
+                .andExpect(jsonPath("$.user.username").value(username))
+                .andExpect(jsonPath("$.user.email").value(email))
+                .andExpect(jsonPath("$.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.refreshToken").isNotEmpty())
+                .andReturn();
+    }
+
+    private org.springframework.test.web.servlet.ResultActions
+            completeRegistrationRequest(
+                    String handle,
+                    String code,
+                    String email,
+                    String username,
+                    String password,
+                    String displayName) throws Exception {
+        return mockMvc.perform(post("/api/auth/verify-email")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(registrationPayload(
+                        handle,
+                        code,
+                        email,
+                        username,
+                        password,
+                        displayName
+                )));
+    }
+
+    private String registrationPayload(
+            String handle,
+            String code,
+            String email,
+            String username,
+            String password,
+            String displayName) throws Exception {
+        return objectMapper.writeValueAsString(Map.of(
+                "challengeHandle", handle,
+                "verificationCode", code,
+                "email", email,
+                "username", username,
+                "password", password,
+                "displayName", displayName
+        ));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions login(
+            String username,
+            String password) throws Exception {
+        return mockMvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of(
+                        "username", username,
+                        "password", password
+                ))));
+    }
+
+    private String deliveredCode(String email, String emailType) {
+        return java.util.Objects.requireNonNull(
+                deliveredCodes.get(deliveryKey(email, emailType))
+        );
+    }
+
+    private void processChallenge(String challengeId) {
+        EmailDeliveryOutbox outbox = outboxRepository
+                .findByChallengeId(challengeId)
                 .orElseThrow();
+        assertThat(outboxProcessor.processOne(outbox.getId())).isTrue();
+    }
+
+    private void assertFailedChallenge(String challengeId) {
+        assertThat(verificationCodeRepository.findById(challengeId))
+                .get()
+                .satisfies(challenge -> {
+                    assertThat(challenge.getDeliveryStatus())
+                            .isEqualTo(EmailVerificationCode.DeliveryStatus.FAILED);
+                    assertThat(challenge.getUsageStatus())
+                            .isEqualTo(EmailVerificationCode.UsageStatus.INVALIDATED);
+                });
+        assertThat(outboxRepository.findByChallengeId(challengeId))
+                .get()
+                .extracting(EmailDeliveryOutbox::getStatus)
+                .isEqualTo(EmailDeliveryOutbox.Status.FAILED);
+    }
+
+    private String deliveryKey(String email, String emailType) {
+        return email + "\n" + emailType;
+    }
+
+    private String differentCode(String code) {
+        return "000000".equals(code) ? "111111" : "000000";
     }
 
     private String uniqueEmail(String prefix) {
         return prefix + "-" + UUID.randomUUID() + "@example.invalid";
+    }
+
+    private JsonNode responseJson(MvcResult result) throws Exception {
+        return objectMapper.readTree(result.getResponse().getContentAsByteArray());
     }
 
     private void assertTokenCookies(MvcResult result) {
@@ -666,71 +724,104 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
 
     private AtomicReference<String> insertReplacementAfterSuccessfulVerification(
             String email,
-            EmailVerificationCode original) {
+            DeliveredChallenge original) {
         AtomicReference<String> replacementId = new AtomicReference<>();
         doAnswer(invocation -> {
             EmailVerificationCodeService.VerificationResult result =
-                (EmailVerificationCodeService.VerificationResult) invocation.callRealMethod();
+                    (EmailVerificationCodeService.VerificationResult)
+                            invocation.callRealMethod();
             if (result.isSuccess()) {
-                String replacementCode = "999999".equals(original.getVerificationCode())
-                    ? "888888"
-                    : "999999";
-                EmailVerificationCode replacement = EmailVerificationCode.builder()
-                    .id(UUID.randomUUID().toString())
-                    .email(email)
-                    .verificationCode(replacementCode)
-                    .purpose(EmailVerificationCode.VerificationPurpose.REGISTRATION)
-                    .expiresAt(Instant.now().plusSeconds(120))
-                    .retryCount(0)
-                    .isUsed(false)
-                    .build();
+                String handle = UUID.randomUUID().toString();
+                String replacementCode = differentCode(original.code());
+                String keyId = codeProtector.currentKeyId();
+                EmailVerificationCode replacement =
+                        EmailVerificationCode.builder()
+                                .id(handle)
+                                .email(email)
+                                .codeDigest(codeProtector.digest(
+                                        handle,
+                                        replacementCode,
+                                        keyId
+                                ))
+                                .codeKeyId(keyId)
+                                .purpose(EmailVerificationCode.VerificationPurpose
+                                        .REGISTRATION)
+                                .deliveryStatus(EmailVerificationCode.DeliveryStatus
+                                        .ACTIVE)
+                                .usageStatus(EmailVerificationCode.UsageStatus.UNUSED)
+                                .idempotencyKey("test-replacement:" + handle)
+                                .expiresAt(Instant.now().plusSeconds(120))
+                                .deliveryDeadline(Instant.now().plusSeconds(120))
+                                .acceptedAt(Instant.now())
+                                .activatedAt(Instant.now())
+                                .retryCount(0)
+                                .build();
                 verificationCodeRepository.saveAndFlush(replacement);
                 replacementId.set(replacement.getId());
             }
             return result;
         }).when(verificationCodeService).verifyCode(
-            email,
-            original.getVerificationCode(),
-            EmailVerificationCode.VerificationPurpose.REGISTRATION
+                original.handle(),
+                email,
+                original.code(),
+                EmailVerificationCode.VerificationPurpose.REGISTRATION
         );
         return replacementId;
     }
 
-    private void assertConsumedOriginalAndPendingReplacement(
+    private void assertConsumedOriginalAndActiveReplacement(
             String originalId,
             AtomicReference<String> replacementId) {
         assertThat(replacementId.get()).isNotNull();
         assertThat(verificationCodeRepository.findById(originalId))
-            .get()
-            .extracting(EmailVerificationCode::getIsUsed)
-            .isEqualTo(true);
+                .get()
+                .extracting(EmailVerificationCode::getUsageStatus)
+                .isEqualTo(EmailVerificationCode.UsageStatus.USED);
         assertThat(verificationCodeRepository.findById(replacementId.get()))
-            .get()
-            .satisfies(replacement -> {
-                assertThat(replacement.getIsUsed()).isFalse();
-                assertThat(replacement.getRetryCount()).isZero();
-            });
+                .get()
+                .satisfies(replacement -> {
+                    assertThat(replacement.getUsageStatus())
+                            .isEqualTo(EmailVerificationCode.UsageStatus.UNUSED);
+                    assertThat(replacement.getDeliveryStatus())
+                            .isEqualTo(EmailVerificationCode.DeliveryStatus.ACTIVE);
+                    assertThat(replacement.getRetryCount()).isZero();
+                });
     }
 
     private int verifyEmailStatus(String payload) throws Exception {
         return mockMvc.perform(post("/api/auth/verify-email")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(payload))
-            .andReturn()
-            .getResponse()
-            .getStatus();
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andReturn()
+                .getResponse()
+                .getStatus();
     }
 
-    private int verifyEmailRemainingAttempts(String payload) throws Exception {
-        var response = mockMvc.perform(post("/api/auth/verify-email")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(payload))
-            .andReturn()
-            .getResponse();
-        assertThat(response.getStatus()).isEqualTo(400);
-        return objectMapper.readTree(response.getContentAsString())
-            .path("remainingAttempts")
-            .asInt();
+    private UserEntity createLocalUser(
+            String username,
+            String email,
+            String password) {
+        UserEntity user = new UserEntity();
+        user.setId(UUID.randomUUID().toString());
+        user.setUsername(username);
+        user.setEmail(email);
+        user.setEmailIdentityType(UserEntity.EmailIdentityType.VERIFIED_CONTACT);
+        user.setDisplayName("Email Authentication User");
+        user.setEmailVerified(true);
+        user.setEnabled(true);
+        user.setAuthorities(new HashSet<>(Set.of("ROLE_USER")));
+
+        UserLoginMethod method = UserLoginMethod.builder()
+                .id(UUID.randomUUID().toString())
+                .user(user)
+                .authProvider(UserLoginMethod.AuthProvider.LOCAL)
+                .localUsername(username)
+                .localPasswordHash(passwordEncoder.encode(password))
+                .isPrimary(true)
+                .isVerified(true)
+                .build();
+        user.addLoginMethod(method);
+        return userRepository.saveAndFlush(user);
     }
 
     @SafeVarargs
@@ -744,7 +835,9 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                 futures.add(executor.submit(() -> {
                     ready.countDown();
                     if (!start.await(5, TimeUnit.SECONDS)) {
-                        throw new IllegalStateException("Concurrent test start timed out");
+                        throw new IllegalStateException(
+                                "Concurrent test start timed out"
+                        );
                     }
                     return task.call();
                 }));
@@ -763,11 +856,24 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
         }
     }
 
-    private static Stream<org.junit.jupiter.params.provider.Arguments> rejectedDeliveryResults() {
+    private static Stream<org.junit.jupiter.params.provider.Arguments>
+            rejectedDeliveryResults() {
         return Stream.of(
-            org.junit.jupiter.params.provider.Arguments.of(EmailSendResult.FAILED, 503),
-            org.junit.jupiter.params.provider.Arguments.of(EmailSendResult.RATE_LIMITED, 429),
-            org.junit.jupiter.params.provider.Arguments.of(EmailSendResult.INVALID_EMAIL, 400)
+                org.junit.jupiter.params.provider.Arguments.of(
+                        "DELIVERY_FAILED",
+                        false
+                ),
+                org.junit.jupiter.params.provider.Arguments.of(
+                        "RATE_LIMITED",
+                        true
+                ),
+                org.junit.jupiter.params.provider.Arguments.of(
+                        "INVALID_EMAIL",
+                        false
+                )
         );
+    }
+
+    private record DeliveredChallenge(String handle, String code) {
     }
 }

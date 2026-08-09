@@ -1,19 +1,17 @@
 package org.dddml.uniauth.controller;
 
-import org.dddml.uniauth.config.EmailRegistrationProperties;
-import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.repository.UserRepository;
-import org.dddml.uniauth.service.EmailVerificationCodeService;
 import org.dddml.uniauth.service.JwtTokenService;
-import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.service.Web3AuthService;
 import org.dddml.uniauth.service.AuthCookieService;
 import org.dddml.uniauth.service.AuthenticationLogoutService;
+import org.dddml.uniauth.service.AuthRateLimiter;
+import org.dddml.uniauth.service.CredentialAuthenticationService;
+import org.dddml.uniauth.service.RegistrationService;
+import org.dddml.uniauth.service.TokenIssuanceFacade;
 import org.dddml.uniauth.service.TokenValidationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
@@ -29,15 +27,11 @@ class RemovedDangerousEndpointsTest {
     @BeforeEach
     void setUp() {
         AuthController authController = new AuthController(
-                mock(UserService.class),
-                mock(AuthenticationManager.class),
-                mock(UserLoginMethodRepository.class),
-                mock(PasswordEncoder.class),
-                mock(JwtTokenService.class),
-                mock(EmailRegistrationProperties.class),
-                mock(EmailVerificationCodeService.class),
-                mock(AuthCookieService.class),
-                mock(AuthenticationLogoutService.class)
+                mock(RegistrationService.class),
+                mock(CredentialAuthenticationService.class),
+                mock(TokenIssuanceFacade.class),
+                mock(AuthenticationLogoutService.class),
+                mock(AuthRateLimiter.class)
         );
         ApiAuthController apiAuthController = new ApiAuthController(
                 mock(UserRepository.class),

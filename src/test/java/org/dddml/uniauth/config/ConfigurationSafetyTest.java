@@ -84,6 +84,8 @@ class ConfigurationSafetyTest {
                 .isEqualTo(true);
         assertThat(property("application.yml", "spring.flyway.out-of-order"))
                 .isEqualTo(false);
+        assertThat(property("application.yml", "spring.flyway.group"))
+                .isEqualTo(true);
 
         for (String profile : List.of("dev", "test", "prod")) {
             assertThat(property("application-" + profile + ".yml", "spring.jpa.hibernate.ddl-auto"))
@@ -137,7 +139,8 @@ class ConfigurationSafetyTest {
                             "V2__harden_login_method_invariants.sql",
                             "V3__add_login_method_revision.sql",
                             "V4__align_entity_constraints_and_indexes.sql",
-                            "V5__bind_web3_nonce_to_siwe_message.sql"
+                            "V5__bind_web3_nonce_to_siwe_message.sql",
+                            "V6__harden_email_identity_and_challenges.sql"
                     );
         }
     }

@@ -29,7 +29,12 @@ export class AuthService {
     email: string;
     password: string;
     displayName: string;
-  }): Promise<User> {
+  }): Promise<{
+    requireEmailVerification: boolean;
+    username: string;
+    email: string;
+    message: string;
+  }> {
     try {
       const url = `${API_BASE_URL}/api/auth/register`;
       console.log('Register URL:', url);
@@ -48,15 +53,11 @@ export class AuthService {
    */
   static async login(username: string, password: string): Promise<any> {
     try {
-      const params = new URLSearchParams();
-      params.append('username', username);
-      params.append('password', password);
-
-      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, params, {
-        withCredentials: true,
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
+      const response = await axios.post(`${API_BASE_URL}/api/auth/login`, {
+        username,
+        password,
+      }, {
+        withCredentials: true
       });
       return response.data;
     } catch (error) {
@@ -407,24 +408,13 @@ export class AuthService {
 
   // ==================== 邮箱验证相关 API ====================
 
-  static async getEmailStatus(email: string): Promise<{ email: string; hasPendingVerification: boolean }> {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/auth/email/status/${encodeURIComponent(email)}`);
-      return response.data;
-    } catch (error) {
-      console.error('Get email status error:', error);
-      return { email, hasPendingVerification: false };
-    }
-  }
-
   static async sendVerificationCode(data: {
     email: string;
-    purpose?: 'REGISTRATION' | 'LOGIN' | 'PASSWORD_RESET';
-    password?: string;
-    displayName?: string;
+    purpose: 'REGISTRATION';
   }): Promise<{
     success: boolean;
     message: string;
+    challengeHandle: string;
     expiresIn: number;
     resendAfter: number;
   }> {
@@ -438,7 +428,11 @@ export class AuthService {
   }
 
   static async verifyEmail(data: {
+    challengeHandle: string;
+    username: string;
     email: string;
+    password: string;
+    displayName: string;
     verificationCode: string;
   }): Promise<{
     success: boolean;
@@ -465,9 +459,9 @@ export class AuthService {
   static async requestPasswordReset(email: string): Promise<{
     success: boolean;
     message: string;
+    challengeHandle: string;
     expiresIn: number;
     resendAfter: number;
-    errorCode?: string;
   }> {
     try {
       const response = await axios.post(`${API_BASE_URL}/api/auth/forgot-password`, { email });
@@ -479,6 +473,7 @@ export class AuthService {
   }
 
   static async resetPassword(data: {
+    challengeHandle: string;
     email: string;
     verificationCode: string;
     newPassword: string;

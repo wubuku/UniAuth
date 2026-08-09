@@ -46,7 +46,8 @@ class EmailServiceRuntimeGuardTest {
             "spring.flyway.baseline-on-migrate", "true",
             "spring.flyway.clean-disabled", "false",
             "spring.flyway.validate-on-migrate", "false",
-            "spring.flyway.out-of-order", "true"
+            "spring.flyway.out-of-order", "true",
+            "spring.flyway.group", "false"
         );
 
         unsafeOverrides.forEach((property, value) ->
@@ -641,6 +642,7 @@ class EmailServiceRuntimeGuardTest {
         environment.setProperty("spring.flyway.validate-migration-naming", "true");
         environment.setProperty("spring.flyway.validate-on-migrate", "true");
         environment.setProperty("spring.flyway.out-of-order", "false");
+        environment.setProperty("spring.flyway.group", "true");
         environment.setProperty(
             "spring.flyway.locations",
             "classpath:db/migration/postgresql"

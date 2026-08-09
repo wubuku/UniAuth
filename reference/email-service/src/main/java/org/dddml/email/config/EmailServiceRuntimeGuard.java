@@ -190,6 +190,11 @@ public class EmailServiceRuntimeGuard {
             false,
             "SPRING_FLYWAY_OUT_OF_ORDER"
         );
+        requireStrictBooleanProperty(
+            "spring.flyway.group",
+            true,
+            "SPRING_FLYWAY_GROUP"
+        );
         requireExactProperty(
             "spring.flyway.locations",
             "classpath:db/migration/postgresql",

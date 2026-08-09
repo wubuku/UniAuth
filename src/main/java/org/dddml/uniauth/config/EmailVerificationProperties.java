@@ -2,6 +2,8 @@ package org.dddml.uniauth.config;
 
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.validation.annotation.Validated;
@@ -11,8 +13,8 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 public class EmailVerificationProperties {
 
-    @Min(1)
-    @Max(10)
+    @Min(6)
+    @Max(6)
     private int codeLength = 6;
 
     @Min(1)
@@ -28,6 +30,14 @@ public class EmailVerificationProperties {
     @Min(0)
     @Max(86400)
     private int resendCooldownSeconds = 60;
+
+    @NotBlank
+    @Size(min = 32, max = 1024)
+    private String hmacKey = "local-only-email-verification-key-change-me";
+
+    @NotBlank
+    @Size(max = 64)
+    private String hmacKeyId = "local-key-1";
 
     public int getCodeLength() {
         return codeLength;
@@ -67,5 +77,21 @@ public class EmailVerificationProperties {
 
     public void setResendCooldownSeconds(int resendCooldownSeconds) {
         this.resendCooldownSeconds = resendCooldownSeconds;
+    }
+
+    public String getHmacKey() {
+        return hmacKey;
+    }
+
+    public void setHmacKey(String hmacKey) {
+        this.hmacKey = hmacKey;
+    }
+
+    public String getHmacKeyId() {
+        return hmacKeyId;
+    }
+
+    public void setHmacKeyId(String hmacKeyId) {
+        this.hmacKeyId = hmacKeyId;
     }
 }

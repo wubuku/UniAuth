@@ -58,7 +58,7 @@ UniAuth/邮件服务双进程 shared-schema E2E，并证明表/序列/索引无�
 - `scripts/test-flyway-baseline-guard.sh`：dirty schema 拒绝、V2 坏数据失败关闭和
   forward-fix；在 V1 migrated 应用启用 API key 后仍拒绝重复同名凭据。
 - `scripts/test-backup-restore-rehearsal.sh`：显式 shared-uniauth 选择性备份、排除
-  UniAuth 表、精确 V1-V3 history（含未知 versioned/repeatable 拒绝）、owner-only
+  UniAuth 表、精确 V1-V4 history（含未知 versioned/repeatable 拒绝）、owner-only
   archive、空库恢复和恢复后真实应用继续写入。
 
 ### 前端
@@ -123,6 +123,11 @@ Cookie 误当成跨域 Bearer transport。详细复现见
 
 ### 收敛检查
 
+通常交付遵守下面的三轮规则。当前冻结的最终加固 F1-F5 使用一次性阶段收敛：
+F1-F4 各轮只需通过该轮完整自动化验收，不分别执行三轮检查；F5 完成全部剩余实现并
+通过统一阶段门禁后，再对 F1-F5 的整体实现、测试、配置、迁移和文档执行唯一一次
+连续三轮无修改检查。验收中发现的问题仍须立即修复并重跑受影响门槛。
+
 三轮实现检查只能在以下基础门槛全部通过后开始：
 
 1. 后端本任务相关集成测试通过。
@@ -166,18 +171,19 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 > 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1、Batch B2a、
 > Batch B2b、邮件服务边界、邮箱 challenge 投递接受/原子消费、敏感响应、API key
 > 单值鉴权、认证 Cookie/浏览器 refresh 存储预备切片，以及当前格式 refresh
-> replay/logout 持久撤销、CORS 单一来源和 OAuth2 redirect/Referer 信任边界切片；
+> replay/logout 持久撤销、CORS 单一来源、OAuth2 redirect/Referer 信任边界和
+> F1 邮箱身份完整性切片；
 > 不代表 H1.4-H8、完整认证正确性或生产就绪。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 200/200；0 failures/errors/skips |
+| `mvn test` | 通过 | 212/212；0 failures/errors/skips |
 | `scripts/test-http-e2e.sh` | 通过 | 16/16；真实应用、独立 PostgreSQL、四条安全链 CORS allow/deny、refresh replay、logout 后 access/refresh/introspection 拒绝与 blacklist 行形状，以及既有邮件、Web3、JWT、登录方式和重启路径 |
-| `scripts/test-flyway-baseline-guard.sh` | 通过 | 14/14；新增非法 token blacklist pre-history 拒绝，并覆盖 exact schema、V2/V4 初始及 apply 前数据预检、V5 history/message 列、非法 email state、post-baseline 失败恢复与其他拒绝/清理路径 |
-| Flyway integration | 通过 | fresh V1→V5、existing baseline V1→V5、V3→V5、Hibernate validate、Session、checksum/failure recovery |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 16/16；覆盖 exact schema、V2/V4/V6 初始及 apply 前只读预检、PostgreSQL major、确认 token、V2-V6 grouped rollback 与临时凭据清理 |
+| Flyway integration | 通过 | fresh V1→V6、existing baseline V1→V6、V3→V6、Hibernate validate、Session、checksum/failure recovery |
 | Shared-schema process E2E | 通过 | 4/4；UniAuth-first 与 email-first 两种启动顺序、独立 history、受控 baseline V0、重启与业务表共存 |
-| 邮件参考服务 | 通过 | 148 tests；22 个 PostgreSQL/GreenMail ApplicationContext E2E、1 个 shared-schema ApplicationContext test、6 个 shared-schema bootstrap tests、5 个 PostgreSQL repository constraint tests、30 个 Java runtime guard tests、1 个 PostgreSQL-only Spring Context 启动 guard test；Shell runtime 43/43、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；Flyway schema-owner、migration discovery/naming、精确 peer history、半成品 peer、队列生命周期行形状、database layout 和非 PostgreSQL datasource 拒绝矩阵通过 |
+| 邮件参考服务 | 通过 | 150 tests；Shell runtime 44/44、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；Flyway V1-V4、idempotency identity、schema-owner、migration discovery/naming、精确 peer history、半成品 peer、队列生命周期行形状、database layout 和非 PostgreSQL datasource 拒绝矩阵通过 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
@@ -187,7 +193,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `npm run test:e2e` | 通过 | 28/28 Chrome-channel Mock Playwright tests；OAuth provider 导航不附加客户端 redirect/state，同页面与同源双标签页只消费一次 refresh，logout 保留无关存储，跨标签页 logout 不会被迟到 refresh continuation 恢复 |
 | 邮箱登录浏览器 E2E | 通过 | 1/1；真实 PostgreSQL/UniAuth/Vite/Python/stub，注册、验证码、同源回跳、跨 hostname Bearer、`credentials: omit`、资源域哨兵 Cookie 不随请求发送、邮箱密码再次登录 |
 | Python | 通过 | 18/18 离线 RSA/JWKS/Flask tests；refresh、缺失 `type`/`jti` 和非法 Bearer 格式失败关闭 |
-| 邮件 REST stub contract | 通过 | 9/9；既有 API key/health/接受/拒绝/限流/坏请求/chunked/header 契约，加上既有文件权限收紧为 `0600` 的临时捕获文件 |
+| 邮件 REST stub contract | 通过 | 12/12；API key/health/接受/拒绝/限流/坏请求、idempotent retry/conflict、delivery status、response-lost recovery 和安全临时捕获文件 |
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 | Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
 
@@ -197,7 +203,7 @@ disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列�
 参考服务的 `email_queue`；第 13/16、14/16 步骤为获得稳定的 `503/429` 失败夹具
 而重启应用并切换到受控 loopback 邮件 REST stub。它验证：
 
-- Flyway V1/V2/V3/V4/V5 和自定义 history table。
+- Flyway V1/V2/V3/V4/V5/V6 和自定义 history table。
 - 应用重启后的 migration 幂等和用户数据保留。
 - `/api/auth/**` allowlist 与资源服务器拒绝边界。
 - 四条 Security filter chain 共用同一 CORS source，允许 origin 的 credentialed
@@ -208,8 +214,9 @@ disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列�
   upsert 覆盖、原子消费和钱包绑定。
 - 登录方式 primary/delete/最后方式拒绝，以及真实并发 mutation 的 `200/409` 和最终
   “至少一个登录方式、恰好一个 primary”不变量。
-- 邮箱注册、动态有效期/cooldown、真实参考服务接受后持久化 challenge、同步拒绝/限流
-  失败关闭、不支持 purpose 拒绝、重试耗尽和密码重置。
+- 邮箱注册、canonical identity、opaque handle、HMAC challenge、唯一 active
+  challenge、transactional outbox、真实参考服务 idempotent 接受/status 恢复、
+  同步拒绝/限流失败关闭、不支持 purpose 拒绝、重试耗尽和密码重置。
 - logout cookie 清理、Flyway history 和最终数据库不变量。
 
 认证 Cookie/浏览器 refresh 存储预备切片还验证：
@@ -245,24 +252,24 @@ UniAuth 主应用的邮件相关门禁验证 ApplicationContext、PostgreSQL 状
 
 - `EmailAuthenticationIntegrationTest` 使用完整 Spring ApplicationContext、MockMvc、
   Testcontainers PostgreSQL 和真实 repository/service Bean；只在最外层 `EmailService`
-  边界使用可控 mock，覆盖接受/拒绝结果、动态配置、原子消费和 retry-count CAS；
-  两个回归场景在原子消费后插入更新 challenge，分别验证 `/verify-email` 和
-  `/register` 不会再按 email/purpose 二次消费该记录。
+  边界使用可控 mock，覆盖 canonical email、HMAC challenge、opaque handle、唯一
+  active challenge、outbox 接受/失败、原子消费和 retry-count CAS。
 - `RestTemplateEmailServiceIntegrationTest` 使用 Spring context 中的真实邮件 client Bean
   和 loopback HTTP server，覆盖 API key、context path、超时和 429 映射。
 - Shell HTTP E2E 的正常邮件路径启动真实参考服务和真实应用，通过生产
-  `RestTemplate` 调用链与两个独立 PostgreSQL 验证模板已入参考服务队列；失败/限流
-  映射路径再切换到受控 stub，验证数据库中不留下失败 challenge。
+  `RestTemplate` 调用链与两个独立 PostgreSQL 验证模板、idempotency identity、
+  outbox reconciliation 和终态失败；失败/限流映射路径再切换到受控 stub，验证
+  不会留下可用 challenge。
 - `scripts/test_email_service_stub.py` 独立固定 stub 的 API key 单值/重复 header、
   health、接受、拒绝、限流、坏请求和 chunked request 兼容性。
 - 外部服务返回 `success=true` 仍只表示接受或入队，不证明收件箱已收到邮件。
-- 外部服务已接受后，本地 challenge 保存事务失败的窗口，以及异步 delivery 失败后
-  撤销 challenge，仍需要 outbox 或 delivery/challenge 双状态机解决。
+- transactional outbox 和 delivery/challenge 双状态机已覆盖外部接受后的响应丢失、
+  重启恢复与终态失败；默认门禁仍不证明真实供应商最终收件、退信或外部 TLS。
 
 独立参考实现补充了默认无外部副作用的组件级 E2E：
 
 - 完整 Spring ApplicationContext 和随机真实 HTTP 端口。
-- Flyway V1/V2/V3、独立 history table、PostgreSQL 16 和 Hibernate `validate`。
+- Flyway V1/V2/V3/V4、独立 history table、PostgreSQL 16 和 Hibernate `validate`。
 - 两个必需模板经过真实 service/repository/event Bean、Thymeleaf、队列和 GreenMail 收件。
 - API key、输入和分页边界、未知模板拒绝、SMTP 连接失败后的失败日志和可重试状态。
 - 配置 API key 时，真实 Tomcat HTTP 入口只接受恰好一个精确匹配的
@@ -638,7 +645,8 @@ HTTP E2E、Flyway baseline guard、frontend lint/type/build/Mock Playwright、�
 4. 失败路径也有覆盖。
 5. 结果可由其他开发者在隔离环境复现。
 6. 与改动范围对应的后端集成测试、前端构建/浏览器测试或跨端验证没有被静默跳过。
-7. 三轮收敛检查是在基础验证门槛通过后执行，并且确实连续三轮无修改。
+7. 适用三轮规则时，收敛检查是在基础验证门槛通过后执行，并且确实连续三轮无修改；
+   最终加固 F1-F4 按本页明确例外，只记录该轮完整自动化验收。
 
 过去的验证记录保留为 Historical，不自动继承为当前版本状态。
 

@@ -66,14 +66,31 @@ public class EmailController {
             request.getSubject(),
             request.getTemplateName(),
             request.getVariables(),
-            request.getEmailType()
+            request.getEmailType(),
+            request.getIdempotencyKey()
         );
 
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         response.put("message", "Template email enqueued");
         response.put("queueId", queue.getId());
+        response.put("status", queue.getStatus());
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/delivery/status")
+    public ResponseEntity<Map<String, Object>> getDeliveryStatus(
+            @NotBlank
+            @Size(max = 128)
+            @Pattern(regexp = "^[A-Za-z0-9._:-]+$")
+            @RequestParam String idempotencyKey) {
+        return emailQueueService.findByIdempotencyKey(idempotencyKey)
+            .map(queue -> ResponseEntity.ok(Map.<String, Object>of(
+                "success", true,
+                "queueId", queue.getId(),
+                "status", queue.getStatus()
+            )))
+            .orElse(ResponseEntity.notFound().build());
     }
 
     @PostMapping("/batch")
@@ -278,6 +295,10 @@ public class EmailController {
         @Size(max = 50)
         @Pattern(regexp = "^[A-Za-z0-9_-]*$")
         private String emailType;
+
+        @Size(max = 128)
+        @Pattern(regexp = "^[A-Za-z0-9._:-]+$")
+        private String idempotencyKey;
     }
 
     @Getter

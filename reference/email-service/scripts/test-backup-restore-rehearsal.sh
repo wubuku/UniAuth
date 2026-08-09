@@ -127,7 +127,9 @@ database_fingerprint() {
                         created_time::text,
                         updated_time::text,
                         COALESCE(processed_time::text, '<null>'),
-                        COALESCE(metadata, '<null>')
+                        COALESCE(metadata, '<null>'),
+                        COALESCE(idempotency_key, '<null>'),
+                        COALESCE(request_fingerprint, '<null>')
                     ),
                     E'\n'
                     ORDER BY id
@@ -406,8 +408,8 @@ echo "1/10 Create a Flyway-owned source database with all queue lifecycle states
 start_application "$SOURCE_DATABASE" shared-uniauth
 wait_for_application
 [ "$(db_value "$SOURCE_DATABASE" \
-    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "3" ] \
-    || fail "source database did not apply Flyway V1 through V3"
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
+    || fail "source database did not apply Flyway V1 through V4"
 db_command "$SOURCE_DATABASE" -c "
     INSERT INTO email_queue (
         recipient, subject, html_content, email_type, status, priority,
@@ -464,6 +466,11 @@ db_command "$SOURCE_DATABASE" -c "
         'completed@example.test',
         'failed@example.test'
     );
+
+    UPDATE email_queue
+    SET idempotency_key = 'backup-pending-1',
+        request_fingerprint = repeat('a', 64)
+    WHERE recipient = 'pending@example.test';
 " >/dev/null
 [ "$(db_value "$SOURCE_DATABASE" "SELECT count(*) FROM email_queue;")" = "4" ] \
     || fail "source queue fixture was not created"
@@ -522,7 +529,7 @@ if run_backup \
         >"$TEMP_DIR/history.out" 2>"$TEMP_DIR/history.err"; then
     fail "backup accepted duplicate V2 history with missing V3"
 fi
-grep -Fq "email service Flyway history must match the expected V1 through V3 chain" \
+grep -Fq "email service Flyway history must match the expected V1 through V4 chain" \
     "$TEMP_DIR/history.err" \
     || fail "incomplete history rejection did not report the Flyway guard"
 assert_no_backup_artifacts "$history_dir"
@@ -547,10 +554,10 @@ db_command "$SOURCE_DATABASE" -c "
     )
     SELECT
         max(installed_rank) + 1,
-        '4',
+        '5',
         'unexpected future migration',
         'SQL',
-        'V4__unexpected_future_migration.sql',
+        'V5__unexpected_future_migration.sql',
         0,
         current_user,
         0,
@@ -568,13 +575,13 @@ if run_backup \
         2>"$TEMP_DIR/unexpected-history.err"; then
     fail "backup accepted an unknown future Flyway migration"
 fi
-grep -Fq "email service Flyway history must match the expected V1 through V3 chain" \
+grep -Fq "email service Flyway history must match the expected V1 through V4 chain" \
     "$TEMP_DIR/unexpected-history.err" \
     || fail "unexpected history rejection did not report the Flyway guard"
 assert_no_backup_artifacts "$history_dir"
 db_command "$SOURCE_DATABASE" -c "
     DELETE FROM email_service_flyway_schema_history
-    WHERE version = '4'
+    WHERE version = '5'
       AND description = 'unexpected future migration';
 " >/dev/null
 
@@ -613,7 +620,7 @@ if run_backup \
         2>"$TEMP_DIR/repeatable-history.err"; then
     fail "backup accepted an unknown repeatable Flyway migration"
 fi
-grep -Fq "email service Flyway history must match the expected V1 through V3 chain" \
+grep -Fq "email service Flyway history must match the expected V1 through V4 chain" \
     "$TEMP_DIR/repeatable-history.err" \
     || fail "repeatable history rejection did not report the Flyway guard"
 assert_no_backup_artifacts "$history_dir"
@@ -737,7 +744,7 @@ PGPASSWORD="$DATABASE_PASSWORD" "$PG_RESTORE_WRAPPER" \
 [ "$(database_fingerprint "$RESTORE_DATABASE")" = "$SOURCE_FINGERPRINT" ] \
     || fail "restored queue/log data differs from the source"
 [ "$(db_value "$RESTORE_DATABASE" \
-    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "3" ] \
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
     || fail "restored Flyway history is incomplete"
 [ "$(db_value "$RESTORE_DATABASE" "
     SELECT count(*)
@@ -764,7 +771,8 @@ payload="$(
         username: "restored@example.test",
         expiryMinutes: 10
       },
-      emailType: "VERIFICATION"
+      emailType: "VERIFICATION",
+      idempotencyKey: "restored-delivery-1"
     }'
 )"
 response="$(
@@ -782,13 +790,20 @@ new_queue_id="$(jq -er '.queueId' <<<"$response")"
     || fail "restored sequence did not continue above existing queue ids"
 [ "$(db_value "$RESTORE_DATABASE" "SELECT count(*) FROM email_queue;")" = "5" ] \
     || fail "restored application did not persist the new queue row"
+[ "$(db_value "$RESTORE_DATABASE" "
+    SELECT count(*)
+    FROM email_queue
+    WHERE id = $new_queue_id
+      AND idempotency_key = 'restored-delivery-1'
+      AND length(request_fingerprint) = 64;
+")" = "1" ] || fail "restored application did not persist delivery identity"
 
 echo "10/10 Restart without replaying migrations or losing restored data"
 stop_application
 start_application "$RESTORE_DATABASE" dedicated
 wait_for_application
 [ "$(db_value "$RESTORE_DATABASE" \
-    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "3" ] \
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
     || fail "restored restart changed Flyway history"
 [ "$(db_value "$RESTORE_DATABASE" "SELECT count(*) FROM email_queue;")" = "5" ] \
     || fail "restored restart lost queue data"

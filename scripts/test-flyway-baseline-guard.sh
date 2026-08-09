@@ -151,15 +151,17 @@ for database in \
     baseline_invalid_entity_schema_test \
     baseline_invalid_email_state_test \
     baseline_invalid_token_blacklist_test \
+    baseline_invalid_email_identity_test \
     baseline_apply_test \
     baseline_apply_data_race_test \
     baseline_apply_entity_race_test \
+    baseline_apply_email_identity_race_test \
     baseline_apply_migration_race_test \
     baseline_cleanup_test; do
     create_source_database "$database"
 done
 
-echo "1/14 Accept an exact approved schema in rehearsal mode"
+echo "1/16 Accept an exact approved schema in rehearsal mode"
 valid_output="$TEMP_DIR/valid.log"
 config_capture_bin="$TEMP_DIR/config-capture-bin"
 config_capture_file="$TEMP_DIR/flyway-config-paths.txt"
@@ -222,6 +224,12 @@ grep -Fq "restored_v5_history_type=SQL" \
 grep -Fq "fresh_v5_history_type=SQL" \
     "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
     || fail "fresh rehearsal did not apply Flyway V5"
+grep -Fq "restored_v6_history_type=SQL" \
+    "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
+    || fail "existing-schema rehearsal did not apply Flyway V6"
+grep -Fq "fresh_v6_history_type=SQL" \
+    "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
+    || fail "fresh rehearsal did not apply Flyway V6"
 grep -Fq "restored_web3_message_column=text:NO" \
     "$TEMP_DIR/artifacts/valid/rehearsal-result.txt" \
     || fail "existing-schema rehearsal did not require the Web3 SIWE message"
@@ -231,7 +239,7 @@ grep -Fq "fresh_web3_message_column=text:NO" \
 valid_fingerprint="$(awk '/^Schema fingerprint: / {print $3}' "$valid_output")"
 [ -n "$valid_fingerprint" ] || fail "rehearsal did not report a schema fingerprint"
 
-echo "2/14 Reject a source missing one managed table"
+echo "2/16 Reject a source missing one managed table"
 source_psql "$SOURCE_PORT" baseline_missing_test \
     -c "DROP TABLE token_blacklist;" >/dev/null
 expect_guard_failure \
@@ -240,7 +248,7 @@ expect_guard_failure \
     missing-table \
     "source database does not contain all eight approved UniAuth tables"
 
-echo "3/14 Reject additional structure inside a managed auth table"
+echo "3/16 Reject additional structure inside a managed auth table"
 source_psql "$SOURCE_PORT" baseline_extra_test \
     -c "ALTER TABLE users ADD COLUMN unexpected_auth_state text;" >/dev/null
 expect_guard_failure \
@@ -249,7 +257,7 @@ expect_guard_failure \
     extra-auth-structure \
     "baselined and fresh migrated schema fingerprints differ"
 
-echo "4/14 Reject a source that already has Flyway history"
+echo "4/16 Reject a source that already has Flyway history"
 source_psql "$SOURCE_PORT" baseline_history_test \
     -c "CREATE TABLE uniauth_flyway_schema_history (installed_rank integer);" >/dev/null
 expect_guard_failure \
@@ -258,7 +266,7 @@ expect_guard_failure \
     existing-history \
     "a Flyway history table already exists"
 
-echo "5/14 Reject source data that cannot satisfy Flyway V2"
+echo "5/16 Reject source data that cannot satisfy Flyway V2"
 source_psql "$SOURCE_PORT" baseline_invalid_login_methods_test \
     -c "
         INSERT INTO users (id, username, email)
@@ -289,7 +297,7 @@ expect_guard_failure \
     invalid-login-method-data \
     "source data is not compatible with pending login-method migration: users_without_exactly_one_primary"
 
-echo "6/14 Reject source data that cannot satisfy Flyway V4"
+echo "6/16 Reject source data that cannot satisfy Flyway V4"
 source_psql "$SOURCE_PORT" baseline_invalid_entity_schema_test \
     -c "
         INSERT INTO users (
@@ -328,7 +336,7 @@ expect_guard_failure \
     -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "V4 preflight failure created Flyway history"
 
-echo "7/14 Reject invalid email verification state before Flyway history"
+echo "7/16 Reject invalid email verification state before Flyway history"
 source_psql "$SOURCE_PORT" baseline_invalid_email_state_test \
     -c "
         INSERT INTO email_verification_codes (
@@ -365,7 +373,7 @@ expect_guard_failure \
     -c "SELECT retry_count FROM email_verification_codes WHERE id = '00000000-0000-0000-0000-000000000051';")" = "-1" ] \
     || fail "email verification preflight changed source data"
 
-echo "8/14 Reject invalid token blacklist state before Flyway history"
+echo "8/16 Reject invalid token blacklist state before Flyway history"
 source_psql "$SOURCE_PORT" baseline_invalid_token_blacklist_test \
     -c "
         INSERT INTO token_blacklist (
@@ -396,7 +404,65 @@ expect_guard_failure \
     -c "SELECT token_type FROM token_blacklist WHERE id = '00000000-0000-0000-0000-000000000061';")" = "UNKNOWN" ] \
     || fail "token blacklist preflight changed source data"
 
-echo "9/14 Reject PostgreSQL versions outside the approved major"
+echo "9/16 Reject source data that cannot satisfy Flyway V6"
+source_psql "$SOURCE_PORT" baseline_invalid_email_identity_test \
+    -c "
+        INSERT INTO users (id, username, email)
+        VALUES
+            (
+                '00000000-0000-0000-0000-000000000071',
+                'identity-case-one',
+                'Case.Identity@example.invalid'
+            ),
+            (
+                '00000000-0000-0000-0000-000000000072',
+                'identity-case-two',
+                'case.identity@example.invalid'
+            );
+        INSERT INTO user_login_methods (
+            id,
+            user_id,
+            auth_provider,
+            local_username,
+            is_primary,
+            is_verified
+        ) VALUES
+            (
+                '00000000-0000-0000-0000-000000000073',
+                '00000000-0000-0000-0000-000000000071',
+                'LOCAL',
+                'CaseIdentity',
+                true,
+                false
+            ),
+            (
+                '00000000-0000-0000-0000-000000000074',
+                '00000000-0000-0000-0000-000000000072',
+                'LOCAL',
+                'caseidentity',
+                true,
+                false
+            );
+    " >/dev/null
+expect_guard_failure \
+    baseline_invalid_email_identity_test \
+    rehearse \
+    invalid-email-identity-data \
+    "source data is not compatible with pending email-identity migration: noncanonical_contact_email"
+grep -Fq "canonical_contact_email_conflict" \
+    "$TEMP_DIR/invalid-email-identity-data.log" \
+    || fail "V6 preflight did not report canonical contact email conflict"
+grep -Fq "canonical_local_username_conflict" \
+    "$TEMP_DIR/invalid-email-identity-data.log" \
+    || fail "V6 preflight did not report canonical local username conflict"
+[ "$(source_psql "$SOURCE_PORT" baseline_invalid_email_identity_test -qAt \
+    -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
+    || fail "V6 preflight failure created Flyway history"
+[ "$(source_psql "$SOURCE_PORT" baseline_invalid_email_identity_test -qAt \
+    -c "SELECT count(*) FROM users WHERE email IN ('Case.Identity@example.invalid', 'case.identity@example.invalid');")" = "2" ] \
+    || fail "V6 preflight changed source data"
+
+echo "10/16 Reject PostgreSQL versions outside the approved major"
 fake_version_bin="$TEMP_DIR/fake-version-bin"
 real_psql="$(command -v psql)"
 mkdir -p "$fake_version_bin"
@@ -419,7 +485,7 @@ expect_guard_failure \
     PATH="$fake_version_bin:$PATH" \
     UNIAUTH_REAL_PSQL="$real_psql"
 
-echo "10/14 Require the exact confirmation token before apply"
+echo "11/16 Require the exact confirmation token before apply"
 expect_guard_failure \
     baseline_apply_test \
     apply \
@@ -429,7 +495,7 @@ expect_guard_failure \
     -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "apply without confirmation created Flyway history"
 
-echo "11/14 Recheck login-method data immediately before apply"
+echo "12/16 Recheck login-method data immediately before apply"
 race_bin="$TEMP_DIR/race-bin"
 race_counter="$TEMP_DIR/race-mvn-count.txt"
 real_psql="$(command -v psql)"
@@ -499,7 +565,7 @@ expect_guard_failure \
     -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "apply created Flyway history after source data changed during rehearsal"
 
-echo "12/14 Recheck entity-schema data immediately before apply"
+echo "13/16 Recheck entity-schema data immediately before apply"
 entity_race_bin="$TEMP_DIR/entity-race-bin"
 entity_race_counter="$TEMP_DIR/entity-race-mvn-count.txt"
 mkdir -p "$entity_race_bin"
@@ -573,7 +639,91 @@ expect_guard_failure \
     -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "apply created Flyway history after entity-schema data changed during rehearsal"
 
-echo "13/14 Remove incomplete baseline history if V2 rejects a later data race"
+echo "14/16 Recheck email-identity data immediately before apply"
+email_identity_race_bin="$TEMP_DIR/email-identity-race-bin"
+email_identity_race_counter="$TEMP_DIR/email-identity-race-mvn-count.txt"
+mkdir -p "$email_identity_race_bin"
+cat >"$email_identity_race_bin/mvn" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+count=0
+if [ -f "$UNIAUTH_RACE_COUNTER" ]; then
+    count="$(cat "$UNIAUTH_RACE_COUNTER")"
+fi
+count=$((count + 1))
+printf '%s\n' "$count" > "$UNIAUTH_RACE_COUNTER"
+
+"$UNIAUTH_REAL_MVN" "$@"
+
+if [ "$count" -eq 5 ]; then
+    PGPASSWORD="$UNIAUTH_RACE_PASSWORD" "$UNIAUTH_REAL_PSQL" \
+        -X -q -v ON_ERROR_STOP=1 \
+        -h "$UNIAUTH_RACE_HOST" \
+        -p "$UNIAUTH_RACE_PORT" \
+        -U "$UNIAUTH_RACE_USER" \
+        -d "$UNIAUTH_RACE_DATABASE" \
+        -c "
+            INSERT INTO users (id, username, email)
+            VALUES
+                (
+                    '00000000-0000-0000-0000-000000000081',
+                    'apply-email-race-one',
+                    'Apply.Email.Race@example.invalid'
+                ),
+                (
+                    '00000000-0000-0000-0000-000000000082',
+                    'apply-email-race-two',
+                    'apply.email.race@example.invalid'
+                );
+            INSERT INTO user_login_methods (
+                id,
+                user_id,
+                auth_provider,
+                local_username,
+                is_primary,
+                is_verified
+            ) VALUES
+                (
+                    '00000000-0000-0000-0000-000000000083',
+                    '00000000-0000-0000-0000-000000000081',
+                    'LOCAL',
+                    'ApplyEmailRace',
+                    true,
+                    false
+                ),
+                (
+                    '00000000-0000-0000-0000-000000000084',
+                    '00000000-0000-0000-0000-000000000082',
+                    'LOCAL',
+                    'applyemailrace',
+                    true,
+                    false
+                );
+        " >/dev/null
+fi
+EOF
+chmod 700 "$email_identity_race_bin/mvn"
+expect_guard_failure \
+    baseline_apply_email_identity_race_test \
+    apply \
+    apply-email-identity-race \
+    "source email-identity data changed during rehearsal; refusing baseline apply: noncanonical_contact_email" \
+    PATH="$email_identity_race_bin:$PATH" \
+    UNIAUTH_BASELINE_CONFIRM="baseline:baseline_apply_email_identity_race_test:$valid_fingerprint" \
+    UNIAUTH_REAL_MVN="$real_mvn" \
+    UNIAUTH_REAL_PSQL="$real_psql" \
+    UNIAUTH_RACE_COUNTER="$email_identity_race_counter" \
+    UNIAUTH_RACE_HOST=127.0.0.1 \
+    UNIAUTH_RACE_PORT="$SOURCE_PORT" \
+    UNIAUTH_RACE_DATABASE=baseline_apply_email_identity_race_test \
+    UNIAUTH_RACE_USER="$SOURCE_USER" \
+    UNIAUTH_RACE_PASSWORD="$SOURCE_PASSWORD"
+[ "$(source_psql "$SOURCE_PORT" baseline_apply_email_identity_race_test -qAt \
+    -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
+    || fail "apply created Flyway history after email-identity data changed during rehearsal"
+
+echo "15/16 Roll back grouped V2-V6 migrations if V6 rejects a post-baseline data race"
 migration_race_bin="$TEMP_DIR/migration-race-bin"
 migration_race_counter="$TEMP_DIR/migration-race-mvn-count.txt"
 mkdir -p "$migration_race_bin"
@@ -599,11 +749,17 @@ if [ "$count" -eq 6 ]; then
         -d "$UNIAUTH_RACE_DATABASE" \
         -c "
             INSERT INTO users (id, username, email)
-            VALUES (
-                '00000000-0000-0000-0000-000000000021',
-                'migration-data-race',
-                'migration-data-race@example.invalid'
-            );
+            VALUES
+                (
+                    '00000000-0000-0000-0000-000000000021',
+                    'migration-data-race-one',
+                    'Migration.Data.Race@example.invalid'
+                ),
+                (
+                    '00000000-0000-0000-0000-000000000023',
+                    'migration-data-race-two',
+                    'migration.data.race@example.invalid'
+                );
             INSERT INTO user_login_methods (
                 id,
                 user_id,
@@ -611,14 +767,23 @@ if [ "$count" -eq 6 ]; then
                 local_username,
                 is_primary,
                 is_verified
-            ) VALUES (
-                '00000000-0000-0000-0000-000000000022',
-                '00000000-0000-0000-0000-000000000021',
-                'LOCAL',
-                'migration-data-race',
-                false,
-                false
-            );
+            ) VALUES
+                (
+                    '00000000-0000-0000-0000-000000000022',
+                    '00000000-0000-0000-0000-000000000021',
+                    'LOCAL',
+                    'MigrationDataRace',
+                    true,
+                    false
+                ),
+                (
+                    '00000000-0000-0000-0000-000000000024',
+                    '00000000-0000-0000-0000-000000000023',
+                    'LOCAL',
+                    'migrationdatarace',
+                    true,
+                    false
+                );
         " >/dev/null
 fi
 EOF
@@ -640,12 +805,15 @@ expect_guard_failure \
     UNIAUTH_RACE_PASSWORD="$SOURCE_PASSWORD"
 [ "$(source_psql "$SOURCE_PORT" baseline_apply_migration_race_test -qAt \
     -c "SELECT to_regclass('public.uniauth_flyway_schema_history') IS NULL;")" = "t" ] \
-    || fail "failed V2 migration left an incomplete baseline history table"
+    || fail "failed grouped V2-V6 migration left an incomplete baseline history table"
 [ "$(source_psql "$SOURCE_PORT" baseline_apply_migration_race_test -qAt \
-    -c "SELECT count(*) FROM users WHERE username = 'migration-data-race';")" = "1" ] \
+    -c "SELECT count(*) FROM users WHERE username IN ('migration-data-race-one', 'migration-data-race-two');")" = "2" ] \
     || fail "migration race fixture did not reach the post-baseline window"
+[ "$(source_psql "$SOURCE_PORT" baseline_apply_migration_race_test -qAt \
+    -c "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'user_login_methods' AND column_name = 'revision';")" = "0" ] \
+    || fail "grouped migration failure left V2-V5 schema changes behind"
 
-echo "14/14 Remove temporary Flyway credentials after Maven failure"
+echo "16/16 Remove temporary Flyway credentials after Maven failure"
 fake_bin="$TEMP_DIR/fake-bin"
 capture_file="$TEMP_DIR/flyway-config-path.txt"
 mkdir -p "$fake_bin"

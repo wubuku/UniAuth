@@ -1,5 +1,6 @@
 spring:
   flyway:
     enabled: true
+    group: true
   jpa:
     open-in-view: false

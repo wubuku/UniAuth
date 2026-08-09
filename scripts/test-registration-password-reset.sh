@@ -58,42 +58,83 @@ for attempt in {1..30}; do
   sleep 1
 done
 
-echo "1/5 Existing email registration is rejected"
+echo "1/6 Existing and new registration previews do not enumerate ownership"
 existing_payload=$(jq -n \
   --arg email "${EMAIL_EXISTS}" \
   --arg password "${TEST_PASSWORD}" \
   '{username: $email, email: $email, password: $password, displayName: "Integration Test"}')
 existing_response=$(post_json "/api/auth/register" "${existing_payload}")
-existing_error=$(value_or_empty "${existing_response}" '.errorCode')
-case "${existing_error}" in
-  EMAIL_EXISTS|EMAIL_ALREADY_REGISTERED) ;;
-  *) fail "existing email returned an unexpected error code" ;;
-esac
-
-echo "2/5 New email enters verification flow"
 new_payload=$(jq -n \
   --arg email "${EMAIL_NOT_REGISTERED}" \
   --arg password "${TEST_PASSWORD}" \
   '{username: $email, email: $email, password: $password, displayName: "Integration Test"}')
 new_response=$(post_json "/api/auth/register" "${new_payload}")
+[ "$(value_or_empty "${existing_response}" '.requireEmailVerification')" = "true" ] \
+  || fail "existing email did not receive the registration preview contract"
 [ "$(value_or_empty "${new_response}" '.requireEmailVerification')" = "true" ] \
   || fail "new email did not enter the verification flow"
+[ "$(jq -c 'keys | sort' <<<"${existing_response}")" \
+    = "$(jq -c 'keys | sort' <<<"${new_response}")" ] \
+  || fail "existing and new registration previews exposed different fields"
+[ "$(value_or_empty "${existing_response}" '.message')" \
+    = "$(value_or_empty "${new_response}" '.message')" ] \
+  || fail "existing and new registration previews exposed different messages"
+jq -e 'has("errorCode") | not' <<<"${existing_response}" >/dev/null \
+  || fail "existing registration preview exposed an ownership error code"
 
-echo "3/5 Registered email can request password reset"
+echo "2/6 Registered email can request password reset"
 existing_forgot_payload=$(jq -n --arg email "${EMAIL_EXISTS}" '{email: $email}')
 existing_forgot_response=$(post_json "/api/auth/forgot-password" "${existing_forgot_payload}")
 [ "$(value_or_empty "${existing_forgot_response}" '.success')" = "true" ] \
   || fail "registered email could not request password reset"
 
-echo "4/5 Unknown email follows the current rejection contract"
+echo "3/6 Unknown email receives the same password-reset response shape"
 unknown_forgot_payload=$(jq -n --arg email "${EMAIL_NOT_REGISTERED}" '{email: $email}')
 unknown_forgot_response=$(post_json "/api/auth/forgot-password" "${unknown_forgot_payload}")
-[ "$(value_or_empty "${unknown_forgot_response}" '.success')" = "false" ] \
-  || fail "unknown email unexpectedly reported password-reset success"
-[ "$(value_or_empty "${unknown_forgot_response}" '.errorCode')" = "EMAIL_NOT_REGISTERED" ] \
-  || fail "unknown email returned an unexpected error code"
+[ "$(value_or_empty "${unknown_forgot_response}" '.success')" = "true" ] \
+  || fail "unknown email did not receive the generic password-reset contract"
+[ "$(jq -c 'keys | sort' <<<"${existing_forgot_response}")" \
+    = "$(jq -c 'keys | sort' <<<"${unknown_forgot_response}")" ] \
+  || fail "known and unknown password-reset responses exposed different fields"
+for response_field in success message resendAfter expiresIn; do
+  [ "$(value_or_empty "${existing_forgot_response}" ".${response_field}")" \
+      = "$(value_or_empty "${unknown_forgot_response}" ".${response_field}")" ] \
+    || fail "known and unknown password-reset responses differed at ${response_field}"
+done
+for response_body in "${existing_forgot_response}" "${unknown_forgot_response}"; do
+  jq -e '
+    (.challengeHandle | type == "string" and test(
+      "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    ))
+    and (has("errorCode") | not)
+  ' <<<"${response_body}" >/dev/null \
+    || fail "password-reset response did not use an opaque handle"
+done
 
-echo "5/5 Invalid input and repeat-request paths return structured results"
+echo "4/6 Removed email status oracle remains inaccessible"
+status_oracle_status=$(curl -sS -o /dev/null -w '%{http_code}' \
+  "${BASE_URL}/api/auth/email/status/${EMAIL_NOT_REGISTERED}")
+[ "${status_oracle_status}" = "404" ] \
+  || fail "removed email status oracle returned ${status_oracle_status}"
+
+echo "5/6 Removed read-only verification oracle remains inaccessible"
+check_oracle_status=$(curl -sS -o /dev/null -w '%{http_code}' \
+  -X POST "${BASE_URL}/api/auth/check-verification-code" \
+  -H "Content-Type: application/json" \
+  --data "$(
+    jq -cn \
+      --arg email "${EMAIL_NOT_REGISTERED}" \
+      '{
+        email: $email,
+        challengeHandle: "00000000-0000-0000-0000-000000000000",
+        verificationCode: "000000",
+        purpose: "REGISTRATION"
+      }'
+  )")
+[ "${check_oracle_status}" = "404" ] \
+  || fail "removed verification oracle returned ${check_oracle_status}"
+
+echo "6/6 Invalid input and repeat-request paths return structured results"
 empty_response=$(post_json "/api/auth/forgot-password" '{"email": ""}')
 invalid_response=$(post_json "/api/auth/forgot-password" '{"email": "invalid-email"}')
 jq -e 'type == "object"' <<<"${empty_response}" >/dev/null \

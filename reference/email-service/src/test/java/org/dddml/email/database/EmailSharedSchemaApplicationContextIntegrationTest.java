@@ -80,7 +80,7 @@ class EmailSharedSchemaApplicationContextIntegrationTest {
     void startsOnAnExistingUniAuthPublicSchemaAndKeepsIndependentHistory() {
         assertThat(emailFlyway.info().current()).isNotNull();
         assertThat(emailFlyway.info().current().getVersion().toString())
-            .isEqualTo("3");
+            .isEqualTo("4");
         assertThat(emailFlyway.migrate().migrationsExecuted).isZero();
 
         assertThat(jdbcTemplate.queryForObject(
@@ -98,21 +98,21 @@ class EmailSharedSchemaApplicationContextIntegrationTest {
             SELECT count(*)
             FROM email_service_flyway_schema_history
             WHERE type = 'SQL'
-              AND version IN ('1', '2', '3')
+              AND version IN ('1', '2', '3', '4')
               AND success
             """,
             Integer.class
-        )).isEqualTo(3);
+        )).isEqualTo(4);
         assertThat(jdbcTemplate.queryForObject(
             """
             SELECT count(*)
             FROM uniauth_flyway_schema_history
             WHERE type = 'SQL'
-              AND version IN ('1', '2', '3', '4', '5')
+              AND version IN ('1', '2', '3', '4', '5', '6')
               AND success
             """,
             Integer.class
-        )).isEqualTo(5);
+        )).isEqualTo(6);
         assertThat(jdbcTemplate.queryForObject(
             "SELECT to_regclass('public.users')",
             String.class
@@ -146,6 +146,7 @@ class EmailSharedSchemaApplicationContextIntegrationTest {
             .cleanDisabled(true)
             .validateOnMigrate(true)
             .outOfOrder(false)
+            .group(true)
             .load()
             .migrate();
     }

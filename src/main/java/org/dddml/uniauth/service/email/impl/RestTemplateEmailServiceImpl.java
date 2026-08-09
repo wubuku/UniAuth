@@ -1,6 +1,8 @@
 package org.dddml.uniauth.service.email.impl;
 
 import org.dddml.uniauth.config.EmailServiceClientProperties;
+import org.dddml.uniauth.service.email.EmailDeliveryClientException;
+import org.dddml.uniauth.service.email.EmailDeliveryReceipt;
 import org.dddml.uniauth.service.email.EmailService;
 import org.dddml.uniauth.service.email.EmailSendResult;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -18,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 @Slf4j
@@ -133,6 +136,93 @@ public class RestTemplateEmailServiceImpl implements EmailService {
     }
 
     @Override
+    public EmailDeliveryReceipt enqueueTemplateEmail(
+            String to,
+            String subject,
+            String templateName,
+            Map<String, Object> variables,
+            String emailType,
+            String idempotencyKey) {
+        if (!isValidEmail(to)) {
+            throw new EmailDeliveryClientException("INVALID_EMAIL", false);
+        }
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("to", to);
+        body.put("subject", subject);
+        body.put("templateName", templateName);
+        body.put("variables", variables);
+        body.put("emailType", emailType);
+        body.put("idempotencyKey", idempotencyKey);
+
+        try {
+            HttpEntity<Map<String, Object>> request =
+                    new HttpEntity<>(body, requestHeaders());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = restTemplate.postForEntity(
+                    serviceUrl("/api/email/template"),
+                    request,
+                    Map.class
+            ).getBody();
+            return deliveryReceipt(response);
+        } catch (HttpClientErrorException.TooManyRequests exception) {
+            throw new EmailDeliveryClientException(
+                    "EMAIL_SERVICE_RATE_LIMITED",
+                    true,
+                    exception
+            );
+        } catch (RestClientResponseException exception) {
+            throw new EmailDeliveryClientException(
+                    "EMAIL_SERVICE_HTTP_" + exception.getStatusCode().value(),
+                    exception.getStatusCode().is5xxServerError(),
+                    exception
+            );
+        } catch (EmailDeliveryClientException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new EmailDeliveryClientException(
+                    "EMAIL_SERVICE_UNAVAILABLE",
+                    true,
+                    exception
+            );
+        }
+    }
+
+    @Override
+    public Optional<EmailDeliveryReceipt> findDeliveryByIdempotencyKey(
+            String idempotencyKey) {
+        try {
+            HttpEntity<Void> request = new HttpEntity<>(requestHeaders());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = restTemplate.exchange(
+                    serviceUrl("/api/email/delivery/status")
+                            + "?idempotencyKey={idempotencyKey}",
+                    HttpMethod.GET,
+                    request,
+                    Map.class,
+                    idempotencyKey
+            ).getBody();
+            return Optional.of(deliveryReceipt(response));
+        } catch (HttpClientErrorException.NotFound exception) {
+            return Optional.empty();
+        } catch (RestClientResponseException exception) {
+            throw new EmailDeliveryClientException(
+                    "EMAIL_STATUS_HTTP_" + exception.getStatusCode().value(),
+                    exception.getStatusCode().is5xxServerError(),
+                    exception
+            );
+        } catch (EmailDeliveryClientException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new EmailDeliveryClientException(
+                    "EMAIL_STATUS_UNAVAILABLE",
+                    true,
+                    exception
+            );
+        }
+    }
+
+    @Override
     public boolean isAvailable() {
         try {
             String healthUrl = serviceUrl("/api/email/health");
@@ -162,6 +252,37 @@ public class RestTemplateEmailServiceImpl implements EmailService {
             headers.set(API_KEY_HEADER, properties.getApiKey());
         }
         return headers;
+    }
+
+    private EmailDeliveryReceipt deliveryReceipt(Map<String, Object> response) {
+        if (response == null || !Boolean.TRUE.equals(response.get("success"))) {
+            throw new EmailDeliveryClientException(
+                    "EMAIL_SERVICE_REJECTED",
+                    false
+            );
+        }
+        Object rawId = response.get("queueId");
+        Object rawStatus = response.get("status");
+        if (rawId == null || rawStatus == null) {
+            throw new EmailDeliveryClientException(
+                    "EMAIL_SERVICE_INVALID_RESPONSE",
+                    true
+            );
+        }
+        try {
+            return new EmailDeliveryReceipt(
+                    rawId.toString(),
+                    EmailDeliveryReceipt.DeliveryState.valueOf(
+                            rawStatus.toString()
+                    )
+            );
+        } catch (IllegalArgumentException exception) {
+            throw new EmailDeliveryClientException(
+                    "EMAIL_SERVICE_INVALID_RESPONSE",
+                    true,
+                    exception
+            );
+        }
     }
 
     private String serviceUrl(String path) {

@@ -191,13 +191,13 @@ class EmailServiceEndToEndIntegrationTest {
             SELECT COUNT(*)
             FROM email_service_flyway_schema_history
             WHERE success = TRUE
-              AND version IN ('1', '2')
+              AND version IN ('1', '2', '3', '4')
             """,
             Integer.class
         );
 
         assertThat(tableCount).isEqualTo(2);
-        assertThat(migrationCount).isEqualTo(2);
+        assertThat(migrationCount).isEqualTo(4);
         assertThat(environment.getProperty("spring.flyway.enabled", Boolean.class))
             .isTrue();
         assertThat(
@@ -225,6 +225,92 @@ class EmailServiceEndToEndIntegrationTest {
         assertThat(mailSender.getJavaMailProperties())
             .containsEntry("mail.smtp.writetimeout", "10000")
             .containsEntry("mail.smtp.ssl.checkserveridentity", "true");
+    }
+
+    @Test
+    void concurrentIdempotentTemplateRequestsReuseQueueIdentityAndSendOnce()
+            throws Exception {
+        String idempotencyKey = "email-challenge:idempotency-e2e";
+        Map<String, Object> request = Map.of(
+            "to", "idempotent@example.test",
+            "subject", "Idempotent delivery",
+            "templateName", "email/email-verify",
+            "variables", Map.of(
+                "username", "idempotent@example.test",
+                "verificationCode", "123456",
+                "expiryMinutes", 10
+            ),
+            "emailType", "VERIFICATION",
+            "idempotencyKey", idempotencyKey
+        );
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        ResponseEntity<Map<String, Object>> first;
+        ResponseEntity<Map<String, Object>> second;
+        try {
+            Future<ResponseEntity<Map<String, Object>>> firstRequest =
+                executor.submit(() -> exchangeAfterBarrier(request, ready, start));
+            Future<ResponseEntity<Map<String, Object>>> secondRequest =
+                executor.submit(() -> exchangeAfterBarrier(request, ready, start));
+
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            first = firstRequest.get(15, TimeUnit.SECONDS);
+            second = secondRequest.get(15, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        }
+
+        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(second.getBody().get("queueId"))
+            .isEqualTo(first.getBody().get("queueId"));
+        assertThat(emailQueueRepository.count()).isEqualTo(1);
+        long queueId = ((Number) first.getBody().get("queueId")).longValue();
+
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+            assertThat(emailQueueRepository.findById(queueId).orElseThrow().getStatus())
+                .isEqualTo("COMPLETED");
+            assertThat(emailLogRepository.findByQueueId(queueId))
+                .singleElement()
+                .satisfies(log -> assertThat(log.getStatus()).isEqualTo("SUCCESS"));
+            assertThat(SMTP.getReceivedMessages()).hasSize(1);
+        });
+
+        ResponseEntity<Map<String, Object>> statusResponse = exchange(
+            "/api/email/delivery/status?idempotencyKey=" + idempotencyKey,
+            HttpMethod.GET,
+            null
+        );
+        assertThat(statusResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(statusResponse.getBody())
+            .containsEntry("success", true)
+            .containsEntry("queueId", first.getBody().get("queueId"))
+            .containsEntry("status", "COMPLETED");
+
+        ResponseEntity<Map<String, Object>> conflict = exchange(
+            "/api/email/template",
+            HttpMethod.POST,
+            Map.of(
+                "to", "idempotent@example.test",
+                "subject", "Different payload",
+                "templateName", "email/email-verify",
+                "variables", Map.of(
+                    "username", "idempotent@example.test",
+                    "verificationCode", "123456",
+                    "expiryMinutes", 10
+                ),
+                "emailType", "VERIFICATION",
+                "idempotencyKey", idempotencyKey
+            )
+        );
+        assertThat(conflict.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(emailQueueRepository.count()).isEqualTo(1);
+        assertThat(emailLogRepository.findByQueueId(queueId)).hasSize(1);
+        assertThat(SMTP.getReceivedMessages()).hasSize(1);
     }
 
     @Test
@@ -1188,6 +1274,17 @@ class EmailServiceEndToEndIntegrationTest {
             new ParameterizedTypeReference<>() {
             }
         );
+    }
+
+    private ResponseEntity<Map<String, Object>> exchangeAfterBarrier(
+            Object requestBody,
+            CountDownLatch ready,
+            CountDownLatch start) throws InterruptedException {
+        ready.countDown();
+        if (!start.await(5, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Concurrent HTTP start timed out");
+        }
+        return exchange("/api/email/template", HttpMethod.POST, requestBody);
     }
 
     private void assertSecurityResponseHeaders(ResponseEntity<?> response) {

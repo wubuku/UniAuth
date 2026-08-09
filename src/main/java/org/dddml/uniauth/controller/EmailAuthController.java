@@ -1,305 +1,148 @@
 package org.dddml.uniauth.controller;
 
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.dddml.uniauth.config.EmailRegistrationProperties;
-import org.dddml.uniauth.entity.UserEntity;
-import org.dddml.uniauth.entity.UserLoginMethod;
-import org.dddml.uniauth.entity.UserLoginMethod.AuthProvider;
-import org.dddml.uniauth.repository.UserLoginMethodRepository;
-import org.dddml.uniauth.repository.UserRepository;
+import org.dddml.uniauth.dto.SendVerificationCodeRequest;
+import org.dddml.uniauth.dto.UserDto;
+import org.dddml.uniauth.dto.VerifyEmailRequest;
+import org.dddml.uniauth.entity.EmailVerificationCode.VerificationPurpose;
 import org.dddml.uniauth.service.EmailVerificationCodeService;
-import org.dddml.uniauth.service.AuthCookieService;
-import org.dddml.uniauth.service.JwtTokenService;
-import org.dddml.uniauth.service.UserService;
+import org.dddml.uniauth.service.AuthRateLimiter;
+import org.dddml.uniauth.service.RegistrationService;
+import org.dddml.uniauth.service.TokenIssuanceFacade;
 import org.dddml.uniauth.service.VerificationCodeDeliveryException;
 import org.dddml.uniauth.service.email.EmailSendResult;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
-import org.springframework.web.bind.annotation.*;
-import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-import java.util.*;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
-@Slf4j
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
 public class EmailAuthController {
 
     private final EmailVerificationCodeService verificationCodeService;
-    private final UserRepository userRepository;
-    private final UserLoginMethodRepository loginMethodRepository;
-    private final UserService userService;
-    private final PasswordEncoder passwordEncoder;
-    private final JwtTokenService jwtTokenService;
-    private final EmailRegistrationProperties emailRegistrationProperties;
-    private final AuthCookieService authCookieService;
+    private final RegistrationService registrationService;
+    private final TokenIssuanceFacade tokenIssuanceFacade;
+    private final AuthRateLimiter authRateLimiter;
 
-    @GetMapping("/email/status/{email}")
-    public ResponseEntity<Map<String, Object>> getEmailStatus(@PathVariable String email) {
-        boolean hasPendingRegistration = verificationCodeService.hasPendingVerification(
-            email,
-            org.dddml.uniauth.entity.EmailVerificationCode.VerificationPurpose.REGISTRATION
+    @PostMapping(
+        value = "/send-verification-code",
+        consumes = MediaType.APPLICATION_JSON_VALUE,
+        produces = MediaType.APPLICATION_JSON_VALUE
+    )
+    public ResponseEntity<Map<String, Object>> sendVerificationCode(
+            @Valid @RequestBody SendVerificationCodeRequest request,
+            HttpServletRequest httpRequest) {
+        authRateLimiter.requireAllowed(
+                AuthRateLimiter.Policy.CHALLENGE_SEND,
+                httpRequest.getRemoteAddr(),
+                request.getEmail()
         );
-
-        return ResponseEntity.ok(Map.of(
-            "email", email,
-            "hasPendingVerification", hasPendingRegistration
-        ));
-    }
-
-    @PostMapping("/check-verification-code")
-    public ResponseEntity<Map<String, Object>> checkVerificationCode(@RequestBody Map<String, String> request) {
-        String email = request.get("email");
-        String code = request.get("verificationCode");
-        String purposeStr = request.getOrDefault("purpose", "REGISTRATION");
-
-        if (email == null || code == null) {
+        if (!VerificationPurpose.REGISTRATION.name().equals(request.getPurpose())) {
             return ResponseEntity.badRequest().body(Map.of(
-                "valid", false,
-                "status", "INVALID_REQUEST",
-                "message", "Email and verification code are required"
+                    "success", false,
+                    "error", "UNSUPPORTED_PURPOSE",
+                    "message", "This endpoint only supports registration verification"
             ));
         }
 
-        var purpose = org.dddml.uniauth.entity.EmailVerificationCode.VerificationPurpose.valueOf(purposeStr);
-        var result = verificationCodeService.checkVerificationCode(email, code, purpose);
-
-        return ResponseEntity.ok(Map.of(
-            "valid", result.isValid(),
-            "status", result.getStatus(),
-            "message", result.getMessage(),
-            "remainingAttempts", result.getRemainingAttempts()
-        ));
-    }
-
-    @PostMapping("/send-verification-code")
-    public ResponseEntity<Map<String, Object>> sendVerificationCode(@RequestBody Map<String, String> request) {
-        String email = request.get("email");
-        String purposeStr = request.getOrDefault("purpose", "REGISTRATION");
-        var purpose = org.dddml.uniauth.entity.EmailVerificationCode.VerificationPurpose.REGISTRATION;
-
-        if (!StringUtils.hasText(email)) {
-            return ResponseEntity.badRequest().body(Map.of(
-                "success", false,
-                "error", "INVALID_REQUEST",
-                "message", "Email is required"
-            ));
-        }
-        if (!purpose.name().equals(purposeStr)) {
-            return ResponseEntity.badRequest().body(Map.of(
-                "success", false,
-                "error", "UNSUPPORTED_PURPOSE",
-                "message", "This endpoint only supports registration verification"
-            ));
-        }
-
+        String email = request.getEmail();
         if (!verificationCodeService.canSend(email)) {
             return ResponseEntity.status(429).body(Map.of(
-                "success", false,
-                "error", "RATE_LIMITED",
-                "message", "Too many requests, please try again later",
-                "retryAfter", 86400
+                    "success", false,
+                    "error", "RATE_LIMITED",
+                    "message", "Too many requests, please try again later",
+                    "retryAfter", 86400
             ));
         }
-
-        long cooldown = verificationCodeService.getResendCooldown(email, purpose);
+        long cooldown = verificationCodeService.getResendCooldown(
+                email,
+                VerificationPurpose.REGISTRATION
+        );
         if (cooldown > 0) {
             return ResponseEntity.status(429).body(Map.of(
-                "success", false,
-                "error", "COOLDOWN",
-                "message", "Please wait before requesting a new code",
-                "retryAfter", cooldown
+                    "success", false,
+                    "error", "COOLDOWN",
+                    "message", "Please wait before requesting a new code",
+                    "retryAfter", cooldown
             ));
-        }
-
-        Map<String, Object> metadata = new HashMap<>();
-        if (purpose == org.dddml.uniauth.entity.EmailVerificationCode.VerificationPurpose.REGISTRATION) {
-            if (request.containsKey("password")) {
-                metadata.put("password", passwordEncoder.encode(request.get("password")));
-            }
-            if (request.containsKey("displayName")) {
-                metadata.put("displayName", request.get("displayName"));
-            }
         }
 
         try {
-            verificationCodeService.sendVerificationCode(email, purpose, metadata);
+            EmailVerificationCodeService.ChallengeDispatch dispatch =
+                    verificationCodeService.sendVerificationCode(
+                            email,
+                            VerificationPurpose.REGISTRATION
+                    );
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("success", true);
+            response.put("message", "Verification code sent successfully");
+            response.put("challengeHandle", dispatch.challengeHandle());
+            response.put("expiresIn", dispatch.expiresIn());
+            response.put("resendAfter", dispatch.resendAfter());
+            return ResponseEntity.ok(response);
         } catch (VerificationCodeDeliveryException exception) {
             return deliveryFailureResponse(exception.getResult());
         }
-
-        return ResponseEntity.ok(Map.of(
-            "success", true,
-            "message", "Verification code sent successfully",
-            "expiresIn", verificationCodeService.getExpirySeconds(),
-            "resendAfter", verificationCodeService.getResendCooldownSeconds()
-        ));
     }
 
-    private ResponseEntity<Map<String, Object>> deliveryFailureResponse(EmailSendResult result) {
+    @PostMapping(
+        value = "/verify-email",
+        consumes = MediaType.APPLICATION_JSON_VALUE,
+        produces = MediaType.APPLICATION_JSON_VALUE
+    )
+    public ResponseEntity<?> verifyEmail(
+            @Valid @RequestBody VerifyEmailRequest request,
+            HttpServletRequest httpRequest,
+            HttpServletResponse response) {
+        authRateLimiter.requireAllowed(
+                AuthRateLimiter.Policy.CHALLENGE_VERIFY,
+                httpRequest.getRemoteAddr(),
+                request.getEmail()
+        );
+        UserDto user = registrationService.complete(request);
+        Map<String, Object> body = new LinkedHashMap<>(
+                tokenIssuanceFacade.issue(
+                        user,
+                        response,
+                        "Email verified successfully"
+                )
+        );
+        body.put("success", true);
+        return ResponseEntity.ok(body);
+    }
+
+    private ResponseEntity<Map<String, Object>> deliveryFailureResponse(
+            EmailSendResult result) {
         if (result == EmailSendResult.INVALID_EMAIL) {
             return ResponseEntity.badRequest().body(Map.of(
-                "success", false,
-                "error", "INVALID_EMAIL",
-                "message", "The email address is invalid"
+                    "success", false,
+                    "error", "INVALID_EMAIL",
+                    "message", "The email address is invalid"
             ));
         }
         if (result == EmailSendResult.RATE_LIMITED) {
             return ResponseEntity.status(429).body(Map.of(
-                "success", false,
-                "error", "EMAIL_SERVICE_RATE_LIMITED",
-                "message", "Email delivery is temporarily rate limited",
-                "retryAfter", verificationCodeService.getResendCooldownSeconds()
+                    "success", false,
+                    "error", "EMAIL_SERVICE_RATE_LIMITED",
+                    "message", "Email delivery is temporarily rate limited",
+                    "retryAfter",
+                    verificationCodeService.getResendCooldownSeconds()
             ));
         }
         return ResponseEntity.status(503).body(Map.of(
-            "success", false,
-            "error", "EMAIL_SERVICE_UNAVAILABLE",
-            "message", "Email delivery is temporarily unavailable"
-        ));
-    }
-
-    @PostMapping("/verify-email")
-    @Transactional
-    public ResponseEntity<?> verifyEmail(
-            @RequestBody Map<String, String> request,
-            HttpServletResponse response) {
-        String email = request.get("email");
-        String code = request.get("verificationCode");
-
-        if (email == null || code == null) {
-            return ResponseEntity.badRequest().body(Map.of(
                 "success", false,
-                "error", "INVALID_REQUEST",
-                "message", "Email and verification code are required"
-            ));
-        }
-
-        var result = verificationCodeService.verifyCode(
-            email,
-            code,
-            org.dddml.uniauth.entity.EmailVerificationCode.VerificationPurpose.REGISTRATION
-        );
-
-        if (!result.isSuccess()) {
-            return ResponseEntity.badRequest().body(Map.of(
-                "success", false,
-                "error", "INVALID_CODE",
-                "message", result.getError(),
-                "remainingAttempts", result.getRemainingAttempts()
-            ));
-        }
-
-        Optional<UserEntity> existingUser = userRepository.findByEmail(email);
-
-        if (existingUser.isPresent()) {
-            UserEntity user = existingUser.get();
-            bindEmailLoginMethod(user, email);
-            return createLoginResponse(user, response);
-        } else {
-            UserEntity user = createUserWithEmailLogin(email, result.getMetadata());
-            return createLoginResponse(user, response);
-        }
-    }
-
-    private void bindEmailLoginMethod(UserEntity user, String email) {
-        boolean alreadyBound = user.getLoginMethods().stream()
-            .anyMatch(lm -> lm.getAuthProvider() == AuthProvider.LOCAL
-                         && email.equalsIgnoreCase(lm.getLocalUsername()));
-
-        if (alreadyBound) {
-            log.info("Email login method is already bound");
-            return;
-        }
-
-        if (loginMethodRepository.existsByLocalUsername(email)) {
-            log.warn("Email login method is already assigned to another account");
-            return;
-        }
-
-        UserLoginMethod emailLoginMethod = UserLoginMethod.builder()
-            .id(UUID.randomUUID().toString())
-            .user(user)
-            .authProvider(AuthProvider.LOCAL)
-            .localUsername(email)
-            .localPasswordHash(null)
-            .isPrimary(false)
-            .isVerified(true)
-            .build();
-
-        user.addLoginMethod(emailLoginMethod);
-        userRepository.save(user);
-        log.info("Email login method binding completed");
-    }
-
-    private UserEntity createUserWithEmailLogin(String email, Map<String, Object> metadata) {
-        String displayName = (String) metadata.getOrDefault("displayName", extractDisplayNameFromEmail(email));
-        String passwordHash = (String) metadata.get("password");
-
-        UserEntity user = new UserEntity();
-        user.setId(UUID.randomUUID().toString());
-        user.setUsername(email);
-        user.setEmail(email);
-        user.setDisplayName(displayName);
-        user.setEnabled(true);
-        user.setEmailVerified(true);
-        user.setAuthorities(Set.of("ROLE_USER"));
-
-        UserLoginMethod loginMethod = UserLoginMethod.builder()
-            .id(UUID.randomUUID().toString())
-            .user(user)
-            .authProvider(AuthProvider.LOCAL)
-            .localUsername(email)
-            .localPasswordHash(passwordHash)
-            .isPrimary(true)
-            .isVerified(true)
-            .build();
-
-        user.addLoginMethod(loginMethod);
-        userRepository.save(user);
-        log.info("Email account creation completed");
-        return user;
-    }
-
-    private String extractDisplayNameFromEmail(String email) {
-        return email.split("@")[0];
-    }
-
-    private ResponseEntity<Map<String, Object>> createLoginResponse(
-            UserEntity user,
-            HttpServletResponse response) {
-        String accessToken = jwtTokenService.generateAccessToken(
-            user.getUsername(),
-            user.getEmail(),
-            user.getId(),
-            user.getAuthorities()
-        );
-
-        String refreshToken = jwtTokenService.generateRefreshToken(
-            user.getUsername(),
-            user.getId()
-        );
-        authCookieService.writeTokenCookies(response, accessToken, refreshToken);
-
-        Map<String, Object> userInfo = new LinkedHashMap<>();
-        userInfo.put("id", user.getId());
-        userInfo.put("username", user.getUsername());
-        userInfo.put("email", user.getEmail());
-        userInfo.put("displayName", user.getDisplayName());
-
-        return ResponseEntity.ok(Map.of(
-            "success", true,
-            "message", "Email verified successfully",
-            "user", userInfo,
-            "accessToken", accessToken,
-            "refreshToken", refreshToken,
-            "accessTokenExpiresIn", 3600,
-            "refreshTokenExpiresIn", 604800,
-            "tokenType", "Bearer"
+                "error", "EMAIL_SERVICE_UNAVAILABLE",
+                "message", "Email delivery is temporarily unavailable"
         ));
     }
 }

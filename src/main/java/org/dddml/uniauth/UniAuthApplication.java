@@ -2,6 +2,7 @@ package org.dddml.uniauth;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.session.config.annotation.web.http.EnableSpringHttpSession;
 
 /**
@@ -14,6 +15,7 @@ import org.springframework.session.config.annotation.web.http.EnableSpringHttpSe
  */
 @SpringBootApplication
 @EnableSpringHttpSession
+@EnableScheduling
 public class UniAuthApplication {
 
     public static void main(String[] args) {

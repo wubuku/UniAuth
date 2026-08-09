@@ -23,15 +23,15 @@
 | 资源服务器 | Flask，默认端口 `5002` |
 | 邮件发送 | 外部 HTTP 服务，默认端口 `8095`；`reference/email-service/` 提供独立参考实现 |
 | 数据库 | PostgreSQL 16-only |
-| Migration | Flyway V1 baseline + V2 + V3 + V4 + V5，history `uniauth_flyway_schema_history` |
+| Migration | Flyway V1 baseline + V2 + V3 + V4 + V5 + V6，history `uniauth_flyway_schema_history` |
 | 邮件数据库布局 | 默认独立数据库；显式 `shared-uniauth` 可与 UniAuth 共用 `public` schema，两侧 relation 名无冲突并使用独立 Flyway history |
-| Java 验证 | 200 tests，0 failures/errors/skips |
-| 邮件参考服务 | 148 tests；其中 22 个 PostgreSQL/GreenMail E2E、1 个 shared-schema ApplicationContext test、6 个 shared-schema bootstrap tests；另有 Shell runtime 43/43、HTTP 11/11、Flyway guard 15/15、backup/restore 10/10 |
+| Java 验证 | 212 tests，0 failures/errors/skips |
+| 邮件参考服务 | 150 tests；另有 Shell runtime 44/44、HTTP 11/11、Flyway guard 15/15、backup/restore 10/10 |
 | Shared-schema E2E | 4/4；UniAuth/邮件服务两种启动顺序、独立 history 和 baseline V0 |
 | HTTP E2E | 16/16；含四条安全链 CORS 矩阵，正常邮箱流程使用真实参考服务，失败映射矩阵使用受控 stub |
-| Flyway baseline guard | 14/14 |
+| Flyway baseline guard | 16/16 |
 | Playwright | 28 个 Mock 浏览器测试 + 1 个真实邮箱登录跨服务 E2E |
-| Python | 18 个资源服务器测试 + 9 个邮件 REST stub 契约测试 |
+| Python | 18 个资源服务器测试 + 12 个邮件 REST stub 契约测试 |
 | 前端 lint/type/build | 通过 |
 
 安全启动、测试和 baseline 操作见 [开发指南](docs/DEVELOPMENT.md) 与
@@ -80,12 +80,12 @@ userinfo/query/fragment 的绝对 HTTP/HTTPS 地址。参考实现自身还要�
 `SMTP_PORT` 必须在 `1..65535`；所有邮件 API 响应统一设置 no-store/no-cache 和
 nosniff 安全 header，避免队列、日志或错误响应被缓存或 MIME 嗅探。
 
-外部服务只有同步接受请求后，UniAuth 才保存验证码 challenge；拒绝、限流、超时和
-网络异常都失败关闭。正确验证码只按已选 challenge id 做一次 PostgreSQL 条件消费；
-注册控制器不会再按 email/purpose 二次标记，避免误消费验证期间新建的 challenge。
-该保证不等同于可靠投递：外部服务已接受后本地事务仍可能失败，异步投递失败也不会
-自动撤销 challenge。当前实现没有 transactional outbox 或统一 delivery/challenge
-状态机。
+UniAuth 会在同一事务中创建 opaque email challenge 和 transactional outbox。数据库
+只保存带服务端 key id 的 HMAC digest，不保存明文验证码或注册密码 metadata。
+worker 使用稳定 idempotency key 调用邮件服务，并通过 delivery status 查询恢复
+响应丢失或进程重启窗口；challenge 只有在邮件请求被确认接受后才进入 `ACTIVE`，
+终态投递失败会使其不可验证。同一 canonical `(email,purpose)` 最多一个 active
+challenge，错误尝试和并发消费均走 PostgreSQL 条件更新与共享限流。
 
 根目录 `scripts/test-http-e2e.sh` 会为正常邮箱注册和密码重置流程启动
 `reference/email-service/` 的真实 JAR、独立 PostgreSQL 和真实 HTTP 端口，并直接
@@ -497,7 +497,7 @@ SPRING_PROFILES_ACTIVE=test \
 mvn spring-boot:run
 ```
 
-测试环境会执行 Flyway V1-V5；SQL init 和 Spring Session 自动建表均关闭，演示账户
+测试环境会执行 Flyway V1-V6；SQL init 和 Spring Session 自动建表均关闭，演示账户
 仍保持默认关闭。
 
 ---

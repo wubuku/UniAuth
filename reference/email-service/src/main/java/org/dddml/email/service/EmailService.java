@@ -54,6 +54,23 @@ public class EmailService {
 
     public EmailQueue sendEmailAsync(String to, String subject, String templateName,
                                     Map<String, Object> variables, String emailType) {
+        return sendEmailAsync(
+            to,
+            subject,
+            templateName,
+            variables,
+            emailType,
+            null
+        );
+    }
+
+    public EmailQueue sendEmailAsync(
+            String to,
+            String subject,
+            String templateName,
+            Map<String, Object> variables,
+            String emailType,
+            String idempotencyKey) {
         try {
             ensureEnqueueEnabled();
             validateEnvelope(to, subject);
@@ -70,7 +87,21 @@ public class EmailService {
             String htmlContent = templateEngine.process(templateName, context);
             validateHtmlContent(htmlContent);
 
-            return emailQueueService.enqueue(to, subject, htmlContent, emailType);
+            if (idempotencyKey == null) {
+                return emailQueueService.enqueue(
+                    to,
+                    subject,
+                    htmlContent,
+                    emailType
+                );
+            }
+            return emailQueueService.enqueueIdempotent(
+                to,
+                subject,
+                htmlContent,
+                emailType,
+                idempotencyKey
+            );
 
         } catch (Exception exception) {
             log.error(
@@ -79,6 +110,9 @@ public class EmailService {
             );
             if (exception instanceof IllegalArgumentException illegalArgumentException) {
                 throw illegalArgumentException;
+            }
+            if (exception instanceof IdempotencyConflictException conflict) {
+                throw conflict;
             }
             throw new RuntimeException("Email enqueue failed", exception);
         }

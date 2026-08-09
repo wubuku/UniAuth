@@ -22,7 +22,7 @@ class EmailVerificationPropertiesTest {
     void bindsValidatedVerificationSettingsInASpringContext() {
         contextRunner
             .withPropertyValues(
-                "app.email.verification.code-length=8",
+                "app.email.verification.code-length=6",
                 "app.email.verification.expiry-minutes=15",
                 "app.email.verification.max-send-per-day=25",
                 "app.email.verification.max-retry-attempts=4",
@@ -32,7 +32,7 @@ class EmailVerificationPropertiesTest {
                 assertThat(context).hasNotFailed();
                 EmailVerificationProperties properties =
                     context.getBean(EmailVerificationProperties.class);
-                assertThat(properties.getCodeLength()).isEqualTo(8);
+                assertThat(properties.getCodeLength()).isEqualTo(6);
                 assertThat(properties.getExpiryMinutes()).isEqualTo(15);
                 assertThat(properties.getMaxSendPerDay()).isEqualTo(25);
                 assertThat(properties.getMaxRetryAttempts()).isEqualTo(4);
@@ -42,8 +42,8 @@ class EmailVerificationPropertiesTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-        "app.email.verification.code-length=0",
-        "app.email.verification.code-length=11",
+        "app.email.verification.code-length=5",
+        "app.email.verification.code-length=7",
         "app.email.verification.expiry-minutes=0",
         "app.email.verification.expiry-minutes=10081",
         "app.email.verification.max-send-per-day=0",

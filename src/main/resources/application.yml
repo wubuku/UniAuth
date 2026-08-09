@@ -12,6 +12,21 @@ app:
   auth:
     cookie:
       secure: false
+    password:
+      min-length: 8
+      max-length: 128
+      bcrypt-strength: 10
+    rate-limit:
+      enabled: ${AUTH_RATE_LIMIT_ENABLED:true}
+      window-seconds: ${AUTH_RATE_LIMIT_WINDOW_SECONDS:60}
+      source-limit: ${AUTH_RATE_LIMIT_SOURCE_LIMIT:60}
+      login-limit: ${AUTH_RATE_LIMIT_LOGIN_LIMIT:10}
+      registration-limit: ${AUTH_RATE_LIMIT_REGISTRATION_LIMIT:10}
+      challenge-send-limit: ${AUTH_RATE_LIMIT_CHALLENGE_SEND_LIMIT:5}
+      challenge-verify-limit: ${AUTH_RATE_LIMIT_CHALLENGE_VERIFY_LIMIT:10}
+      password-reset-limit: ${AUTH_RATE_LIMIT_PASSWORD_RESET_LIMIT:5}
+      key-secret: ${AUTH_RATE_LIMIT_KEY_SECRET:local-only-auth-rate-limit-key-change-me}
+      cleanup-delay-ms: ${AUTH_RATE_LIMIT_CLEANUP_DELAY_MS:60000}
   demo-data:
     enabled: false
     disposable: false
@@ -23,12 +38,22 @@ app:
       url: ${EMAIL_SERVICE_URL:http://localhost:8095}
       timeout: ${EMAIL_SERVICE_TIMEOUT_MS:5000}
       api-key: ${EMAIL_SERVICE_API_KEY:}
+    delivery:
+      worker-enabled: ${EMAIL_DELIVERY_WORKER_ENABLED:true}
+      worker-delay-ms: ${EMAIL_DELIVERY_WORKER_DELAY_MS:1000}
+      batch-size: ${EMAIL_DELIVERY_BATCH_SIZE:20}
+      max-attempts: ${EMAIL_DELIVERY_MAX_ATTEMPTS:5}
+      base-retry-seconds: ${EMAIL_DELIVERY_BASE_RETRY_SECONDS:5}
+      processing-timeout-seconds: ${EMAIL_DELIVERY_PROCESSING_TIMEOUT_SECONDS:30}
+      delivery-deadline-seconds: ${EMAIL_DELIVERY_DEADLINE_SECONDS:300}
     verification:
       code-length: 6
       expiry-minutes: 10
       max-send-per-day: 10
       max-retry-attempts: 5
       resend-cooldown-seconds: 60
+      hmac-key: ${EMAIL_VERIFICATION_HMAC_KEY:local-only-email-verification-key-change-me}
+      hmac-key-id: ${EMAIL_VERIFICATION_HMAC_KEY_ID:local-key-1}
     registration:
       require-email-username: false
   jwt:
@@ -92,6 +117,10 @@ spring:
   application:
     name: uni-auth
 
+  jackson:
+    parser:
+      strict-duplicate-detection: true
+
   # 启动时必须显式选择 dev、test 或 prod profile。
   # 仓库默认配置不连接任何数据库。
 
@@ -111,6 +140,7 @@ spring:
     validate-migration-naming: true
     validate-on-migrate: true
     out-of-order: false
+    group: true
 
   jpa:
     # JPA配置由环境特定的配置文件提供

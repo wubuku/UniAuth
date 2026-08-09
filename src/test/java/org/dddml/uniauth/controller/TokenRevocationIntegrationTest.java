@@ -6,14 +6,12 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import jakarta.servlet.http.Cookie;
-import org.dddml.uniauth.dto.RegisterRequest;
-import org.dddml.uniauth.dto.UserDto;
 import org.dddml.uniauth.entity.TokenBlacklistEntity;
 import org.dddml.uniauth.entity.UserEntity;
+import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.TokenBlacklistRepository;
 import org.dddml.uniauth.repository.UserRepository;
 import org.dddml.uniauth.service.JwtTokenService;
-import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.support.PostgreSqlIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +22,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -62,9 +61,6 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
     private ObjectMapper objectMapper;
 
     @Autowired
-    private UserService userService;
-
-    @Autowired
     private UserRepository userRepository;
 
     @Autowired
@@ -75,6 +71,9 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
 
     @AfterEach
     void removeFailureTrigger() {
@@ -300,17 +299,18 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
         String suffix = UUID.randomUUID().toString();
         String username = prefix + "-" + suffix;
         String password = "integration-password";
-        UserDto user = userService.register(new RegisterRequest(
+        UserEntity user = createLocalUser(
                 username,
                 username + "@example.invalid",
-                password,
-                "Token Revocation User",
-                null
-        ));
+                password
+        );
 
         MvcResult result = mockMvc.perform(post("/api/auth/login")
-                        .param("username", username)
-                        .param("password", password))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", username,
+                                "password", password
+                        ))))
                 .andExpect(status().isOk())
                 .andReturn();
         JsonNode body = responseJson(result);
@@ -319,6 +319,33 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
                 body.path("accessToken").asText(),
                 body.path("refreshToken").asText()
         );
+    }
+
+    private UserEntity createLocalUser(
+            String username,
+            String email,
+            String password) {
+        UserEntity user = new UserEntity();
+        user.setId(UUID.randomUUID().toString());
+        user.setUsername(username);
+        user.setEmail(email);
+        user.setEmailIdentityType(UserEntity.EmailIdentityType.VERIFIED_CONTACT);
+        user.setDisplayName("Token Revocation User");
+        user.setEmailVerified(true);
+        user.setEnabled(true);
+        user.setAuthorities(Set.of("ROLE_USER"));
+
+        UserLoginMethod method = UserLoginMethod.builder()
+                .id(UUID.randomUUID().toString())
+                .user(user)
+                .authProvider(UserLoginMethod.AuthProvider.LOCAL)
+                .localUsername(username)
+                .localPasswordHash(passwordEncoder.encode(password))
+                .isPrimary(true)
+                .isVerified(true)
+                .build();
+        user.addLoginMethod(method);
+        return userRepository.saveAndFlush(user);
     }
 
     private MvcResult refresh(String refreshToken) throws Exception {

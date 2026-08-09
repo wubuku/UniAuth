@@ -33,6 +33,8 @@ public class LoginMethodService {
     private final UserLoginMethodRepository loginMethodRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final CanonicalEmailService canonicalEmailService;
+    private final PasswordPolicyService passwordPolicyService;
 
     /**
      * 获取用户的所有登录方式
@@ -107,7 +109,9 @@ public class LoginMethodService {
      */
     @Transactional(readOnly = true)
     public UserLoginMethod findByLocalUsername(String username) {
-        return loginMethodRepository.findByLocalUsername(username)
+        String normalized =
+                canonicalEmailService.canonicalizeLoginIdentifier(username);
+        return loginMethodRepository.findByLocalUsername(normalized)
             .orElse(null);
     }
 
@@ -243,6 +247,9 @@ public class LoginMethodService {
             String password) {
         
         log.info("Adding local login method");
+        String normalizedUsername =
+                canonicalEmailService.canonicalizeLoginIdentifier(username);
+        passwordPolicyService.validateNewPassword(password);
         
         // 1. 检查用户是否已有本地登录方式
         if (loginMethodRepository.findByUserIdAndAuthProvider(userId, AuthProvider.LOCAL).isPresent()) {
@@ -250,20 +257,28 @@ public class LoginMethodService {
         }
         
         // 2. 检查用户名是否已被使用
-        if (loginMethodRepository.existsByLocalUsername(username)) {
+        if (loginMethodRepository.existsByLocalUsername(normalizedUsername)) {
             throw new IllegalArgumentException("用户名已被使用，请选择其他用户名");
         }
         
         // 3. 获取用户
         UserEntity user = userRepository.findById(userId)
             .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+        if (canonicalEmailService.looksLikeEmail(normalizedUsername)
+                && (user.getEmailIdentityType()
+                    != UserEntity.EmailIdentityType.VERIFIED_CONTACT
+                || !normalizedUsername.equals(user.getEmail()))) {
+            throw new IllegalArgumentException(
+                    "邮箱形式的本地用户名必须等于当前已验证邮箱"
+            );
+        }
         
         // 4. 创建新的本地登录方式
         UserLoginMethod loginMethod = UserLoginMethod.builder()
             .id(UUID.randomUUID().toString())  // 生成 UUID
             .user(user)
             .authProvider(AuthProvider.LOCAL)
-            .localUsername(username)
+            .localUsername(normalizedUsername)
             .localPasswordHash(passwordEncoder.encode(password))
             .isPrimary(false)  // 新添加的不是主登录方式
             .isVerified(false)  // 未验证（可选：可以改为true如果不需要验证）
@@ -295,8 +310,11 @@ public class LoginMethodService {
      */
     public void updatePassword(String username, String newPassword) {
         log.info("Updating local password");
+        passwordPolicyService.validateNewPassword(newPassword);
         
-        UserLoginMethod loginMethod = loginMethodRepository.findByLocalUsername(username)
+        String normalized =
+                canonicalEmailService.canonicalizeLoginIdentifier(username);
+        UserLoginMethod loginMethod = loginMethodRepository.findByLocalUsername(normalized)
             .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
         
         if (loginMethod.getLocalPasswordHash() == null) {

@@ -191,7 +191,8 @@ successful_migration_counts="$(
                 ',',
                 count(*) FILTER (WHERE success IS TRUE AND version = '1'),
                 count(*) FILTER (WHERE success IS TRUE AND version = '2'),
-                count(*) FILTER (WHERE success IS TRUE AND version = '3')
+                count(*) FILTER (WHERE success IS TRUE AND version = '3'),
+                count(*) FILTER (WHERE success IS TRUE AND version = '4')
             )
             FROM public.email_service_flyway_schema_history
         "
@@ -229,7 +230,7 @@ unexpected_migrations="$(
             FROM public.email_service_flyway_schema_history
             WHERE success IS NOT TRUE
                OR (
-                    (type = 'SQL' AND version IN ('1', '2', '3'))
+                    (type = 'SQL' AND version IN ('1', '2', '3', '4'))
                     OR (type = 'BASELINE' AND version = '0')
                ) IS NOT TRUE;
         "
@@ -243,10 +244,10 @@ elif [ "$database_layout" = "shared-uniauth" ] \
             || [ "$baseline_migrations" = "1" ]; }; then
     baseline_history_is_valid=true
 fi
-if [ "$successful_migration_counts" != "1,1,1" ] \
+if [ "$successful_migration_counts" != "1,1,1,1" ] \
         || [ "$baseline_history_is_valid" != "true" ] \
         || [ "$unexpected_migrations" != "0" ]; then
-    fail "email service Flyway history must match the expected V1 through V3 chain"
+    fail "email service Flyway history must match the expected V1 through V4 chain"
 fi
 
 pg_dump_major="$(

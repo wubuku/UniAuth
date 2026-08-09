@@ -49,9 +49,9 @@ class FlywayExistingSchemaBaselineIntegrationTest extends PostgreSqlIntegrationT
                 .load();
 
         adoptionFlyway.baseline();
-        assertThat(adoptionFlyway.migrate().migrationsExecuted).isEqualTo(4);
+        assertThat(adoptionFlyway.migrate().migrationsExecuted).isEqualTo(5);
         assertThat(adoptionFlyway.info().current()).isNotNull();
-        assertThat(adoptionFlyway.info().current().getVersion().toString()).isEqualTo("5");
+        assertThat(adoptionFlyway.info().current().getVersion().toString()).isEqualTo("6");
 
         JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
         assertThat(jdbcTemplate.queryForObject(
@@ -83,9 +83,9 @@ class FlywayExistingSchemaBaselineIntegrationTest extends PostgreSqlIntegrationT
                 String.class
         )).isEqualTo("NO:0");
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT to_regclass('public.idx_email_verification_pending_lookup')",
+                "SELECT to_regclass('public.idx_email_challenge_handle_lookup')",
                 String.class
-        )).isEqualTo("idx_email_verification_pending_lookup");
+        )).isEqualTo("idx_email_challenge_handle_lookup");
 
         Path keyDirectory = Files.createTempDirectory("uniauth-existing-schema-key-");
         Path keyFile = keyDirectory.resolve("signing-key.ser");
@@ -96,7 +96,7 @@ class FlywayExistingSchemaBaselineIntegrationTest extends PostgreSqlIntegrationT
             Flyway runtimeFlyway = context.getBean(Flyway.class);
             assertThat(runtimeFlyway.migrate().migrationsExecuted).isZero();
             assertThat(runtimeFlyway.info().current()).isNotNull();
-            assertThat(runtimeFlyway.info().current().getVersion().toString()).isEqualTo("5");
+            assertThat(runtimeFlyway.info().current().getVersion().toString()).isEqualTo("6");
             assertThat(context.getBean(JdbcTemplate.class)
                     .queryForObject("SELECT count(*) FROM users", Long.class))
                     .isZero();

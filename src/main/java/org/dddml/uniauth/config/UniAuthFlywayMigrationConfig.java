@@ -55,6 +55,21 @@ public class UniAuthFlywayMigrationConfig {
             "idx_email_verification_pending_lookup",
             "idx_email_verification_email_created_at",
             "idx_email_verification_expires_at",
+            "uk_email_challenge_one_active",
+            "idx_email_challenge_handle_lookup",
+            "idx_email_challenge_delivery",
+            "email_delivery_outbox",
+            "email_delivery_outbox_pkey",
+            "email_delivery_outbox_challenge_key",
+            "email_delivery_outbox_idempotency_key",
+            "idx_email_delivery_outbox_pending",
+            "auth_rate_limits",
+            "auth_rate_limits_pkey",
+            "idx_auth_rate_limits_expires_at",
+            "security_events",
+            "security_events_pkey",
+            "idx_security_events_subject_created",
+            "uk_users_canonical_contact_email",
             "user_authorities",
             "user_authorities_pkey",
             "token_blacklist",
@@ -78,18 +93,20 @@ public class UniAuthFlywayMigrationConfig {
             "email_queue",
             "email_queue_id_seq",
             "email_logs",
-            "email_logs_id_seq"
+            "email_logs_id_seq",
+            "uk_email_queue_idempotency_key"
     );
 
     private static final Set<String> PEER_MANAGED_RELATIONS = Set.of(
             "email_queue",
             "email_queue_id_seq",
             "email_logs",
-            "email_logs_id_seq"
+            "email_logs_id_seq",
+            "uk_email_queue_idempotency_key"
     );
 
     private static final List<String> REQUIRED_PEER_VERSIONS =
-            List.of("1", "2", "3");
+            List.of("1", "2", "3", "4");
 
     @Bean
     FlywayMigrationStrategy uniAuthFlywayMigrationStrategy(Environment environment) {
@@ -211,6 +228,11 @@ public class UniAuthFlywayMigrationConfig {
         if (configuration.isOutOfOrder()) {
             throw new IllegalStateException(
                     "SPRING_FLYWAY_OUT_OF_ORDER must be exactly false"
+            );
+        }
+        if (!configuration.isGroup()) {
+            throw new IllegalStateException(
+                    "SPRING_FLYWAY_GROUP must be exactly true"
             );
         }
     }

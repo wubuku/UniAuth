@@ -397,6 +397,7 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
                 username + "@example.invalid",
                 "integration-password",
                 "OAuth Binding User",
+                null,
                 null
         ));
     }

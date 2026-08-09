@@ -74,6 +74,23 @@ class UniAuthSharedSchemaFlywayBootstrapIntegrationTest
     }
 
     @Test
+    void existingSharedSchemaRequiresTheEmailIdempotencyIndex() {
+        DataSource dataSource = newDatabase();
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        migrateEmailService(dataSource);
+        UniAuthFlywayMigrationConfig.migrate(uniAuthFlyway(dataSource));
+
+        jdbc.execute("DROP INDEX uk_email_queue_idempotency_key");
+
+        assertThatThrownBy(() ->
+            UniAuthFlywayMigrationConfig.migrate(uniAuthFlyway(dataSource))
+        )
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("not a complete email-service schema")
+            .hasMessageContaining("uk_email_queue_idempotency_key");
+    }
+
+    @Test
     void existingUniAuthHistoryRejectsEmailRelationsWithoutPeerHistory() {
         DataSource dataSource = newDatabase();
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
@@ -103,10 +120,10 @@ class UniAuthSharedSchemaFlywayBootstrapIntegrationTest
                 case "unknown-version" -> addHistoryRow(
                     jdbc,
                     "email_service_flyway_schema_history",
-                    "4",
+                    "5",
                     "unexpected migration",
                     "SQL",
-                    "V4__unexpected_migration.sql",
+                    "V5__unexpected_migration.sql",
                     true
                 );
                 case "duplicate-version" -> addHistoryRow(
@@ -184,6 +201,10 @@ class UniAuthSharedSchemaFlywayBootstrapIntegrationTest
             new ConfigurationOverride(
                 "SPRING_FLYWAY_OUT_OF_ORDER",
                 configuration -> configuration.outOfOrder(true)
+            ),
+            new ConfigurationOverride(
+                "SPRING_FLYWAY_GROUP",
+                configuration -> configuration.group(false)
             )
         );
 
@@ -217,7 +238,8 @@ class UniAuthSharedSchemaFlywayBootstrapIntegrationTest
             .failOnMissingLocations(true)
             .validateMigrationNaming(true)
             .validateOnMigrate(true)
-            .outOfOrder(false);
+            .outOfOrder(false)
+            .group(true);
     }
 
     private void migrateEmailService(DataSource dataSource) {
@@ -238,6 +260,7 @@ class UniAuthSharedSchemaFlywayBootstrapIntegrationTest
             .validateMigrationNaming(true)
             .validateOnMigrate(true)
             .outOfOrder(false)
+            .group(true)
             .load()
             .migrate();
     }

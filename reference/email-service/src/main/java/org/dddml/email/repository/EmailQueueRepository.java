@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface EmailQueueRepository extends JpaRepository<EmailQueue, Long> {
@@ -48,4 +49,6 @@ public interface EmailQueueRepository extends JpaRepository<EmailQueue, Long> {
     List<EmailQueue> findByStatus(String status);
 
     List<EmailQueue> findByStatusOrderByPriorityDesc(String status);
+
+    Optional<EmailQueue> findByIdempotencyKey(String idempotencyKey);
 }

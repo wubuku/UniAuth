@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.Cookie;
 import org.dddml.uniauth.dto.UserDto;
+import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
+import org.dddml.uniauth.repository.UserRepository;
 import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.LoginMethodService;
 import org.dddml.uniauth.service.UserService;
@@ -15,11 +17,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.Set;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -45,6 +49,9 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
     private UserLoginMethodRepository loginMethodRepository;
 
     @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
     private LoginMethodService loginMethodService;
 
     @Autowired
@@ -52,6 +59,9 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
 
     @Autowired
     private JwtTokenService jwtTokenService;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
 
     @Test
     void localRegistrationLoginRefreshAndProtectedApisWorkAcrossHttpAndPostgreSql()
@@ -74,18 +84,25 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                                   "displayName": "Duplicate"
                                 }
                                 """))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.detail").value("Username already exists"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requireEmailVerification").value(true));
+        assertThat(userRepository.findByEmail("other@example.invalid")).isEmpty();
 
         mockMvc.perform(post("/api/auth/login")
-                        .param("username", username)
-                        .param("password", "wrong-password"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LoginPayload(
+                                username,
+                                "wrong-password"
+                        ))))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("Invalid credentials"));
 
         MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .param("username", username)
-                        .param("password", password))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LoginPayload(
+                                username,
+                                password
+                        ))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.authenticated").value(true))
                 .andExpect(jsonPath("$.user.id").value(userId))
@@ -263,8 +280,11 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(jsonPath("$.loginMethod.localUsername").value("oauth-local"));
 
         mockMvc.perform(post("/api/auth/login")
-                        .param("username", "oauth-local")
-                        .param("password", "oauth-local-password"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LoginPayload(
+                                "oauth-local",
+                                "oauth-local-password"
+                        ))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.user.id").value(oauthUser.getId()));
 
@@ -285,25 +305,36 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
 
     private String registerLocalUser(String username, String email, String password)
             throws Exception {
-        MvcResult result = mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new RegisterPayload(
-                                username,
-                                email,
-                                password,
-                                "Integration User"
-                        ))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.username").value(username))
-                .andExpect(jsonPath("$.provider").value("local"))
-                .andReturn();
-        return responseJson(result).path("id").asText();
+        UserEntity user = new UserEntity();
+        user.setId(UUID.randomUUID().toString());
+        user.setUsername(username);
+        user.setEmail(email);
+        user.setEmailIdentityType(UserEntity.EmailIdentityType.VERIFIED_CONTACT);
+        user.setDisplayName("Integration User");
+        user.setEmailVerified(true);
+        user.setEnabled(true);
+        user.setAuthorities(Set.of("ROLE_USER"));
+
+        UserLoginMethod method = UserLoginMethod.builder()
+                .id(UUID.randomUUID().toString())
+                .user(user)
+                .authProvider(UserLoginMethod.AuthProvider.LOCAL)
+                .localUsername(username)
+                .localPasswordHash(passwordEncoder.encode(password))
+                .isPrimary(true)
+                .isVerified(true)
+                .build();
+        user.addLoginMethod(method);
+        return userRepository.saveAndFlush(user).getId();
     }
 
     private JsonNode login(String username, String password) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/auth/login")
-                        .param("username", username)
-                        .param("password", password))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LoginPayload(
+                                username,
+                                password
+                        ))))
                 .andExpect(status().isOk())
                 .andReturn();
         return responseJson(result);
@@ -339,11 +370,6 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 .isEqualTo("Lax");
     }
 
-    private record RegisterPayload(
-            String username,
-            String email,
-            String password,
-            String displayName
-    ) {
+    private record LoginPayload(String username, String password) {
     }
 }

@@ -4,14 +4,14 @@ import { AuthService } from '../services/authService';
 interface ForgotPasswordModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSwitchToRegister?: () => void;
 }
 
 type Step = 'email' | 'verify' | 'success';
 
-export const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClose, onSwitchToRegister }) => {
+export const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClose }) => {
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
+  const [challengeHandle, setChallengeHandle] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -31,6 +31,7 @@ export const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen
     try {
       const response = await AuthService.requestPasswordReset(email);
       if (response.success) {
+        setChallengeHandle(response.challengeHandle);
         setStep('verify');
         setCountdown(response.resendAfter);
         const timer = setInterval(() => {
@@ -42,65 +43,12 @@ export const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen
             return prev - 1;
           });
         }, 1000);
-      } else if (response.errorCode === 'EMAIL_NOT_REGISTERED') {
-        setError(
-          <span>
-            {response.message}
-            {onSwitchToRegister && (
-              <button
-                type="button"
-                onClick={onSwitchToRegister}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#007bff',
-                  cursor: 'pointer',
-                  marginLeft: '8px',
-                  fontSize: '14px',
-                  textDecoration: 'underline',
-                  padding: 0
-                }}
-              >
-            去注册
-              </button>
-            )}
-          </span>
-        );
       } else {
         setError(response.message || '发送失败，请稍后重试');
       }
-    } catch (err: any) {
-      const errorData = err.response?.data;
-      const errorCode = errorData?.errorCode;
-      const message = errorData?.message || '发送失败，请稍后重试';
-
-      if (errorCode === 'EMAIL_NOT_REGISTERED') {
-        setError(
-          <span>
-            {message}
-            {onSwitchToRegister && (
-              <button
-                type="button"
-                onClick={onSwitchToRegister}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#007bff',
-                  cursor: 'pointer',
-                  marginLeft: '8px',
-                  fontSize: '14px',
-                  textDecoration: 'underline',
-                  padding: 0
-                }}
-              >
-            去注册
-              </button>
-            )}
-          </span>
-        );
-      } else {
-        setError(message);
-      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '发送失败，请稍后重试';
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -114,8 +62,12 @@ export const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen
       return;
     }
 
-    if (newPassword.length < 6) {
-      setError('密码长度至少6位');
+    if (newPassword.length < 8) {
+      setError('密码长度至少8位');
+      return;
+    }
+    if (!challengeHandle) {
+      setError('验证请求已失效，请重新发送验证码');
       return;
     }
 
@@ -123,6 +75,7 @@ export const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen
 
     try {
       const response = await AuthService.resetPassword({
+        challengeHandle,
         email,
         verificationCode,
         newPassword
@@ -144,6 +97,7 @@ export const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen
   const handleClose = () => {
     setStep('email');
     setEmail('');
+    setChallengeHandle('');
     setVerificationCode('');
     setNewPassword('');
     setConfirmPassword('');

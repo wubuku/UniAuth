@@ -3,8 +3,10 @@ package org.dddml.uniauth.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.Cookie;
+import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
+import org.dddml.uniauth.repository.UserRepository;
 import org.dddml.uniauth.repository.Web3NonceRepository;
 import org.dddml.uniauth.service.Web3NonceService;
 import org.dddml.uniauth.support.PostgreSqlIntegrationTest;
@@ -13,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -25,6 +28,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -51,10 +57,16 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
     private UserLoginMethodRepository loginMethodRepository;
 
     @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
     private Web3NonceRepository web3NonceRepository;
 
     @Autowired
     private Web3NonceService web3NonceService;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
 
     @Test
     void signedNonceCreatesOneWeb3UserAndCannotBeReplayed() throws Exception {
@@ -110,23 +122,18 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
     void authenticatedLocalUserCanBindOnlyOneWallet() throws Exception {
         String username = "web3-bind-local";
         String password = "web3-bind-password";
-        MvcResult registerResult = mockMvc.perform(post("/api/auth/register")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "username": "web3-bind-local",
-                                  "email": "web3-bind-local@example.invalid",
-                                  "password": "web3-bind-password",
-                                  "displayName": "Web3 Bind"
-                                }
-                                """))
-                .andExpect(status().isOk())
-                .andReturn();
-        String userId = responseJson(registerResult).path("id").asText();
+        String userId = createLocalUser(
+                username,
+                "web3-bind-local@example.invalid",
+                password
+        ).getId();
 
         MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .param("username", username)
-                        .param("password", password))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", username,
+                                "password", password
+                        ))))
                 .andExpect(status().isOk())
                 .andReturn();
         JsonNode loginBody = responseJson(loginResult);
@@ -170,6 +177,33 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                         .content(secondChallenge.requestBody()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errorCode").value("BINDING_FAILED"));
+    }
+
+    private UserEntity createLocalUser(
+            String username,
+            String email,
+            String password) {
+        UserEntity user = new UserEntity();
+        user.setId(UUID.randomUUID().toString());
+        user.setUsername(username);
+        user.setEmail(email);
+        user.setEmailIdentityType(UserEntity.EmailIdentityType.VERIFIED_CONTACT);
+        user.setDisplayName("Web3 Bind");
+        user.setEmailVerified(true);
+        user.setEnabled(true);
+        user.setAuthorities(Set.of("ROLE_USER"));
+
+        UserLoginMethod method = UserLoginMethod.builder()
+                .id(UUID.randomUUID().toString())
+                .user(user)
+                .authProvider(UserLoginMethod.AuthProvider.LOCAL)
+                .localUsername(username)
+                .localPasswordHash(passwordEncoder.encode(password))
+                .isPrimary(true)
+                .isVerified(true)
+                .build();
+        user.addLoginMethod(method);
+        return userRepository.saveAndFlush(user);
     }
 
     @Test

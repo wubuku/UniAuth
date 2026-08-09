@@ -8,6 +8,7 @@ from pathlib import Path
 import secrets
 import threading
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 
 MAX_REQUEST_BYTES = 64 * 1024
@@ -26,6 +27,7 @@ class EmailStubServer(ThreadingHTTPServer):
         self._queue_id = 0
         self._queue_lock = threading.Lock()
         self._capture_lock = threading.Lock()
+        self._deliveries: dict[str, dict[str, Any]] = {}
 
         if self.capture_file is not None:
             self.capture_file.parent.mkdir(parents=True, exist_ok=True)
@@ -53,11 +55,55 @@ class EmailStubServer(ThreadingHTTPServer):
             "templateName": payload.get("templateName"),
             "variables": payload.get("variables"),
             "emailType": payload.get("emailType"),
+            "idempotencyKey": payload.get("idempotencyKey"),
+            "status": "PENDING",
         }
         line = json.dumps(captured, separators=(",", ":"))
         with self._capture_lock:
             with self.capture_file.open("a", encoding="utf-8") as capture_stream:
                 capture_stream.write(f"{line}\n")
+
+    def enqueue_idempotent(
+        self,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], bool]:
+        idempotency_key = payload.get("idempotencyKey")
+        if not isinstance(idempotency_key, str) or not idempotency_key:
+            queue_id = self.next_queue_id()
+            return {
+                "queueId": queue_id,
+                "status": "PENDING",
+                "fingerprint": None,
+            }, True
+
+        fingerprint = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        with self._queue_lock:
+            existing = self._deliveries.get(idempotency_key)
+            if existing is not None:
+                if existing["fingerprint"] != fingerprint:
+                    raise ValueError("IDEMPOTENCY_CONFLICT")
+                return existing, False
+
+            self._queue_id += 1
+            delivery = {
+                "queueId": self._queue_id,
+                "status": (
+                    "FAILED"
+                    if str(payload.get("to", "")).startswith("delivery-failed-")
+                    else "PENDING"
+                ),
+                "fingerprint": fingerprint,
+            }
+            self._deliveries[idempotency_key] = delivery
+            return delivery, True
+
+    def delivery(self, idempotency_key: str) -> dict[str, Any] | None:
+        with self._queue_lock:
+            return self._deliveries.get(idempotency_key)
 
 
 class EmailStubHandler(BaseHTTPRequestHandler):
@@ -66,10 +112,27 @@ class EmailStubHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if not self._authorize():
             return
-        if self.path != "/api/email/health":
-            self._json_response(404, {"error": "NOT_FOUND"})
+        request_url = urlsplit(self.path)
+        if request_url.path == "/api/email/health":
+            self._json_response(200, {"status": "UP"})
             return
-        self._json_response(200, {"status": "UP"})
+        if request_url.path == "/api/email/delivery/status":
+            values = parse_qs(request_url.query).get("idempotencyKey", [])
+            if len(values) != 1 or not values[0]:
+                self._json_response(400, {"error": "INVALID_REQUEST"})
+                return
+            delivery = self.server.delivery(values[0])
+            if delivery is None:
+                self._json_response(404, {"error": "NOT_FOUND"})
+                return
+            self._json_response(200, {
+                "success": True,
+                "queueId": delivery["queueId"],
+                "status": delivery["status"],
+            })
+            return
+        else:
+            self._json_response(404, {"error": "NOT_FOUND"})
 
     def do_POST(self) -> None:
         if not self._authorize():
@@ -93,9 +156,31 @@ class EmailStubHandler(BaseHTTPRequestHandler):
             self._json_response(503, {"success": False, "error": "REJECTED"})
             return
 
-        queue_id = self.server.next_queue_id()
-        self.server.capture(payload, queue_id)
-        self._json_response(200, {"success": True, "queueId": queue_id})
+        try:
+            delivery, created = self.server.enqueue_idempotent(payload)
+        except ValueError:
+            self._json_response(409, {
+                "success": False,
+                "error": "IDEMPOTENCY_CONFLICT",
+            })
+            return
+
+        if created:
+            self.server.capture(payload, delivery["queueId"])
+        if (
+            created
+            and recipient.startswith("accepted-timeout-")
+        ):
+            self._json_response(503, {
+                "success": False,
+                "error": "RESPONSE_LOST_AFTER_ACCEPTANCE",
+            })
+            return
+        self._json_response(200, {
+            "success": True,
+            "queueId": delivery["queueId"],
+            "status": delivery["status"],
+        })
 
     def log_message(self, format: str, *args: Any) -> None:
         return

@@ -29,8 +29,12 @@ public class UserEntity {
     @Column(unique = true, nullable = false, length = 255)
     private String username;
 
-    @Column(unique = true, nullable = false, length = 255)
+    @Column(nullable = false, length = 255)
     private String email;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "email_identity_type", nullable = false, length = 32)
+    private EmailIdentityType emailIdentityType;
 
     @Column(length = 255)
     private String displayName;
@@ -74,6 +78,7 @@ public class UserEntity {
         private String id;
         private String username;
         private String email;
+        private EmailIdentityType emailIdentityType;
         private String displayName;
         private String avatarUrl;
         private boolean emailVerified = false;
@@ -87,6 +92,10 @@ public class UserEntity {
         public UserEntityBuilder id(String id) { this.id = id; return this; }
         public UserEntityBuilder username(String username) { this.username = username; return this; }
         public UserEntityBuilder email(String email) { this.email = email; return this; }
+        public UserEntityBuilder emailIdentityType(EmailIdentityType emailIdentityType) {
+            this.emailIdentityType = emailIdentityType;
+            return this;
+        }
         public UserEntityBuilder displayName(String displayName) { this.displayName = displayName; return this; }
         public UserEntityBuilder avatarUrl(String avatarUrl) { this.avatarUrl = avatarUrl; return this; }
         public UserEntityBuilder emailVerified(boolean emailVerified) { this.emailVerified = emailVerified; return this; }
@@ -102,6 +111,7 @@ public class UserEntity {
             user.id = this.id;
             user.username = this.username;
             user.email = this.email;
+            user.emailIdentityType = this.emailIdentityType;
             user.displayName = this.displayName;
             user.avatarUrl = this.avatarUrl;
             user.emailVerified = this.emailVerified;
@@ -123,6 +133,16 @@ public class UserEntity {
         }
         if (authorities.isEmpty()) {
             authorities.add("ROLE_USER");
+        }
+        if (emailIdentityType == null) {
+            boolean synthetic = email != null
+                    && (email.endsWith("@oauth.local")
+                    || email.endsWith("@web3.local"));
+            emailIdentityType = synthetic
+                    ? EmailIdentityType.SYNTHETIC
+                    : (emailVerified
+                    ? EmailIdentityType.VERIFIED_CONTACT
+                    : EmailIdentityType.UNVERIFIED_CONTACT);
         }
     }
 
@@ -154,5 +174,11 @@ public class UserEntity {
         if (this.loginMethods.size() == 1) {
             loginMethod.setPrimary(true);
         }
+    }
+
+    public enum EmailIdentityType {
+        VERIFIED_CONTACT,
+        UNVERIFIED_CONTACT,
+        SYNTHETIC
     }
 }

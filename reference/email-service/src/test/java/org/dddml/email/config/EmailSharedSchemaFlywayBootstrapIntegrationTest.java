@@ -104,6 +104,23 @@ class EmailSharedSchemaFlywayBootstrapIntegrationTest {
     }
 
     @Test
+    void existingSharedSchemaRevalidatesF1PeerRelations() {
+        DataSource dataSource = newDatabase();
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        migrateUniAuth(dataSource);
+        EmailSharedSchemaFlywayBootstrap.migrate(emailFlyway(dataSource), true);
+
+        jdbc.execute("DROP TABLE security_events");
+
+        assertThatThrownBy(() ->
+            EmailSharedSchemaFlywayBootstrap.migrate(emailFlyway(dataSource), true)
+        )
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("not a complete UniAuth schema")
+            .hasMessageContaining("security_events");
+    }
+
+    @Test
     void existingEmailHistoryRejectsUniAuthRelationsWithoutPeerHistory() {
         DataSource dataSource = newDatabase();
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
@@ -133,10 +150,10 @@ class EmailSharedSchemaFlywayBootstrapIntegrationTest {
                 case "unknown-version" -> addHistoryRow(
                     jdbc,
                     "uniauth_flyway_schema_history",
-                    "6",
+                    "7",
                     "unexpected migration",
                     "SQL",
-                    "V6__unexpected_migration.sql",
+                    "V7__unexpected_migration.sql",
                     true
                 );
                 case "duplicate-version" -> addHistoryRow(
@@ -208,6 +225,7 @@ class EmailSharedSchemaFlywayBootstrapIntegrationTest {
             .validateMigrationNaming(true)
             .validateOnMigrate(true)
             .outOfOrder(false)
+            .group(true)
             .load();
     }
 
@@ -232,6 +250,7 @@ class EmailSharedSchemaFlywayBootstrapIntegrationTest {
             .validateMigrationNaming(true)
             .validateOnMigrate(true)
             .outOfOrder(false)
+            .group(true)
             .load()
             .migrate();
     }

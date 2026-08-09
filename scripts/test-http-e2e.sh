@@ -26,6 +26,7 @@ EMAIL_STUB_PID=""
 APP_LOG="$TEMP_DIR/application.log"
 EMAIL_SERVICE_LOG="$TEMP_DIR/reference-email-service.log"
 EMAIL_STUB_LOG="$TEMP_DIR/email-service-stub.log"
+EMAIL_STUB_CAPTURE_FILE="$TEMP_DIR/email-service-stub-capture.jsonl"
 EMAIL_SERVICE_API_KEY="email-reference-e2e-${RUN_ID}"
 EMAIL_SERVICE_PORT=""
 EMAIL_STUB_PORT=""
@@ -66,6 +67,13 @@ terminate_process_tree() {
     done < <(pgrep -P "$process_id" 2>/dev/null || true)
 
     kill -TERM "$process_id" >/dev/null 2>&1 || true
+    for _ in $(seq 1 100); do
+        if ! kill -0 "$process_id" >/dev/null 2>&1; then
+            return
+        fi
+        sleep 0.1
+    done
+    kill -KILL "$process_id" >/dev/null 2>&1 || true
 }
 
 cleanup() {
@@ -137,6 +145,7 @@ BASE_URL="http://127.0.0.1:${SERVER_PORT}"
 EMAIL_SERVICE_URL="http://127.0.0.1:${EMAIL_SERVICE_PORT}"
 EMAIL_STUB_URL="http://127.0.0.1:${EMAIL_STUB_PORT}"
 ACTIVE_EMAIL_SERVICE_URL="$EMAIL_SERVICE_URL"
+EMAIL_DELIVERY_WORKER_ENABLED_VALUE=true
 
 db_value() {
     local sql="$1"
@@ -158,6 +167,76 @@ email_service_db_value() {
         -U "$EMAIL_SERVICE_DATABASE_USER" \
         -d "$EMAIL_SERVICE_DATABASE_NAME" \
         -c "$sql"
+}
+
+wait_for_challenge_delivery_status() {
+    local challenge_handle="$1"
+    local expected_status="$2"
+    local actual_status
+
+    for _ in $(seq 1 150); do
+        actual_status="$(db_value "
+            SELECT delivery_status
+            FROM email_verification_codes
+            WHERE id = '$challenge_handle';
+        ")"
+        if [ "$actual_status" = "$expected_status" ]; then
+            return
+        fi
+        if [ "$actual_status" = "FAILED" ] \
+                && [ "$expected_status" != "FAILED" ]; then
+            failure_reason="$(db_value "
+                SELECT COALESCE(failure_reason, 'UNKNOWN')
+                FROM email_verification_codes
+                WHERE id = '$challenge_handle';
+            ")"
+            fail "challenge $challenge_handle failed before reaching $expected_status: $failure_reason"
+        fi
+        sleep 0.1
+    done
+    fail "challenge $challenge_handle did not reach $expected_status"
+}
+
+reference_email_code() {
+    local challenge_handle="$1"
+    email_service_db_value "
+        SELECT (
+            regexp_match(
+                html_content,
+                '<div class=\"code\"[^>]*>[[:space:]]*([0-9]{6})[[:space:]]*</div>'
+            )
+        )[1]
+        FROM email_queue
+        WHERE idempotency_key = 'email-challenge:$challenge_handle'
+          AND status IN ('PENDING', 'PROCESSING', 'COMPLETED')
+        LIMIT 1;
+    "
+}
+
+stub_email_code() {
+    local challenge_handle="$1"
+    local idempotency_key="email-challenge:$challenge_handle"
+    local code
+
+    for _ in $(seq 1 100); do
+        code="$(
+            jq -rs \
+                --arg idempotencyKey "$idempotency_key" \
+                '[
+                    .[]
+                    | select(.idempotencyKey == $idempotencyKey)
+                    | .variables.verificationCode
+                 ] | last // empty' \
+                "$EMAIL_STUB_CAPTURE_FILE" 2>/dev/null \
+                || true
+        )"
+        if [[ "$code" =~ ^[0-9]{6}$ ]]; then
+            printf '%s' "$code"
+            return
+        fi
+        sleep 0.1
+    done
+    fail "email stub did not capture a rendered verification code"
 }
 
 expect_db_rejection() {
@@ -331,7 +410,9 @@ start_email_service() {
 start_email_stub() {
     EMAIL_STUB_API_KEY="$EMAIL_SERVICE_API_KEY" \
         python3 "$PROJECT_DIR/scripts/email_service_stub.py" \
-            --port "$EMAIL_STUB_PORT" >"$EMAIL_STUB_LOG" 2>&1 &
+            --port "$EMAIL_STUB_PORT" \
+            --capture-file "$EMAIL_STUB_CAPTURE_FILE" \
+            >"$EMAIL_STUB_LOG" 2>&1 &
     EMAIL_STUB_PID=$!
 
     for _ in $(seq 1 50); do
@@ -370,6 +451,18 @@ start_application() {
         export EMAIL_SERVICE_API_KEY
         export APP_EMAIL_SERVICE_URL="$ACTIVE_EMAIL_SERVICE_URL"
         export APP_EMAIL_SERVICE_API_KEY="$EMAIL_SERVICE_API_KEY"
+        export EMAIL_DELIVERY_WORKER_ENABLED="$EMAIL_DELIVERY_WORKER_ENABLED_VALUE"
+        export APP_EMAIL_DELIVERY_WORKER_ENABLED="$EMAIL_DELIVERY_WORKER_ENABLED_VALUE"
+        export EMAIL_DELIVERY_WORKER_DELAY_MS=100
+        export APP_EMAIL_DELIVERY_WORKER_DELAY_MS=100
+        export EMAIL_DELIVERY_MAX_ATTEMPTS=3
+        export APP_EMAIL_DELIVERY_MAX_ATTEMPTS=3
+        export EMAIL_DELIVERY_BASE_RETRY_SECONDS=1
+        export APP_EMAIL_DELIVERY_BASE_RETRY_SECONDS=1
+        export EMAIL_DELIVERY_PROCESSING_TIMEOUT_SECONDS=1
+        export APP_EMAIL_DELIVERY_PROCESSING_TIMEOUT_SECONDS=1
+        export EMAIL_DELIVERY_DEADLINE_SECONDS=120
+        export APP_EMAIL_DELIVERY_DEADLINE_SECONDS=120
         export APP_FRONTEND_URL="$BASE_URL"
         export APP_WEB3_DOMAIN="127.0.0.1:${SERVER_PORT}"
         exec "$PROJECT_DIR/start.sh"
@@ -378,10 +471,18 @@ start_application() {
 }
 
 wait_for_application() {
+    local consecutive_ready=0
+
     for _ in $(seq 1 150); do
         if curl -fsS "${BASE_URL}/oauth2/jwks" >/dev/null 2>&1; then
-            return
+            consecutive_ready=$((consecutive_ready + 1))
+            if [ "$consecutive_ready" -ge 3 ]; then
+                return
+            fi
+            sleep 0.2
+            continue
         fi
+        consecutive_ready=0
         if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
             fail "application process exited before becoming ready"
         fi
@@ -542,6 +643,11 @@ echo "1/16 Verify Flyway-owned PostgreSQL startup"
 ")" = "1" ] || fail "Flyway V5 was not recorded as a successful SQL migration"
 [ "$(db_value "
     SELECT count(*)
+    FROM uniauth_flyway_schema_history
+    WHERE version = '6' AND type = 'SQL' AND success = true;
+")" = "1" ] || fail "Flyway V6 was not recorded as a successful SQL migration"
+[ "$(db_value "
+    SELECT count(*)
     FROM information_schema.tables
     WHERE table_schema = 'public'
       AND table_name = ANY (ARRAY[
@@ -552,9 +658,12 @@ echo "1/16 Verify Flyway-owned PostgreSQL startup"
         'user_authorities',
         'token_blacklist',
         'spring_session',
-        'spring_session_attributes'
+        'spring_session_attributes',
+        'email_delivery_outbox',
+        'auth_rate_limits',
+        'security_events'
       ]);
-")" = "8" ] || fail "Flyway did not create all eight managed tables"
+")" = "11" ] || fail "Flyway did not create all eleven managed tables"
 [ "$(db_value "SELECT to_regclass('public.flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "the default Flyway history table was unexpectedly created"
 [ "$(db_value "
@@ -612,12 +721,23 @@ echo "1/16 Verify Flyway-owned PostgreSQL startup"
     FROM pg_indexes
     WHERE schemaname = 'public'
       AND indexname IN (
-        'idx_email_verification_pending_lookup',
-        'idx_email_verification_email_created_at',
-        'idx_email_verification_expires_at'
+        'uk_email_challenge_one_active',
+        'idx_email_challenge_handle_lookup',
+        'idx_email_challenge_delivery',
+        'idx_email_delivery_outbox_pending',
+        'idx_auth_rate_limits_expires_at',
+        'idx_security_events_subject_created'
     );
-")" = "3" ] \
-    || fail "Flyway V4 did not create the email repository indexes"
+")" = "6" ] \
+    || fail "Flyway V6 did not create the durable email and security indexes"
+[ "$(db_value "
+    SELECT count(*)
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'email_verification_codes'
+      AND column_name IN ('verification_code', 'metadata', 'is_used');
+")" = "0" ] \
+    || fail "Flyway V6 retained plaintext challenge credential columns"
 [ "$(db_value "
     SELECT count(*)
     FROM pg_indexes
@@ -635,11 +755,15 @@ echo "1/16 Verify Flyway-owned PostgreSQL startup"
 
 expect_db_rejection "
     BEGIN;
-    INSERT INTO users (id, username, email)
+    INSERT INTO users (
+        id, username, email, email_verified, email_identity_type
+    )
     VALUES (
         '00000000-0000-0000-0000-000000000101',
         'shell-primary-guard',
-        'shell-primary-guard@example.invalid'
+        'shell-primary-guard@example.invalid',
+        false,
+        'UNVERIFIED_CONTACT'
     );
     INSERT INTO user_login_methods (
         id, user_id, auth_provider, local_username, is_primary, is_verified
@@ -666,11 +790,15 @@ expect_db_rejection "
 
 expect_db_rejection "
     BEGIN;
-    INSERT INTO users (id, username, email)
+    INSERT INTO users (
+        id, username, email, email_verified, email_identity_type
+    )
     VALUES (
         '00000000-0000-0000-0000-000000000111',
         'shell-shape-guard',
-        'shell-shape-guard@example.invalid'
+        'shell-shape-guard@example.invalid',
+        false,
+        'UNVERIFIED_CONTACT'
     );
     INSERT INTO user_login_methods (
         id, user_id, auth_provider, is_primary, is_verified
@@ -717,7 +845,7 @@ local_email="${local_username}@example.invalid"
 local_password="initial-password-${RUN_ID}"
 local_new_password="updated-password-${RUN_ID}"
 
-register_payload="$(
+registration_preview_payload="$(
     jq -cn \
         --arg username "$local_username" \
         --arg email "$local_email" \
@@ -729,23 +857,76 @@ register_payload="$(
           displayName: "Shell E2E User"
         }'
 )"
-register_response="$(post_json /api/auth/register "$register_payload")"
-local_user_id="$(jq -er '.id' <<<"$register_response")"
-[ -n "$local_user_id" ] || fail "local registration did not return a user id"
+registration_preview="$(
+    post_json /api/auth/register "$registration_preview_payload"
+)"
+[ "$(jq -er '.requireEmailVerification' <<<"$registration_preview")" = "true" ] \
+    || fail "local registration preview did not require email verification"
+[ "$(db_value "
+    SELECT count(*)
+    FROM users
+    WHERE username = '$local_username' OR email = '$local_email';
+")" = "0" ] || fail "registration preview persisted an unverified user"
 
-duplicate_status="$(
-    curl -sS -o "$TEMP_DIR/duplicate.json" -w '%{http_code}' \
-        -X POST "${BASE_URL}/api/auth/register" \
+registration_send_response="$(
+    post_json \
+        /api/auth/send-verification-code \
+        "$(jq -cn --arg email "$local_email" \
+            '{email: $email, purpose: "REGISTRATION"}')"
+)"
+registration_handle="$(
+    jq -er '.challengeHandle' <<<"$registration_send_response"
+)"
+wait_for_challenge_delivery_status "$registration_handle" "ACTIVE"
+registration_code="$(reference_email_code "$registration_handle")"
+[[ "$registration_code" =~ ^[0-9]{6}$ ]] \
+    || fail "reference email service did not render the registration code"
+
+register_payload="$(
+    jq -cn \
+        --arg challengeHandle "$registration_handle" \
+        --arg username "$local_username" \
+        --arg email "$local_email" \
+        --arg password "$local_password" \
+        --arg verificationCode "$registration_code" \
+        '{
+          challengeHandle: $challengeHandle,
+          username: $username,
+          email: $email,
+          password: $password,
+          displayName: "Shell E2E User",
+          verificationCode: $verificationCode
+        }'
+)"
+registration_headers="$TEMP_DIR/registration-headers.txt"
+register_response="$(
+    curl -sS -D "$registration_headers" \
+        -X POST "${BASE_URL}/api/auth/verify-email" \
         -H "Content-Type: application/json" \
         --data "$register_payload"
 )"
-[ "$duplicate_status" = "400" ] || fail "duplicate registration did not return 400"
+local_user_id="$(jq -er '.user.id' <<<"$register_response")"
+[ -n "$local_user_id" ] || fail "local registration did not return a user id"
+assert_auth_cookie_headers "$registration_headers" 3600 604800
+
+duplicate_status="$(
+    curl -sS -o "$TEMP_DIR/duplicate.json" -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/verify-email" \
+        -H "Content-Type: application/json" \
+        --data "$register_payload"
+)"
+[ "$duplicate_status" = "400" ] \
+    || fail "consumed registration challenge was accepted twice"
 
 wrong_login_status="$(
     curl -sS -o /dev/null -w '%{http_code}' \
         -X POST "${BASE_URL}/api/auth/login" \
-        --data-urlencode "username=$local_username" \
-        --data-urlencode "password=wrong-password"
+        -H "Content-Type: application/json" \
+        --data "$(
+            jq -cn \
+                --arg username "$local_username" \
+                '{username: $username, password: "wrong-password"}'
+        )"
 )"
 [ "$wrong_login_status" = "401" ] || fail "wrong password did not return 401"
 
@@ -753,8 +934,13 @@ login_headers="$TEMP_DIR/login-headers.txt"
 login_response="$(
     curl -sS -D "$login_headers" -c "$COOKIE_JAR" \
         -X POST "${BASE_URL}/api/auth/login" \
-        --data-urlencode "username=$local_username" \
-        --data-urlencode "password=$local_password"
+        -H "Content-Type: application/json" \
+        --data "$(
+            jq -cn \
+                --arg username "$local_username" \
+                --arg password "$local_password" \
+                '{username: $username, password: $password}'
+        )"
 )"
 [ "$(jq -er '.authenticated' <<<"$login_response")" = "true" ] \
     || fail "local login was not authenticated"
@@ -817,8 +1003,10 @@ wait_for_application
 [ "$(db_value "
     SELECT count(*)
     FROM uniauth_flyway_schema_history
-    WHERE version IN ('1', '2', '3') AND type = 'SQL' AND success = true;
-")" = "3" ] || fail "application restart changed the Flyway migration history"
+    WHERE version IN ('1', '2', '3', '4', '5', '6')
+      AND type = 'SQL'
+      AND success = true;
+")" = "6" ] || fail "application restart changed the Flyway migration history"
 [ "$(db_value "SELECT count(*) FROM users WHERE id = '$local_user_id';")" = "1" ] \
     || fail "application restart lost the registered user"
 restarted_user="$(
@@ -1235,6 +1423,11 @@ if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     POSTGRES_DATABASE="$DATABASE_NAME" \
     POSTGRES_USER="$DATABASE_USER" \
     POSTGRES_PASSWORD="$DATABASE_PASSWORD" \
+    EMAIL_POSTGRES_HOST=127.0.0.1 \
+    EMAIL_POSTGRES_PORT="$EMAIL_SERVICE_DATABASE_PORT" \
+    EMAIL_POSTGRES_DATABASE="$EMAIL_SERVICE_DATABASE_NAME" \
+    EMAIL_POSTGRES_USER="$EMAIL_SERVICE_DATABASE_USER" \
+    EMAIL_POSTGRES_PASSWORD="$EMAIL_SERVICE_DATABASE_PASSWORD" \
         "$PROJECT_DIR/scripts/test-email-registration.sh"; then
     fail "email registration/password-reset subflow failed"
 fi
@@ -1243,14 +1436,16 @@ fi
     FROM email_queue
     WHERE recipient = '$email_flow_address'
       AND email_type = 'VERIFICATION'
-      AND status = 'PENDING';
+      AND status = 'PENDING'
+      AND idempotency_key LIKE 'email-challenge:%';
 ")" = "1" ] || fail "reference email service did not persist the registration template"
 [ "$(email_service_db_value "
     SELECT count(*)
     FROM email_queue
     WHERE recipient = '$email_flow_address'
       AND email_type = 'PASSWORD_RESET'
-      AND status = 'PENDING';
+      AND status = 'PENDING'
+      AND idempotency_key LIKE 'email-challenge:%';
 ")" = "1" ] || fail "reference email service did not persist the password-reset template"
 [ "$(email_service_db_value "
     SELECT count(*)
@@ -1270,13 +1465,14 @@ if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     fail "registration/password-reset rejection contract subflow failed"
 fi
 
-echo "13/16 Reject unsupported purpose and failed email acceptance"
+echo "13/16 Verify durable email delivery recovery and terminal failure"
 stop_application
 start_email_stub
 ACTIVE_EMAIL_SERVICE_URL="$EMAIL_STUB_URL"
+EMAIL_DELIVERY_WORKER_ENABLED_VALUE=false
 start_application
 wait_for_application
-before_failed_send_count="$(db_value "SELECT count(*) FROM email_verification_codes;")"
+before_unsupported_count="$(db_value "SELECT count(*) FROM email_verification_codes;")"
 for unsupported_purpose in LOGIN PASSWORD_RESET UNKNOWN; do
     unsupported_status="$(
         request_status \
@@ -1293,35 +1489,111 @@ for unsupported_purpose in LOGIN PASSWORD_RESET UNKNOWN; do
     [ "$unsupported_status" = "400" ] \
         || fail "unsupported email purpose $unsupported_purpose did not return 400"
 done
+[ "$(db_value "SELECT count(*) FROM email_verification_codes;")" \
+    = "$before_unsupported_count" ] \
+    || fail "unsupported email purpose changed challenge state"
+
+pending_email="pending-restart-${RUN_ID}@example.invalid"
+pending_response="$(
+    post_json \
+        /api/auth/send-verification-code \
+        "$(jq -cn --arg email "$pending_email" \
+            '{email: $email, purpose: "REGISTRATION"}')"
+)"
+pending_handle="$(jq -er '.challengeHandle' <<<"$pending_response")"
+sleep 0.5
+[ "$(db_value "
+    SELECT delivery_status || ':' || usage_status
+    FROM email_verification_codes
+    WHERE id = '$pending_handle';
+")" = "PENDING_DELIVERY:UNUSED" ] \
+    || fail "worker-disabled challenge did not remain pending"
+[ "$(db_value "
+    SELECT status || ':' || attempt_count
+    FROM email_delivery_outbox
+    WHERE challenge_id = '$pending_handle';
+")" = "PENDING:0" ] \
+    || fail "worker-disabled outbox was processed unexpectedly"
+
+stop_application
+EMAIL_DELIVERY_WORKER_ENABLED_VALUE=true
+start_application
+wait_for_application
+wait_for_challenge_delivery_status "$pending_handle" "ACTIVE"
+[ "$(db_value "
+    SELECT status
+    FROM email_delivery_outbox
+    WHERE challenge_id = '$pending_handle';
+")" = "ACCEPTED" ] \
+    || fail "pending outbox was not accepted after worker restart"
+
+accepted_timeout_email="accepted-timeout-${RUN_ID}@example.invalid"
+accepted_timeout_response="$(
+    post_json \
+        /api/auth/send-verification-code \
+        "$(jq -cn --arg email "$accepted_timeout_email" \
+            '{email: $email, purpose: "REGISTRATION"}')"
+)"
+accepted_timeout_handle="$(
+    jq -er '.challengeHandle' <<<"$accepted_timeout_response"
+)"
+wait_for_challenge_delivery_status "$accepted_timeout_handle" "ACTIVE"
+[ "$(db_value "
+    SELECT status || ':' || attempt_count
+    FROM email_delivery_outbox
+    WHERE challenge_id = '$accepted_timeout_handle';
+")" = "ACCEPTED:2" ] \
+    || fail "lost acceptance response was not reconciled idempotently"
+[ "$(
+    jq -rs \
+        --arg idempotencyKey "email-challenge:$accepted_timeout_handle" \
+        '[.[] | select(.idempotencyKey == $idempotencyKey)] | length' \
+        "$EMAIL_STUB_CAPTURE_FILE"
+)" = "1" ] || fail "accepted-timeout retry created duplicate provider queues"
+
+delivery_failed_email="delivery-failed-${RUN_ID}@example.invalid"
+delivery_failed_response="$(
+    post_json \
+        /api/auth/send-verification-code \
+        "$(jq -cn --arg email "$delivery_failed_email" \
+            '{email: $email, purpose: "REGISTRATION"}')"
+)"
+delivery_failed_handle="$(
+    jq -er '.challengeHandle' <<<"$delivery_failed_response"
+)"
+wait_for_challenge_delivery_status "$delivery_failed_handle" "FAILED"
+[ "$(db_value "
+    SELECT usage_status || ':' || failure_reason
+    FROM email_verification_codes
+    WHERE id = '$delivery_failed_handle';
+")" = "INVALIDATED:PROVIDER_DELIVERY_FAILED" ] \
+    || fail "provider final failure left a usable challenge"
 
 for delivery_case in rejected rate-limited; do
     delivery_email="${delivery_case}-${RUN_ID}@example.invalid"
-    expected_status=503
-    if [ "$delivery_case" = "rate-limited" ]; then
-        expected_status=429
-    fi
-    delivery_status="$(
-        request_status \
-            POST \
+    delivery_response="$(
+        post_json \
             /api/auth/send-verification-code \
-            -H "Content-Type: application/json" \
-            --data "$(
-                jq -cn \
-                    --arg email "$delivery_email" \
-                    '{email: $email, purpose: "REGISTRATION"}'
-            )"
+            "$(jq -cn --arg email "$delivery_email" \
+                '{email: $email, purpose: "REGISTRATION"}')"
     )"
-    [ "$delivery_status" = "$expected_status" ] \
-        || fail "$delivery_case email acceptance returned $delivery_status"
+    [ "$(jq -er '.success' <<<"$delivery_response")" = "true" ] \
+        || fail "$delivery_case delivery was not durably queued"
+    delivery_handle="$(jq -er '.challengeHandle' <<<"$delivery_response")"
+    wait_for_challenge_delivery_status "$delivery_handle" "FAILED"
     [ "$(db_value "
-        SELECT count(*)
+        SELECT usage_status
         FROM email_verification_codes
-        WHERE email = '$delivery_email';
-    ")" = "0" ] || fail "$delivery_case email acceptance persisted a challenge"
+        WHERE id = '$delivery_handle';
+    ")" = "INVALIDATED" ] \
+        || fail "$delivery_case final failure left a usable challenge"
+    [ "$(db_value "
+        SELECT status || ':' || attempt_count
+        FROM email_delivery_outbox
+        WHERE challenge_id = '$delivery_handle';
+    ")" = "FAILED:3" ] \
+        || fail "$delivery_case delivery did not exhaust the retry budget"
 done
-[ "$(db_value "SELECT count(*) FROM email_verification_codes;")" \
-    = "$before_failed_send_count" ] \
-    || fail "rejected purpose or delivery attempt changed challenge state"
 
 echo "14/16 Exhaust an invalid email verification retry budget"
 retry_email="shell-retry-${RUN_ID}@example.invalid"
@@ -1330,8 +1602,7 @@ retry_send_payload="$(
         --arg email "$retry_email" \
         '{
           email: $email,
-          purpose: "REGISTRATION",
-          password: "retry-test-password"
+          purpose: "REGISTRATION"
         }'
 )"
 retry_send_response="$(
@@ -1339,21 +1610,14 @@ retry_send_response="$(
 )"
 [ "$(jq -er '.success' <<<"$retry_send_response")" = "true" ] \
     || fail "retry-budget verification code was not created"
-retry_code="$(db_value "
-    SELECT verification_code
-    FROM email_verification_codes
-    WHERE email = '$retry_email'
-      AND purpose = 'REGISTRATION'
-      AND is_used = false
-    ORDER BY created_at DESC
-    LIMIT 1;
-")"
+retry_handle="$(jq -er '.challengeHandle' <<<"$retry_send_response")"
+wait_for_challenge_delivery_status "$retry_handle" "ACTIVE"
+retry_code="$(stub_email_code "$retry_handle")"
 wrong_retry_code="000000"
 if [ "$retry_code" = "$wrong_retry_code" ]; then
     wrong_retry_code="111111"
 fi
 for attempt in $(seq 1 5); do
-    expected_remaining=$((5 - attempt))
     retry_response_file="$TEMP_DIR/retry-${attempt}.json"
     retry_status="$(
         curl -sS -o "$retry_response_file" -w '%{http_code}' \
@@ -1361,21 +1625,34 @@ for attempt in $(seq 1 5); do
             -H "Content-Type: application/json" \
             --data "$(
                 jq -cn \
+                    --arg handle "$retry_handle" \
                     --arg email "$retry_email" \
                     --arg code "$wrong_retry_code" \
-                    '{email: $email, verificationCode: $code}'
+                    '{
+                      challengeHandle: $handle,
+                      username: $email,
+                      email: $email,
+                      password: "retry-test-password",
+                      displayName: "Retry Test",
+                      verificationCode: $code
+                    }'
             )"
     )"
     [ "$retry_status" = "400" ] \
         || fail "invalid verification attempt $attempt did not return 400"
-    [ "$(jq -er '.remainingAttempts' "$retry_response_file")" = "$expected_remaining" ] \
-        || fail "invalid verification attempt $attempt returned the wrong retry budget"
+    [ "$(db_value "
+        SELECT retry_count
+        FROM email_verification_codes
+        WHERE id = '$retry_handle';
+    ")" = "$attempt" ] \
+        || fail "invalid verification attempt $attempt did not consume one retry"
 done
 [ "$(db_value "
-    SELECT count(*)
+    SELECT usage_status
     FROM email_verification_codes
-    WHERE email = '$retry_email' AND is_used = false;
-")" = "0" ] || fail "exhausted email verification challenge remained usable"
+    WHERE id = '$retry_handle';
+")" = "INVALIDATED" ] \
+    || fail "exhausted email verification challenge remained usable"
 
 echo "15/16 Verify logout cookie clearing"
 logout_headers="$TEMP_DIR/logout-headers.txt"
@@ -1424,7 +1701,7 @@ revoked_introspection="$(
 echo "16/16 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
     || fail "the E2E harness connected to an unexpected database"
-[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "5" ] \
+[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "6" ] \
     || fail "Flyway history contained unexpected rows after two application starts"
 [ "$(db_value "SELECT count(*) FROM web3_nonces;")" = "0" ] \
     || fail "consumed Web3 nonces remained in the database"
@@ -1436,8 +1713,23 @@ echo "16/16 Verify final database invariants"
 [ "$(db_value "
     SELECT count(*)
     FROM email_verification_codes
-    WHERE is_used = true;
-")" -ge "2" ] || fail "email verification and reset codes were not consumed"
+    WHERE usage_status = 'USED';
+")" -ge "3" ] || fail "email registration and reset challenges were not consumed"
+[ "$(db_value "
+    SELECT count(*)
+    FROM email_delivery_outbox
+    WHERE status = 'ACCEPTED';
+")" -ge "5" ] || fail "accepted email deliveries were not durably recorded"
+[ "$(db_value "
+    SELECT count(*)
+    FROM security_events
+    WHERE event_type IN (
+        'EMAIL_CHALLENGE_QUEUED',
+        'EMAIL_DELIVERY_ACCEPTED',
+        'EMAIL_DELIVERY_FAILED',
+        'EMAIL_CHALLENGE_CONSUMED'
+    );
+")" -ge "10" ] || fail "email security events were not durably recorded"
 [ "$(db_value "
     SELECT count(*)
     FROM (

@@ -141,6 +141,7 @@ function VerificationModal({
 interface RegisterResponse {
   requireEmailVerification?: boolean;
   username?: string;
+  email?: string;
   message?: string;
 }
 
@@ -166,6 +167,7 @@ export default function LoginPage() {
   const [showVerificationModal, setShowVerificationModal] = useState(false);
   const [verificationEmail, setVerificationEmail] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
+  const [verificationChallengeHandle, setVerificationChallengeHandle] = useState('');
   const [verificationLoading, setVerificationLoading] = useState(false);
   const [verificationCountdown, setVerificationCountdown] = useState(0);
   const [verificationError, setVerificationError] = useState<string | null>(null);
@@ -229,13 +231,12 @@ export default function LoginPage() {
     try {
       const response = await AuthService.sendVerificationCode({
         email: verificationEmail,
-        purpose: 'REGISTRATION',
-        password: registrationData?.password,
-        displayName: registrationData?.displayName
+        purpose: 'REGISTRATION'
       });
 
+      setVerificationChallengeHandle(response.challengeHandle);
       startCountdown(response.resendAfter);
-      setSuccessMessage(`验证码已发送到 ${verificationEmail}，请查收邮件`);
+      setSuccessMessage(`验证码请求已受理，请检查 ${verificationEmail}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : '发送验证码失败';
       setVerificationError(message);
@@ -256,19 +257,29 @@ export default function LoginPage() {
       setVerificationError('请输入6位验证码');
       return;
     }
+    if (!verificationChallengeHandle || !registrationData) {
+      setVerificationError('验证请求已失效，请重新发送验证码');
+      return;
+    }
 
     setVerificationLoading(true);
     setVerificationError(null);
 
     try {
       const response = await AuthService.verifyEmail({
+        challengeHandle: verificationChallengeHandle,
+        username: registrationData.username,
         email: verificationEmail,
+        password: registrationData.password,
+        displayName: registrationData.displayName,
         verificationCode
       });
 
       if (response.success && response.accessToken) {
         setShowVerificationModal(false);
         setVerificationCode('');
+        setVerificationChallengeHandle('');
+        setRegistrationData(null);
         setSuccessMessage('邮箱验证成功！');
 
         localStorage.setItem('accessToken', response.accessToken);
@@ -302,17 +313,19 @@ export default function LoginPage() {
         const response = await AuthService.register(formData) as RegisterResponse;
 
         if (response.requireEmailVerification) {
-          setVerificationEmail(response.username || formData.username);
+          setVerificationEmail(response.email || formData.email);
           setRegistrationData({
             username: formData.username,
             email: formData.email,
             password: formData.password,
             displayName: formData.displayName
           });
+          setVerificationChallengeHandle('');
+          setVerificationCode('');
+          setVerificationCountdown(0);
+          setHasAutoSentCode(false);
           setShowVerificationModal(true);
           setVerificationLoading(false);
-
-          await handleSendVerificationCode();
           return;
         }
 
@@ -705,8 +718,11 @@ export default function LoginPage() {
           onCancel={() => {
             setShowVerificationModal(false);
             setVerificationCode('');
+            setVerificationChallengeHandle('');
             setVerificationError(null);
             setHasAutoSentCode(false);
+            setRegistrationData(null);
+            setFormData(prev => ({ ...prev, password: '' }));
           }}
         />
       )}
@@ -714,10 +730,6 @@ export default function LoginPage() {
       <ForgotPasswordModal
         isOpen={showForgotPasswordModal}
         onClose={() => setShowForgotPasswordModal(false)}
-        onSwitchToRegister={() => {
-          setShowForgotPasswordModal(false);
-          setIsRegisterMode(true);
-        }}
       />
     </div>
   );

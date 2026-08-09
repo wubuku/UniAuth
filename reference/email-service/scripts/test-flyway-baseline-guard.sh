@@ -132,6 +132,28 @@ create_database() {
     db_command postgres -c "CREATE DATABASE \"$1\";" >/dev/null
 }
 
+migrate_to_v1() {
+    local database="$1"
+    (
+        cd "$PROJECT_DIR"
+        mvn -q \
+            -Dflyway.url="jdbc:postgresql://127.0.0.1:${DATABASE_PORT}/${database}" \
+            -Dflyway.user="$DATABASE_USER" \
+            -Dflyway.password="$DATABASE_PASSWORD" \
+            -Dflyway.locations="filesystem:${PROJECT_DIR}/src/main/resources/db/migration/postgresql" \
+            -Dflyway.table=email_service_flyway_schema_history \
+            -Dflyway.defaultSchema=public \
+            -Dflyway.schemas=public \
+            -Dflyway.baselineOnMigrate=false \
+            -Dflyway.cleanDisabled=true \
+            -Dflyway.validateMigrationNaming=true \
+            -Dflyway.validateOnMigrate=true \
+            -Dflyway.outOfOrder=false \
+            -Dflyway.target=1 \
+            flyway:migrate
+    )
+}
+
 start_application() {
     local database="$1"
     local log_file="$2"
@@ -301,20 +323,8 @@ grep -Fq "Non-empty public schema requires EMAIL_DATABASE_LAYOUT=shared-uniauth"
     || fail "dirty-schema startup created Flyway history"
 
 echo "3/15 Apply only V1 to a disposable database"
-v1_log="$TEMP_DIR/v1.log"
-start_application "$V2_DATABASE" "$v1_log" 1
-wait_for_application "$v1_log"
-echo "4/15 Verify migrated application response security headers"
-assert_security_headers
-stop_application
-APPLICATION_API_KEY="email-flyway-key-${RUN_ID}"
-credential_log="$TEMP_DIR/v1-credential.log"
-start_application "$V2_DATABASE" "$credential_log" 1
-wait_for_application "$credential_log"
-echo "5/15 Reject repeated API-key headers after migration"
-assert_repeated_api_key_rejected
-stop_application
-APPLICATION_API_KEY=""
+migrate_to_v1 "$V2_DATABASE"
+echo "4/15 Verify the V1-only history and schema shape"
 [ "$(db_value "$V2_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '1' AND success;")" = "1" ] \
     || fail "V1-only startup did not record migration V1"
@@ -324,6 +334,25 @@ APPLICATION_API_KEY=""
 [ "$(db_value "$V2_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '3';")" = "0" ] \
     || fail "V1-only startup unexpectedly applied V3"
+[ "$(db_value "$V2_DATABASE" \
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '4';")" = "0" ] \
+    || fail "V1-only startup unexpectedly applied V4"
+[ "$(db_value "$V2_DATABASE" \
+    "SELECT to_regclass('public.email_queue') IS NOT NULL;")" = "t" ] \
+    || fail "V1 migration did not create the queue table"
+[ "$(db_value "$V2_DATABASE" "
+    SELECT count(*)
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'email_queue'
+      AND column_name = 'idempotency_key';
+")" = "0" ] || fail "V1-only schema unexpectedly contains the V4 delivery identity"
+
+echo "5/15 Reject current application startup on the intentionally outdated V1 schema"
+v1_incompatible_log="$TEMP_DIR/v1-incompatible.log"
+expect_startup_failure "$V2_DATABASE" "$v1_incompatible_log" 1
+grep -Fq "missing column [idempotency_key]" "$v1_incompatible_log" \
+    || fail "outdated-schema failure did not report the missing V4 column"
 
 echo "6/15 Reject V1 data that violates the V2 retry bound"
 db_command "$V2_DATABASE" -c "
@@ -367,7 +396,7 @@ echo "7/15 Preserve V1 history and source data after failed V2"
     "SELECT count(*) FROM email_queue WHERE retry_count = 2 AND max_retries = 1;")" = "1" ] \
     || fail "failed V2 changed source data"
 
-echo "8/15 Forward-fix retry data, apply V2/V3, and exercise the UniAuth template contract"
+echo "8/15 Forward-fix retry data, apply V2/V3/V4, and exercise the UniAuth template contract"
 db_command "$V2_DATABASE" -c "
     UPDATE email_queue
     SET retry_count = max_retries,
@@ -422,7 +451,8 @@ template_response="$(
                     username: "flyway-template@example.test",
                     expiryMinutes: 10
                 },
-                emailType: "VERIFICATION"
+                emailType: "VERIFICATION",
+                idempotencyKey: "flyway-template-1"
             }'
         )" \
         "http://127.0.0.1:${SERVER_PORT}/api/email/template"
@@ -435,6 +465,8 @@ template_queue_id="$(jq -er '.queueId' <<<"$template_response")"
      WHERE id = $template_queue_id
        AND recipient = 'flyway-template@example.test'
        AND email_type = 'VERIFICATION'
+       AND idempotency_key = 'flyway-template-1'
+       AND length(request_fingerprint) = 64
        AND status = 'PENDING'
        AND position('135790' in html_content) > 0;")" = "1" ] \
     || fail "migrated application did not persist the rendered UniAuth template"
@@ -445,6 +477,9 @@ stop_application
 [ "$(db_value "$V2_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '3' AND success;")" = "1" ] \
     || fail "forward-fixed database did not apply V3"
+[ "$(db_value "$V2_DATABASE" \
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '4' AND success;")" = "1" ] \
+    || fail "forward-fixed database did not apply V4"
 [ "$(db_value "$V2_DATABASE" "
     SELECT count(*)
     FROM pg_constraint
@@ -457,6 +492,16 @@ echo "9/15 Verify V3 normalizes stale lifecycle metadata and enforces the row sh
     FROM pg_constraint
     WHERE conname = 'chk_email_queue_lifecycle_state';
 ")" = "1" ] || fail "V3 queue lifecycle constraint is missing"
+[ "$(db_value "$V2_DATABASE" "
+    SELECT count(*)
+    FROM pg_constraint
+    WHERE conname = 'chk_email_queue_idempotency_shape';
+")" = "1" ] || fail "V4 idempotency shape constraint is missing"
+[ "$(db_value "$V2_DATABASE" "
+    SELECT count(*)
+    FROM pg_indexes
+    WHERE indexname = 'uk_email_queue_idempotency_key';
+")" = "1" ] || fail "V4 idempotency key index is missing"
 [ "$(db_value "$V2_DATABASE" "
     SELECT count(*)
     FROM email_queue
@@ -477,10 +522,7 @@ echo "9/15 Verify V3 normalizes stale lifecycle metadata and enforces the row sh
 ")" = "1" ] || fail "V3 did not normalize stale completed lifecycle metadata"
 
 echo "10/15 Reject V1 logs that reference a missing queue row"
-orphan_v1_log="$TEMP_DIR/orphan-v1.log"
-start_application "$ORPHAN_DATABASE" "$orphan_v1_log" 1
-wait_for_application "$orphan_v1_log"
-stop_application
+migrate_to_v1 "$ORPHAN_DATABASE"
 db_command "$ORPHAN_DATABASE" -c "
     INSERT INTO email_logs (
         queue_id,
@@ -509,7 +551,7 @@ grep -Fq "fk_email_logs_queue" "$orphan_failure_log" \
     "SELECT count(*) FROM email_logs WHERE queue_id = 999;")" = "1" ] \
     || fail "orphan-log failure changed source data"
 
-echo "11/15 Forward-fix the orphan reference and apply V2/V3 successfully"
+echo "11/15 Forward-fix the orphan reference and apply V2/V3/V4 successfully"
 db_command "$ORPHAN_DATABASE" \
     -c "UPDATE email_logs SET queue_id = NULL WHERE queue_id = 999;" \
     >/dev/null
@@ -523,6 +565,9 @@ stop_application
 [ "$(db_value "$ORPHAN_DATABASE" \
     "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '3' AND success;")" = "1" ] \
     || fail "forward-fixed orphan database did not apply V3"
+[ "$(db_value "$ORPHAN_DATABASE" \
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE version = '4' AND success;")" = "1" ] \
+    || fail "forward-fixed orphan database did not apply V4"
 [ "$(db_value "$ORPHAN_DATABASE" \
     "SELECT count(*) FROM email_logs WHERE queue_id IS NULL;")" = "1" ] \
     || fail "forward-fixed orphan log was not preserved"
@@ -576,7 +621,7 @@ grep -Fq "Migration checksum mismatch" "$checksum_failure_log" \
     "SELECT count(*) FROM email_queue WHERE recipient = 'checksum@example.test';")" = "1" ] \
     || fail "checksum validation failure changed migrated data"
 [ "$(db_value "$CHECKSUM_DATABASE" \
-    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "3" ] \
+    "SELECT count(*) FROM email_service_flyway_schema_history WHERE success;")" = "4" ] \
     || fail "checksum validation failure changed Flyway history"
 [ "$(db_value "$CHECKSUM_DATABASE" "
     SELECT checksum

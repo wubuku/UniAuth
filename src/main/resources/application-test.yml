@@ -53,6 +53,12 @@ logging:
     org.hibernate.SQL: INFO
 
 app:
+  auth:
+    rate-limit:
+      enabled: false
+  email:
+    delivery:
+      worker-enabled: ${EMAIL_DELIVERY_WORKER_ENABLED:false}
   frontend:
     url: ${APP_FRONTEND_URL:http://localhost:5173}
   cors:

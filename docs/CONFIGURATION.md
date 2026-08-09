@@ -123,14 +123,14 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - `EMAIL_DATABASE_LAYOUT` 默认 `dedicated`，要求 `EMAIL_POSTGRES_*` 指向邮件专用
   PostgreSQL 16 数据库。只有显式设置 `shared-uniauth` 时才允许复用获准的 UniAuth
   数据库：目标 `public` schema 可以为空，由任一侧先迁移；若已存在 peer，则必须是
-  完整且 history 精确的 UniAuth V1-V5 或邮件 V1-V3。两侧使用独立 Flyway history
+  完整且 history 精确的 UniAuth V1-V6 或邮件 V1-V4。两侧使用独立 Flyway history
   table 和 advisory-lock 串行化。`blacksheep*`、系统库、未知 layout、H2 和其他
   非 PostgreSQL datasource 均在 Flyway 前拒绝。
 - 邮件侧业务 relation 是 `email_queue`、`email_logs` 及其序列/索引/约束，与
-  UniAuth V1-V5 的表、序列和索引名称没有冲突。不能据此直接移除迁移保护：后启动
+  UniAuth V1-V6 的表、序列和索引名称没有冲突。不能据此直接移除迁移保护：后启动
   Flyway 仍会遇到“schema 非空但缺少自身 history”的启动冲突。
 - Flyway location 是 `classpath:db/migration/postgresql`，history table 是
-  `email_service_flyway_schema_history`，当前 migration 为 V1 + V2 + V3。
+  `email_service_flyway_schema_history`，当前 migration 为 V1 + V2 + V3 + V4。
 - UniAuth history 是 `uniauth_flyway_schema_history`。共享布局中，后启动一侧只有在
   对端核心 relation 和 history 精确匹配、本侧 managed relation 不存在时，才在双方
   共用的 PostgreSQL advisory lock 内创建 baseline V0 并继续 migrate。peer history
@@ -168,7 +168,7 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - `backup-postgres.sh` 支持 `dedicated` 和显式 `shared-uniauth`，但固定只导出
   `email_queue`、`email_logs`、对应序列和
   `email_service_flyway_schema_history`。共享库中的 UniAuth 用户/认证表不会进入
-  组件 archive；history 必须精确匹配当前 V1-V3 链，共享布局另允许至多一个 V0
+  组件 archive；history 必须精确匹配当前 V1-V4 链，共享布局另允许至多一个 V0
   baseline，未知或额外 migration 会失败关闭。共享数据库的整库备份与恢复仍必须
   由仓库外、经授权的运维流程负责。
 - `pg_dump` 和 `pg_restore` major 必须与源 PostgreSQL major 一致；可通过
@@ -212,11 +212,12 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 当前实现还有几个必须显式知晓的限制：
 
 - 邮件服务同步返回失败、限流、非法邮箱，或发生超时、网络异常、空结果时，UniAuth
-  不保存 challenge，并让注册发送或密码重置发送请求失败关闭。
-- 外部服务已经返回接受后，如果 UniAuth 本地 challenge 保存事务失败，邮件可能已经
-  入队，但收件人拿到的验证码无法使用；当前没有 outbox 或补偿协议关闭这个窗口。
-- 外部服务后续异步投递失败不会自动撤销已保存的 challenge，UniAuth 也不保存
-  `queueId` 或跟踪最终 delivery 状态。
+  不会激活 challenge，并让注册发送或密码重置发送请求失败关闭。
+- UniAuth 使用 transactional outbox、稳定 idempotency key 和 delivery status
+  reconciliation 关闭“外部已接受但本地未确认”的响应丢失/重启窗口；provider
+  `queueId` 会保存为 delivery identity。
+- 外部服务后续异步投递进入终态失败时，reconciler 会使 challenge 不可验证；但该
+  结论仍依赖兼容邮件服务准确提供 delivery status。
 - 参考服务的队列恢复是至少一次语义；SMTP 已接受后若数据库提交失败、进程崩溃或
   stuck 记录被 recovery worker 重新领取，可能重复发送同一 queue id 的邮件。
 
@@ -263,8 +264,9 @@ base 配置固定 `JSESSIONID`、`HttpOnly=true`、`Path=/`、`SameSite=Lax`；
 
 - Flyway location：`classpath:db/migration/postgresql`
 - history table：`uniauth_flyway_schema_history`
-- 当前版本：V5（V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS +
-  V4 实体约束与索引对齐 + V5 Web3/SIWE challenge message 绑定）
+- 当前版本：V6（V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS +
+  V4 实体约束与索引对齐 + V5 Web3/SIWE challenge message 绑定 +
+  V6 邮箱身份/challenge/outbox/限流/安全事件加固）
 - `fail-on-missing-locations=true`
 - `baseline-on-migrate=false`
 - `baseline-version=0`
@@ -279,7 +281,7 @@ base 配置固定 `JSESSIONID`、`HttpOnly=true`、`Path=/`、`SameSite=Lax`；
 Spring Session 两张表已进入 V1，不再由框架或部署脚本旁路创建。
 UniAuth 的 migration strategy 会在执行 migration 前拒绝上述关键 Flyway 配置被
 高优先级配置覆盖。共享 schema 中一旦存在邮件服务 history，后续启动会重新核对其
-V1-V3 history 和核心 relation。
+V1-V4 history 和核心 relation。
 
 ### 演示数据
 
@@ -308,7 +310,14 @@ V5 将 `web3_nonces.message` 设为必填，并在写入时保存服务端签发
 迁移会删除 V1-V4 期间无法安全重建的旧未消费 nonce；此表只保存短期 challenge，
 失效旧 challenge 不改变用户、登录方式或已完成认证数据。生成 nonce 使用 PostgreSQL
 原子 upsert，验证使用 nonce、message 和有效期条件删除，只有一条并发请求可以消费。
-后续结构修复从 V6 开始；不得改写 V1/V2/V3/V4/V5 checksum。
+
+V6 增加 `email_identity_type`、canonical contact/LOCAL username 约束，退役
+`email_verification_codes` 的明文 code、JSON metadata 和旧 `is_used` 状态，改用
+HMAC digest、delivery/usage 状态和唯一 active challenge；同时新增
+`email_delivery_outbox`、`auth_rate_limits` 和 append-only `security_events`。
+V6 迁移会失效 pre-F1 旧 challenge，不能回滚旧应用继续写明文状态。
+
+后续结构修复从 V7 开始；不得改写 V1/V2/V3/V4/V5/V6 checksum。
 
 ## Existing-schema baseline
 

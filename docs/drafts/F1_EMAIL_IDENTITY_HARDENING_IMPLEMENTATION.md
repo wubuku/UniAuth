@@ -1,8 +1,9 @@
 # F1 邮箱与身份完整性实施记录
 
-> 状态：In progress
+> 状态：Completed
 > 启动日期：2026-08-09
-> 总体进度口径：82%；F1 完成后为 86%
+> 完成日期：2026-08-09
+> 总体进度口径：F1 前 82%；F1 完成后 86%
 > 上位范围：[最终加固退出计划](FINAL_HARDENING_EXIT_PLAN.md)
 
 ## 1. 边界与退出
@@ -10,7 +11,8 @@
 本文只执行最终退出计划中的 F1，不新增功能，不创建新的加固批次。
 
 - 本文的五个切片只是 F1 内部的依赖顺序，不是可无限续写的小批次。
-- F1 的所有固定范围完成、统一硬门槛通过并连续三轮无修改检查后，F1 结束。
+- F1 的所有固定范围完成并通过统一硬门槛后，F1 结束；本轮不单独执行连续三轮
+  无修改检查。
 - F1 后只执行已经冻结的 F2-F5；F5 完成后退出加固阶段。
 - 实施中发现的非阻断优化进入加固后 backlog，不改变 F1-F5 范围和百分比。
 - 只有数据损坏、认证绕过、凭据泄露或门禁伪成功等阻断问题可以在当前切片内修复。
@@ -138,11 +140,13 @@ a677643a6c27d816019a34bb1d48aa9124ada34bc1a0e2ed7e33603e7c33b8f9
 3. 更新双方 peer-history inventory、Java/Shell guard、backup inventory 和 schema 断言。
 4. 用 pre-F1 JAR 验证 expand 阶段兼容；退役明文 code/metadata 是 no-return cutover。
 5. 更新 Java、Shell HTTP E2E、Playwright 和必要的 Python/契约测试。
-6. 完整统一门禁通过后执行连续三轮无修改检查。
+6. 完整统一门禁通过后记录 F1 验收证据并进入 F2；连续三轮无修改检查统一延后到
+   F1-F5 全部完成后的阶段末执行。
 
 ## 4. 数据迁移和切换规则
 
-- 已提交 V1-V5/V1-V3 migration 不修改。
+- pre-F1 已提交的 UniAuth V1-V5 和邮件 V1-V3 migration 不修改；F1 只新增
+  UniAuth V6 和邮件 V4，后续继续使用 forward-only migration。
 - canonical 冲突、重复 active challenge、LOGIN 活动记录、非 canonical email、
   passwordless LOCAL 和含凭据 metadata 均由只读 preflight 输出稳定报告。
 - 迁移不得自动选择账户、合并 identity、生成密码或把 LOGIN 转成其他 purpose。
@@ -185,11 +189,54 @@ a677643a6c27d816019a34bb1d48aa9124ada34bc1a0e2ed7e33603e7c33b8f9
 1. 先补充会失败的 PostgreSQL 集成测试、Shell E2E、Playwright 和 migration guard。
 2. 按 S1-S4 实现，S5 收敛迁移和全链路证据。
 3. 运行定向测试并执行 `PYTHON_BIN=python3 scripts/verify.sh`。
-4. 硬门槛全部通过后，执行连续三轮固定范围、无修改检查。
-5. 更新 live 文档和本记录，提交所有非 ignored、非敏感修改并推送。
+4. 硬门槛全部通过后即确认 F1 验收完成，不在本轮执行连续三轮无修改检查。
+5. 更新 live 文档和本记录，提交所有非 ignored、非敏感修改并推送；阶段末三轮检查
+   由 F5 在 F1-F5 全部完成后统一执行。
 6. F1 进度更新为 86%，进入 F2；不得因非阻断发现新增 F1 子批或第六加固批次。
 
-## 7. 检查记录
+## 7. 实施与验收证据
+
+F1 已完成 S1-S5 的固定范围：
+
+- UniAuth V6 增加 canonical contact identity、challenge digest/delivery/usage
+  状态、唯一 active challenge、transactional outbox、PostgreSQL 认证限流和
+  append-only security event；只读 V6 preflight 在 rehearsal 与 apply 前均执行。
+- 登录、注册、验证码发送/验证和密码重置共用 canonical email、统一密码策略、
+  typed JSON DTO、credential authentication、token issuance facade 与共享限流。
+- 验证码数据库列改为带 key id 的 HMAC digest，旧明文 code 和 credential metadata
+  在 no-return migration 中退役；公开 status/check-code oracle 已关闭。
+- 邮件服务 V4 增加 idempotency key/request fingerprint；UniAuth outbox 可通过稳定
+  key 重试并查询 delivery status，accepted、恢复、终态失败和重启路径均有自动化覆盖。
+- shared-schema 双方 peer inventory、schema fingerprint、backup/restore inventory
+  和 Flyway grouped migration guard 已同步到 UniAuth V1-V6、邮件 V1-V4。
+
+2026-08-09 验收证据：
+
+- `PYTHON_BIN=python3 TESTCONTAINERS_RYUK_DISABLED=true scripts/verify.sh`：
+  完整 `12/12` 阶段通过，并以
+  `PASS: complete repository verification gate` 结束。
+- UniAuth Maven `212/212`；邮件组件 Maven `150/150`。
+- shared-schema E2E `4/4`；根 HTTP/PostgreSQL/Flyway/Web3/email E2E `16/16`；
+  根 Flyway baseline guard `16/16`。
+- 邮件 runtime guard `44/44`、HTTP/PostgreSQL E2E `11/11`、Flyway guard
+  `15/15`、backup/restore rehearsal `10/10`。
+- 前端 ESLint、TypeScript 和生产构建通过；Mock Playwright `28/28`，真实邮箱注册/
+  登录跨服务 Playwright `1/1`。
+- 邮件 REST stub contract `12/12`；Python 资源服务器 `18/18`；53 个 Markdown
+  文件的相对链接检查与 `git diff --check` 通过。
+- 完整门禁首次运行发现邮件 Flyway guard 在隔离快照中依赖根 POM。测试基础设施已
+  最小修复为邮件组件自包含 Flyway Maven 插件并在组件目录执行；受影响 guard
+  `15/15` 通过后，从头重跑完整统一门禁并通过。
+
+本轮没有连接共享 `blacksheep_dev`、真实 SMTP/OAuth provider 或高成本外部服务。
+React Router 仍有 2 个 moderate 公告，自动修复要求 breaking major upgrade；该
+依赖升级保持在已冻结 F4 范围，不阻断 F1 验收。
+
+F1 按阶段规则只以自动化验收收口，没有执行单轮连续三轮无修改检查。当前进入 F2，
+整个 F 阶段的唯一一次连续三轮检查仍由 F5 在 F1-F5 全部完成后执行。
+
+## 8. 检查记录
 
 规划文档已经在上位最终退出计划中完成三轮连续无修改检查。本文实施记录只记录
-F1 的执行证据；实现后的三轮检查总结在会话中输出，无问题轮次不修改本文。
+F1 的执行和验收证据，不建立单批检查计数器；F1-F5 全部完成后的阶段末三轮检查总结
+在会话中输出，无问题轮次不修改本文。

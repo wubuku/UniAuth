@@ -9,6 +9,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.UUID;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -17,62 +19,99 @@ public class ForgotPasswordService {
     private final EmailVerificationCodeService verificationCodeService;
     private final UserLoginMethodRepository loginMethodRepository;
     private final PasswordEncoder passwordEncoder;
+    private final PasswordPolicyService passwordPolicyService;
+    private final CanonicalEmailService canonicalEmailService;
+    private final EmailVerificationCodeProtector codeProtector;
+    private final SecurityEventService securityEventService;
 
-    @Transactional
-    public boolean sendPasswordResetCode(String email) {
-        log.info("Password reset code requested");
-
-        boolean emailExists = loginMethodRepository.findByLocalUsername(email).isPresent();
-
-        if (!emailExists) {
-            log.info("Password reset request did not match a local account");
-            return false;
+    public PasswordResetDispatch requestPasswordReset(String submittedEmail) {
+        String email = canonicalEmailService.canonicalize(submittedEmail);
+        UserLoginMethod method = loginMethodRepository
+                .findByLocalUsername(email)
+                .orElse(null);
+        if (method == null
+                || method.getLocalPasswordHash() == null
+                || !method.getUser().isEnabled()) {
+            String decoyHandle = UUID.randomUUID().toString();
+            codeProtector.deriveCode(decoyHandle, codeProtector.currentKeyId());
+            return new PasswordResetDispatch(
+                    decoyHandle,
+                    verificationCodeService.getExpirySeconds(),
+                    verificationCodeService.getResendCooldownSeconds()
+            );
         }
 
-        verificationCodeService.sendVerificationCode(email, VerificationPurpose.PASSWORD_RESET, null);
-        log.info("Password reset code created");
-        return true;
-    }
-
-    @Transactional
-    public void resetPassword(String email, String verificationCode, String newPassword) {
-        log.info("Password reset verification started");
-
-        UserLoginMethod loginMethod = loginMethodRepository.findByLocalUsername(email)
-            .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
-
-        var result = verificationCodeService.verifyCode(email, verificationCode, VerificationPurpose.PASSWORD_RESET);
-
-        if (!result.isSuccess()) {
-            if (result.getError().contains("not found")) {
-                throw new IllegalArgumentException("验证码不存在或已过期，请重新获取");
-            } else if (result.getError().contains("expired")) {
-                throw new IllegalArgumentException("验证码已过期，请重新获取");
-            } else if (result.getError().contains("Maximum retry")) {
-                throw new IllegalArgumentException("验证失败次数过多，请重新获取验证码");
-            } else {
-                int remaining = result.getRemainingAttempts();
-                throw new IllegalArgumentException("验证码错误，剩余" + remaining + "次尝试");
-            }
-        }
-
-        loginMethod.setLocalPasswordHash(passwordEncoder.encode(newPassword));
-        loginMethodRepository.save(loginMethod);
-        log.info("Password reset completed");
-    }
-
-    public long getResendCooldown(String email) {
-        return verificationCodeService.getResendCooldown(
-            email,
-            VerificationPurpose.PASSWORD_RESET
+        EmailVerificationCodeService.ChallengeDispatch dispatch =
+                verificationCodeService.sendVerificationCode(
+                        email,
+                        VerificationPurpose.PASSWORD_RESET
+                );
+        return new PasswordResetDispatch(
+                dispatch.challengeHandle(),
+                dispatch.expiresIn(),
+                dispatch.resendAfter()
         );
     }
 
-    public int getExpirySeconds() {
-        return verificationCodeService.getExpirySeconds();
+    @Transactional(
+        noRollbackFor = VerificationChallengeRejectedException.class
+    )
+    public void resetPassword(
+            String challengeHandle,
+            String submittedEmail,
+            String verificationCode,
+            String newPassword) {
+        String email = canonicalEmailService.canonicalize(submittedEmail);
+        passwordPolicyService.validateNewPassword(newPassword);
+
+        UserLoginMethod method = loginMethodRepository
+                .findByLocalUsername(email)
+                .orElse(null);
+        if (method == null
+                || method.getLocalPasswordHash() == null
+                || !method.getUser().isEnabled()) {
+            throw new IllegalArgumentException(
+                    "Invalid or expired verification challenge"
+            );
+        }
+
+        EmailVerificationCodeService.VerificationResult result =
+                verificationCodeService.verifyCode(
+                        challengeHandle,
+                        email,
+                        verificationCode,
+                        VerificationPurpose.PASSWORD_RESET
+                );
+        if (!result.isSuccess()) {
+            throw new VerificationChallengeRejectedException();
+        }
+        method.setLocalPasswordHash(passwordEncoder.encode(newPassword));
+        loginMethodRepository.save(method);
+        securityEventService.append(
+                "PASSWORD_RESET_COMPLETED",
+                method.getUser().getId(),
+                SecurityEventService.Outcome.SUCCESS,
+                null
+        );
+        log.info("Password reset completed");
     }
 
-    public boolean canSend(String email) {
-        return verificationCodeService.canSend(email);
+    public boolean canSend(String submittedEmail) {
+        return verificationCodeService.canSend(
+                canonicalEmailService.canonicalize(submittedEmail)
+        );
+    }
+
+    public long getResendCooldown(String submittedEmail) {
+        return verificationCodeService.getResendCooldown(
+                canonicalEmailService.canonicalize(submittedEmail),
+                VerificationPurpose.PASSWORD_RESET
+        );
+    }
+
+    public record PasswordResetDispatch(
+            String challengeHandle,
+            int expiresIn,
+            int resendAfter) {
     }
 }

@@ -28,31 +28,40 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final LoginMethodService loginMethodService;
     private final UserLoginMethodRepository loginMethodRepository;
+    private final CanonicalEmailService canonicalEmailService;
+    private final PasswordPolicyService passwordPolicyService;
 
     /**
      * 本地用户注册
      */
     public UserDto register(RegisterRequest request) {
+        String username = canonicalEmailService.canonicalizeLoginIdentifier(
+                request.getUsername()
+        );
+        String email = canonicalEmailService.canonicalize(request.getEmail());
+        passwordPolicyService.validateNewPassword(request.getPassword());
+
         // 检查本地用户名是否已被使用
-        if (loginMethodService.findByLocalUsername(request.getUsername()) != null) {
+        if (loginMethodService.findByLocalUsername(username) != null) {
             throw new IllegalArgumentException("Username already exists");
         }
 
-        if (userRepository.findByEmail(request.getEmail()).isPresent()) {
+        if (userRepository.findByEmail(email).isPresent()) {
             throw new IllegalArgumentException("Email already exists");
         }
 
         // 创建新用户实体
         UserEntity user = new UserEntity();
         user.setId(UUID.randomUUID().toString());  // 生成 UUID
-        user.setUsername(request.getUsername());
-        user.setEmail(request.getEmail());
+        user.setUsername(username);
+        user.setEmail(email);
+        user.setEmailIdentityType(UserEntity.EmailIdentityType.VERIFIED_CONTACT);
         user.setDisplayName(request.getDisplayName());
         Set<String> authorities = new HashSet<>();
         authorities.add("ROLE_USER");
         user.setAuthorities(authorities);  // 默认权限
         user.setEnabled(true);
-        user.setEmailVerified(false);
+        user.setEmailVerified(true);
 
         userRepository.save(user);
 
@@ -61,7 +70,7 @@ public class UserService {
             .id(UUID.randomUUID().toString())  // 生成 UUID
             .user(user)
             .authProvider(UserLoginMethod.AuthProvider.LOCAL)
-            .localUsername(request.getUsername())
+            .localUsername(username)
             .localPasswordHash(passwordEncoder.encode(request.getPassword()))
             .isPrimary(true)
             .isVerified(false)
@@ -88,6 +97,7 @@ public class UserService {
         user.setId(UUID.randomUUID().toString());
         user.setUsername(email);
         user.setEmail(email);
+        user.setEmailIdentityType(UserEntity.EmailIdentityType.VERIFIED_CONTACT);
         user.setDisplayName(displayName);
         Set<String> authorities = new HashSet<>();
         authorities.add("ROLE_USER");
@@ -123,7 +133,11 @@ public class UserService {
     @Transactional
     public UserDto login(String username, String password) {
         // 从登录方式表查找本地登录方式
-        UserLoginMethod loginMethod = loginMethodService.findByLocalUsername(username);
+        String normalizedUsername =
+                canonicalEmailService.canonicalizeLoginIdentifier(username);
+        passwordPolicyService.validateCredentialInput(password);
+        UserLoginMethod loginMethod =
+                loginMethodService.findByLocalUsername(normalizedUsername);
         if (loginMethod == null) {
             throw new RuntimeException("User not found");
         }
@@ -188,6 +202,9 @@ public class UserService {
             // 场景C: 登录流程 - 创建新用户
             
             // 检查邮箱是否已被使用
+            if (email != null) {
+                email = canonicalEmailService.canonicalize(email);
+            }
             if (email != null && userRepository.findByEmail(email).isPresent()) {
                 throw new IllegalArgumentException("Email already registered with different provider");
             }
@@ -196,15 +213,21 @@ public class UserService {
             if (email == null) {
                 email = provider.toLowerCase() + "_" + providerUserId + "@oauth.local";
             }
+            boolean syntheticEmail = email.endsWith("@oauth.local");
             
             // 创建用户
             UserEntity newUser = new UserEntity();
             newUser.setId(UUID.randomUUID().toString());  // 生成 UUID
             newUser.setEmail(email);
+            newUser.setEmailIdentityType(
+                    syntheticEmail
+                            ? UserEntity.EmailIdentityType.SYNTHETIC
+                            : UserEntity.EmailIdentityType.VERIFIED_CONTACT
+            );
             newUser.setUsername(email);
             newUser.setDisplayName(name);
             newUser.setAvatarUrl(picture);
-            newUser.setEmailVerified(true);
+            newUser.setEmailVerified(!syntheticEmail);
             Set<String> authorities = new HashSet<>();
             authorities.add("ROLE_USER");
             newUser.setAuthorities(authorities);
@@ -263,7 +286,7 @@ public class UserService {
         return getOrCreateOAuthUser(provider, providerUserId, email, name, picture, false, null);
     }
 
-    private UserDto convertToDto(UserEntity user) {
+    public UserDto convertToDto(UserEntity user) {
         UserDto dto = new UserDto();
         dto.setId(user.getId());
         dto.setUsername(user.getUsername());

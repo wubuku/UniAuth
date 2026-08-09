@@ -24,10 +24,6 @@ class AuthApiSecurityIntegrationTest extends PostgreSqlIntegrationTest {
 
     @Test
     void allowlistedRoutesReachControllers() throws Exception {
-        mockMvc.perform(post("/api/auth/check-verification-code")
-                        .contentType(APPLICATION_JSON)
-                        .content("{}"))
-                .andExpect(status().isBadRequest());
         mockMvc.perform(get("/api/auth/web3/nonce/not-a-wallet"))
                 .andExpect(status().isBadRequest());
     }
@@ -44,6 +40,16 @@ class AuthApiSecurityIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(status().isForbidden());
         mockMvc.perform(post("/api/auth/not-allowlisted"))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void removedEmailOracleRoutesAreNotMapped() throws Exception {
+        mockMvc.perform(post("/api/auth/check-verification-code")
+                        .contentType(APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/auth/email/status/user@example.invalid"))
+                .andExpect(status().isNotFound());
     }
 
     @Test

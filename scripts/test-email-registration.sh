@@ -8,6 +8,7 @@ set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8081}"
 DISPLAY_NAME="${DISPLAY_NAME:-Integration Test User}"
+USERNAME="${USERNAME:-${EMAIL:-}}"
 COOKIE_HEADERS_FILE="$(mktemp "${TMPDIR:-/tmp}/uniauth-email-cookie-headers.XXXXXX")"
 trap 'rm -f "${COOKIE_HEADERS_FILE}"' EXIT
 
@@ -18,6 +19,7 @@ fi
 
 required_variables=(
   EMAIL
+  USERNAME
   PASSWORD
   NEW_PASSWORD
   POSTGRES_HOST
@@ -25,6 +27,11 @@ required_variables=(
   POSTGRES_DATABASE
   POSTGRES_USER
   POSTGRES_PASSWORD
+  EMAIL_POSTGRES_HOST
+  EMAIL_POSTGRES_PORT
+  EMAIL_POSTGRES_DATABASE
+  EMAIL_POSTGRES_USER
+  EMAIL_POSTGRES_PASSWORD
 )
 
 for variable_name in "${required_variables[@]}"; do
@@ -38,6 +45,14 @@ case "${POSTGRES_DATABASE}" in
   *test*|*demo*|*tmp*|*temp*|*ci*|*local*) ;;
   *)
     echo "ERROR: POSTGRES_DATABASE must be an explicitly disposable test database"
+    exit 1
+    ;;
+esac
+
+case "${EMAIL_POSTGRES_DATABASE}" in
+  *test*|*demo*|*tmp*|*temp*|*ci*|*local*) ;;
+  *)
+    echo "ERROR: EMAIL_POSTGRES_DATABASE must be an explicitly disposable test database"
     exit 1
     ;;
 esac
@@ -61,8 +76,48 @@ json_value() {
     <<<"${response}" 2>/dev/null || true
 }
 
-get_verification_code() {
-  local purpose="$1"
+wait_for_active_challenge() {
+  local challenge_handle="$1"
+  local purpose="$2"
+  local delivery_status
+
+  for _attempt in {1..100}; do
+    delivery_status="$(
+      PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+        -X \
+        -q \
+        -h "${POSTGRES_HOST}" \
+        -p "${POSTGRES_PORT}" \
+        -U "${POSTGRES_USER}" \
+        -d "${POSTGRES_DATABASE}" \
+        -v ON_ERROR_STOP=1 \
+        -v "challenge_handle=${challenge_handle}" \
+        -v "email=${EMAIL}" \
+        -v "purpose=${purpose}" \
+        -At 2>/dev/null <<'SQL' | tr -d '[:space:]'
+SELECT delivery_status
+FROM email_verification_codes
+WHERE id = :'challenge_handle'
+  AND email = :'email'
+  AND purpose = :'purpose'
+  AND usage_status = 'UNUSED';
+SQL
+    )"
+    if [ "${delivery_status}" = "ACTIVE" ]; then
+      return
+    fi
+    if [ "${delivery_status}" = "FAILED" ]; then
+      fail "${purpose} verification challenge entered FAILED delivery state"
+    fi
+    sleep 0.1
+  done
+  fail "${purpose} verification challenge did not become ACTIVE"
+}
+
+get_rendered_verification_code() {
+  local challenge_handle="$1"
+  local code
+
   PGPASSWORD="${POSTGRES_PASSWORD}" psql \
     -X \
     -q \
@@ -71,17 +126,40 @@ get_verification_code() {
     -U "${POSTGRES_USER}" \
     -d "${POSTGRES_DATABASE}" \
     -v ON_ERROR_STOP=1 \
-    -v "email=${EMAIL}" \
-    -v "purpose=${purpose}" \
+    -At 2>/dev/null <<'SQL' | grep -Fxq '0'
+SELECT count(*)
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'email_verification_codes'
+  AND column_name IN ('verification_code', 'metadata', 'is_used');
+SQL
+
+  code="$(
+    PGPASSWORD="${EMAIL_POSTGRES_PASSWORD}" psql \
+    -X \
+    -q \
+    -h "${EMAIL_POSTGRES_HOST}" \
+    -p "${EMAIL_POSTGRES_PORT}" \
+    -U "${EMAIL_POSTGRES_USER}" \
+    -d "${EMAIL_POSTGRES_DATABASE}" \
+    -v ON_ERROR_STOP=1 \
+    -v "idempotency_key=email-challenge:${challenge_handle}" \
     -At 2>/dev/null <<'SQL' | tr -d '[:space:]'
-SELECT verification_code
-FROM email_verification_codes
-WHERE email = :'email'
-  AND purpose = :'purpose'
-  AND is_used = false
-ORDER BY created_at DESC
+SELECT (
+  regexp_match(
+    html_content,
+    '<div class="code"[^>]*>[[:space:]]*([0-9]{6})[[:space:]]*</div>'
+  )
+)[1]
+FROM email_queue
+WHERE idempotency_key = :'idempotency_key'
+  AND status IN ('PENDING', 'PROCESSING', 'COMPLETED')
 LIMIT 1;
 SQL
+  )"
+  [[ "${code}" =~ ^[0-9]{6}$ ]] \
+    || fail "rendered verification code was unavailable"
+  printf '%s' "${code}"
 }
 
 post_json() {
@@ -135,97 +213,156 @@ for attempt in {1..30}; do
   sleep 1
 done
 
-echo "1/8 Request registration verification code"
+echo "1/9 Preview registration without creating an account"
+preview_payload=$(jq -n \
+  --arg username "${USERNAME}" \
+  --arg email "${EMAIL}" \
+  --arg password "${PASSWORD}" \
+  --arg displayName "${DISPLAY_NAME}" \
+  '{
+    username: $username,
+    email: $email,
+    password: $password,
+    displayName: $displayName
+  }')
+preview_response=$(post_json "/api/auth/register" "${preview_payload}")
+[ "$(json_value "${preview_response}" '.requireEmailVerification')" = "true" ] \
+  || fail "registration preview did not require email verification"
+[ "$(json_value "${preview_response}" '.username')" = "${USERNAME}" ] \
+  || fail "registration preview returned an unexpected username"
+[ "$(json_value "${preview_response}" '.email')" = "${EMAIL}" ] \
+  || fail "registration preview returned an unexpected email"
+
+preview_user_count="$(
+  PGPASSWORD="${POSTGRES_PASSWORD}" psql \
+    -X -qAt -v ON_ERROR_STOP=1 \
+    -h "${POSTGRES_HOST}" \
+    -p "${POSTGRES_PORT}" \
+    -U "${POSTGRES_USER}" \
+    -d "${POSTGRES_DATABASE}" \
+    -v "email=${EMAIL}" \
+    2>/dev/null <<'SQL'
+SELECT count(*)
+FROM users
+WHERE email = :'email';
+SQL
+)"
+[ "${preview_user_count}" = "0" ] \
+  || fail "registration preview created a user before verification"
+
+echo "2/9 Request registration verification code"
 send_payload=$(jq -n \
   --arg email "${EMAIL}" \
   '{email: $email, purpose: "REGISTRATION"}')
 send_response=$(post_json "/api/auth/send-verification-code" "${send_payload}")
 [ "$(json_value "${send_response}" '.success')" = "true" ] \
   || fail "registration verification request was rejected"
+registration_handle=$(json_value "${send_response}" '.challengeHandle')
+[ -n "${registration_handle}" ] \
+  || fail "registration verification request omitted the challenge handle"
 
-registration_code=$(get_verification_code "REGISTRATION")
-[ -n "${registration_code}" ] || fail "registration verification code was not persisted"
+wait_for_active_challenge "${registration_handle}" "REGISTRATION"
+registration_code=$(get_rendered_verification_code "${registration_handle}")
 
-echo "2/8 Verify rejection and acceptance paths"
+echo "3/9 Verify the handle-bound rejection path"
 wrong_code="000000"
 if [ "${registration_code}" = "${wrong_code}" ]; then
   wrong_code="111111"
 fi
 wrong_payload=$(jq -n \
+  --arg handle "${registration_handle}" \
+  --arg username "${USERNAME}" \
   --arg email "${EMAIL}" \
+  --arg password "${PASSWORD}" \
+  --arg displayName "${DISPLAY_NAME}" \
   --arg code "${wrong_code}" \
-  '{email: $email, verificationCode: $code, purpose: "REGISTRATION"}')
-wrong_response=$(post_json "/api/auth/check-verification-code" "${wrong_payload}")
-[ "$(json_value "${wrong_response}" '.valid')" = "false" ] \
-  || fail "incorrect verification code was accepted"
+  '{
+    challengeHandle: $handle,
+    username: $username,
+    email: $email,
+    password: $password,
+    displayName: $displayName,
+    verificationCode: $code
+  }')
+wrong_status=$(curl -sS -o /dev/null -w '%{http_code}' \
+  -X POST "${BASE_URL}/api/auth/verify-email" \
+  -H "Content-Type: application/json" \
+  --data "${wrong_payload}")
+[ "${wrong_status}" = "400" ] \
+  || fail "incorrect handle-bound verification code returned ${wrong_status}"
 
-check_payload=$(jq -n \
-  --arg email "${EMAIL}" \
-  --arg code "${registration_code}" \
-  '{email: $email, verificationCode: $code, purpose: "REGISTRATION"}')
-check_response=$(post_json "/api/auth/check-verification-code" "${check_payload}")
-[ "$(json_value "${check_response}" '.valid')" = "true" ] \
-  || fail "persisted verification code was rejected"
-
-echo "3/8 Register using the persisted verification code"
+echo "4/9 Register using the rendered verification code"
 register_payload=$(jq -n \
+  --arg handle "${registration_handle}" \
+  --arg username "${USERNAME}" \
   --arg email "${EMAIL}" \
   --arg password "${PASSWORD}" \
   --arg displayName "${DISPLAY_NAME}" \
   --arg code "${registration_code}" \
   '{
-    username: $email,
+    challengeHandle: $handle,
+    username: $username,
     email: $email,
     password: $password,
     displayName: $displayName,
     verificationCode: $code
   }')
 register_response=$(curl -sS -D "${COOKIE_HEADERS_FILE}" \
-  -X POST "${BASE_URL}/api/auth/register" \
+  -X POST "${BASE_URL}/api/auth/verify-email" \
   -H "Content-Type: application/json" \
   --data "${register_payload}")
 access_token=$(json_value "${register_response}" '.accessToken')
 [ -n "${access_token}" ] || fail "registration response did not contain an access token"
 assert_auth_cookie_headers
 
-echo "4/8 Call the protected current-user endpoint"
+echo "5/9 Call the protected current-user endpoint"
 user_status=$(curl -sS -o /dev/null -w '%{http_code}' \
   -H "Authorization: Bearer ${access_token}" \
   "${BASE_URL}/api/user")
 [ "${user_status}" = "200" ] || fail "protected current-user endpoint returned ${user_status}"
 
-echo "5/8 Login with the original password"
-login_response=$(curl -sS -X POST "${BASE_URL}/api/auth/login" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  --data-urlencode "username=${EMAIL}" \
-  --data-urlencode "password=${PASSWORD}")
+echo "6/9 Login with the original password"
+login_payload=$(jq -n \
+  --arg username "${USERNAME}" \
+  --arg password "${PASSWORD}" \
+  '{username: $username, password: $password}')
+login_response=$(post_json "/api/auth/login" "${login_payload}")
 [ "$(json_value "${login_response}" '.authenticated')" = "true" ] \
   || fail "login with the original password failed"
 
-echo "6/8 Request password reset"
+echo "7/9 Request password reset"
 forgot_payload=$(jq -n --arg email "${EMAIL}" '{email: $email}')
 forgot_response=$(post_json "/api/auth/forgot-password" "${forgot_payload}")
 [ "$(json_value "${forgot_response}" '.success')" = "true" ] \
   || fail "password reset request failed"
+reset_handle=$(json_value "${forgot_response}" '.challengeHandle')
+[ -n "${reset_handle}" ] || fail "password reset response omitted the challenge handle"
 
-reset_code=$(get_verification_code "PASSWORD_RESET")
-[ -n "${reset_code}" ] || fail "password reset code was not persisted"
+wait_for_active_challenge "${reset_handle}" "PASSWORD_RESET"
+reset_code=$(get_rendered_verification_code "${reset_handle}")
 
-echo "7/8 Reset password using the persisted code"
+echo "8/9 Reset password using the rendered code"
 reset_payload=$(jq -n \
+  --arg handle "${reset_handle}" \
   --arg email "${EMAIL}" \
   --arg code "${reset_code}" \
   --arg password "${NEW_PASSWORD}" \
-  '{email: $email, verificationCode: $code, newPassword: $password}')
+  '{
+    challengeHandle: $handle,
+    email: $email,
+    verificationCode: $code,
+    newPassword: $password
+  }')
 reset_response=$(post_json "/api/auth/verify-reset-code" "${reset_payload}")
 [ "$(json_value "${reset_response}" '.success')" = "true" ] \
   || fail "password reset failed"
 
-echo "8/8 Login with the new password"
-new_login_response=$(curl -sS -X POST "${BASE_URL}/api/auth/login" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  --data-urlencode "username=${EMAIL}" \
-  --data-urlencode "password=${NEW_PASSWORD}")
+echo "9/9 Login with the new password"
+new_login_payload=$(jq -n \
+  --arg username "${USERNAME}" \
+  --arg password "${NEW_PASSWORD}" \
+  '{username: $username, password: $password}')
+new_login_response=$(post_json "/api/auth/login" "${new_login_payload}")
 [ "$(json_value "${new_login_response}" '.authenticated')" = "true" ] \
   || fail "login with the new password failed"
 

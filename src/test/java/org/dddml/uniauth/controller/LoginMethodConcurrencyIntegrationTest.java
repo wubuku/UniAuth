@@ -391,6 +391,7 @@ class LoginMethodConcurrencyIntegrationTest extends PostgreSqlIntegrationTest {
                 prefix + "-" + suffix + "@example.invalid",
                 "integration-password",
                 "Concurrency User",
+                null,
                 null
         ));
     }

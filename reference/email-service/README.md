@@ -46,7 +46,8 @@ UniAuth 只依赖以下最小契约：
 | 方法和路径 | 要求 |
 |------------|------|
 | `GET /api/email/health` | 返回 2xx JSON，`status` 精确为 `UP` |
-| `POST /api/email/template` | 接收模板邮件 JSON，请求成功时返回 2xx JSON `success=true` |
+| `POST /api/email/template` | 接收带稳定 `idempotencyKey` 的模板邮件 JSON，请求成功时返回 2xx JSON `success=true` 和稳定 `queueId` |
+| `GET /api/email/delivery/status?idempotencyKey=...` | 返回该幂等请求对应的最小 queue/delivery 状态 |
 
 邮箱验证请求示例：
 
@@ -61,7 +62,8 @@ UniAuth 只依赖以下最小契约：
     "username": "user@example.com",
     "expiryMinutes": 10
   },
-  "emailType": "VERIFICATION"
+  "emailType": "VERIFICATION",
+  "idempotencyKey": "email-challenge:opaque-handle"
 }
 ```
 
@@ -79,14 +81,15 @@ UniAuth 只依赖以下最小契约：
 }
 ```
 
-当前实现还会返回 `queueId` 和 `message`。UniAuth 不保存 `queueId`，并且把
-`success=true` 解释为“已接受/入队”，不是“邮件已送达”。
+当前实现还会返回 `queueId` 和 `message`。UniAuth 会把稳定 `queueId` 保存为
+provider delivery identity，并把 `success=true` 解释为“已接受/入队”，不是“邮件
+已送达”。相同 idempotency key 和相同 payload 返回同一 queue identity；同一 key
+对应不同 payload 时返回 `409`。
 
-客户端不自动重试邮件服务请求。非 2xx、超时、空响应、不可解析 JSON 或
-`success != true` 都映射为失败。UniAuth 只有在本接口同步接受后才保存验证码
-challenge；拒绝、限流和网络失败不会留下可验证记录。该顺序仍存在一个明确窗口：
-本服务已经接受或入队后，如果 UniAuth 本地 challenge 事务失败，收件人可能收到
-无法使用的验证码；后续异步投递失败也不会自动撤销 challenge。
+一次 HTTP client 调用内部不做盲目重试；UniAuth transactional outbox 会使用相同
+idempotency key 安全重试，并在响应丢失或进程重启后查询 delivery status。非 2xx、
+超时、空响应、不可解析 JSON 或 `success != true` 都不会激活 challenge。确认接受后
+challenge 才进入 `ACTIVE`；终态投递失败会使其不可验证。
 
 ### 与 UniAuth 根项目的跨进程验证
 
@@ -98,7 +101,7 @@ PostgreSQL 和 loopback HTTP 进程，再启动 UniAuth。邮箱注册和密码�
 
 参考实现不会为了测试而伪造 UniAuth 需要的 `503`/`429` 供应商失败响应，所以根
 E2E 在正常路径完成后重启 UniAuth，显式切换到受控 loopback stub 验证失败映射和
-“失败不保存 challenge”约束。参考服务自身的 `scripts/test-http-e2e.sh` 仍独立
+“失败不产生可用 challenge”约束。参考服务自身的 `scripts/test-http-e2e.sh` 仍独立
 验证其真实 HTTP、Flyway/PostgreSQL、API key、队列和重启持久化边界；默认不启用
 SMTP，GreenMail 的最终投递边界由 Spring ApplicationContext E2E 覆盖。
 
@@ -245,10 +248,11 @@ Flyway 是本组件唯一的 schema owner：
 - datasource：所有 profile 只接受 `jdbc:postgresql:` URL；H2 不受支持
 - database layout：默认 `EMAIL_DATABASE_LAYOUT=dedicated`；显式
   `shared-uniauth` 才允许在获准的空 `public` schema 先迁移，或与完整
-  UniAuth V1-V5 peer 共用该 schema
+  UniAuth V1-V6 peer 共用该 schema
 - location：`classpath:db/migration/postgresql`
 - history table：`email_service_flyway_schema_history`
-- 当前 migration：V1 建表 + V2 队列/日志完整性 + V3 队列生命周期行形状
+- 当前 migration：V1 建表 + V2 队列/日志完整性 + V3 队列生命周期行形状 +
+  V4 幂等 delivery identity
 - `fail-on-missing-locations=true`
 - `baseline-on-migrate=false`
 - `baseline-version=0`
@@ -279,11 +283,13 @@ V1 创建 `email_queue`、`email_logs`、基础检查约束和查询索引。V2 
 可以保留 `next_retry_time`，只有 `FAILED` 可以保留 `error_message`，终态必须有
 `processed_time`，非终态不得有 `processed_time`。缺少终态处理时间的历史行使用
 `updated_time`、`created_time` 或迁移时间依次补齐。已发布 migration 不得改写；
-后续 schema 变更必须新增 V4+。默认独立布局要求邮件专用数据库。显式
-`shared-uniauth` 在空 `public` schema 上可先迁移邮件 V1-V3，不创建 baseline；
-若 UniAuth V1-V5 已存在，则先验证其完整 relation 和成功 history，再以 baseline V0
-建立独立 `email_service_flyway_schema_history` 并迁移 V1-V3。UniAuth 后启动时也会
-验证邮件 V1-V3 后建立自己的 V0 history。两侧使用同一 PostgreSQL advisory lock
+V4 增加 `idempotency_key`、`request_fingerprint`、行形状约束和 partial unique
+index，固定重复请求的稳定 queue identity；后续 schema 变更必须新增 V5+。默认独立
+布局要求邮件专用数据库。显式
+`shared-uniauth` 在空 `public` schema 上可先迁移邮件 V1-V4，不创建 baseline；
+若 UniAuth V1-V6 已存在，则先验证其完整 relation 和成功 history，再以 baseline V0
+建立独立 `email_service_flyway_schema_history` 并迁移 V1-V4。UniAuth 后启动时也会
+验证邮件 V1-V4 后建立自己的 V0 history。两侧使用同一 PostgreSQL advisory lock
 串行化首次迁移，拒绝 managed relation 冲突、不完整 peer 和不精确 history。
 peer history 必须恰好包含当前预期的成功 SQL 版本，另只允许 0 或 1 个成功 V0
 baseline；失败、重复、未知 versioned 或 repeatable 记录均被拒绝。存在 peer
@@ -294,7 +300,7 @@ relation 却没有 peer history 时视为半成品布局并失败关闭。
 
 命名层面可以直接共存：邮件 migration 只创建 `email_queue`、`email_logs`、对应
 `BIGSERIAL` 序列、邮件索引/约束和 `email_service_flyway_schema_history`，与
-UniAuth V1-V5 的 relation 名称没有交集，也没有指向 UniAuth 业务表的外键。不能只凭
+UniAuth V1-V6 的 relation 名称没有交集，也没有指向 UniAuth 业务表的外键。不能只凭
 “表名不冲突”关闭保护，因为第二套 Flyway 首次进入非空 `public` schema 时仍缺少
 自己的 history。兼容实现保留 `baseline-on-migrate=false`，只在确认对端完整、
 本侧 managed relation 不存在且对端 history 无失败 migration 后显式创建 baseline
@@ -316,7 +322,7 @@ EMAIL_BACKUP_DIR=/secure/email-service-backups \
 scripts/backup-postgres.sh
 ```
 
-脚本支持 `dedicated` 和显式 `shared-uniauth`。两种布局都要求邮件 V1-V3 relation
+脚本支持 `dedicated` 和显式 `shared-uniauth`。两种布局都要求邮件 V1-V4 relation
 和成功 history 精确匹配当前 migration 链；共享布局另允许至多一个 V0 baseline，
 失败、重复、缺失或未知/额外 migration 都会失败关闭。脚本固定只导出
 `email_queue`、`email_logs`、对应序列和
@@ -345,7 +351,7 @@ scripts/test-backup-restore-rehearsal.sh
 该脚本不读取 `.env`，使用 PostgreSQL 16 容器内同 major 客户端，验证共享库缺少
 显式 layout 时拒绝、客户端版本拒绝、连接失败无残留、符号链接目录拒绝、
 owner-only 原子选择性备份、archive 不含 UniAuth `users`、空库
-`pg_restore --exit-on-error --single-transaction`、队列/日志数据与 Flyway V1-V3
+`pg_restore --exit-on-error --single-transaction`、队列/日志数据与 Flyway V1-V4
 history/约束一致、恢复后真实 Spring HTTP 写入和重启。仓库不提供覆盖任意现有库的
 自动 restore 命令；真实恢复必须在隔离空库中执行同类步骤并经过独立授权。该组件
 archive 也不能替代 shared-uniauth 数据库的整库灾备。
@@ -411,25 +417,21 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   baseline。
 - migration checksum 失配时失败关闭，并保留已有 migration history 和业务数据。
 
-2026-08-09 当前组合基线：
+2026-08-09 F1 完成组合基线：
 
-- 本组件 Maven：148 tests，0 failures/errors/skips；其中 22 个
-  PostgreSQL/GreenMail ApplicationContext E2E、1 个 shared-schema
-  ApplicationContext test、6 个 shared-schema bootstrap tests、30 个 Java
-  runtime guard tests、1 个 PostgreSQL-only Spring Context 启动 guard test，
-  以及 5 个 PostgreSQL repository constraint tests。
-- 本组件 Shell runtime 43/43、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
+- 本组件 Maven：150 tests，0 failures/errors/skips。
+- 本组件 Shell runtime 44/44、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
 - PostgreSQL backup/restore rehearsal 10/10。
-- UniAuth 根项目：Java 151 tests、shared-schema process E2E 4/4、HTTP 15/15、
-  Flyway 14/14、Mock Playwright 27/27、真实邮箱登录浏览器 E2E 1/1、
-  Python 资源服务器 18/18、邮件 REST stub contract 9/9；
-  本轮稳定源码快照的完整根统一门禁已通过；连续三轮无修改检查仍是提交前门槛。
+- UniAuth 根项目：Java 212 tests、shared-schema process E2E 4/4、HTTP 16/16、
+  Flyway 16/16、Mock Playwright 28/28、真实邮箱登录浏览器 E2E 1/1、
+  Python 资源服务器 18/18、邮件 REST stub contract 12/12；
+  本轮稳定源码快照的完整根统一门禁已通过。最终加固 F1-F4 不分别执行连续三轮
+  无修改检查；该检查由 F5 在 F1-F5 全部完成后统一执行。
 - 根 Shell HTTP E2E 的正常邮箱路径使用本参考服务真实 JAR、真实 HTTP 和独立
-  PostgreSQL，直接断言模板进入 `email_queue`；脚本随后只为 `503/429` 失败映射
-  切换到受控 loopback REST stub，仍通过真实 UniAuth
-  `RestTemplateEmailServiceImpl` 验证失败不保存 challenge。
-- 默认门禁仍不连接真实 SMTP/供应商，也不证明最终收件、退信、外部 TLS 或
-  “外部已接受后 UniAuth 本地事务失败”窗口。
+  PostgreSQL，直接断言模板、idempotency identity 和 delivery status；脚本随后只为
+  `503/429` 失败映射切换到受控 loopback REST stub，仍通过真实 UniAuth
+  `RestTemplateEmailServiceImpl` 验证失败不产生可用 challenge。
+- 默认门禁仍不连接真实 SMTP/供应商，也不证明最终收件、退信或外部 TLS。
 
 2026-08-08 队列生命周期状态加固增量：
 
@@ -701,7 +703,7 @@ V3 后数据库同时约束状态元数据：
 
 - 使用显式环境变量和显式 profile。
 - 默认只监听 loopback。
-- 启用 Flyway V1/V2/V3 作为唯一 schema owner，并让所有 profile 使用
+- 启用 Flyway V1/V2/V3/V4 作为唯一 schema owner，并让所有 profile 使用
   Hibernate `validate`。
 - 增加 PostgreSQL/Flyway/HTTP/GreenMail 的完整 ApplicationContext E2E。
 - 增加 owner-only PostgreSQL custom backup 和 disposable 空库 restore rehearsal。

@@ -28,7 +28,7 @@ class EmailServiceFlywayMigrationIntegrationTest {
             .withPassword("email_migration_test");
 
     @Test
-    void freshMigrationCreatesV3ConstraintsIndexesAndHistory() throws Exception {
+    void freshMigrationCreatesV4ConstraintsIndexesAndHistory() throws Exception {
         String schema = newSchema();
 
         flyway(schema, null).migrate();
@@ -39,8 +39,8 @@ class EmailServiceFlywayMigrationIntegrationTest {
                 SELECT COUNT(*)
                 FROM email_service_flyway_schema_history
                 WHERE success = TRUE
-                  AND version IN ('1', '2', '3')
-                """)).isEqualTo(3);
+                  AND version IN ('1', '2', '3', '4')
+                """)).isEqualTo(4);
             assertThat(queryInt(statement, """
                 SELECT COUNT(*)
                 FROM pg_constraint
@@ -57,14 +57,25 @@ class EmailServiceFlywayMigrationIntegrationTest {
                 WHERE schemaname = current_schema()
                   AND indexname IN (
                     'idx_email_queue_recovery',
-                    'idx_email_logs_status_sent_time'
+                    'idx_email_logs_status_sent_time',
+                    'uk_email_queue_idempotency_key'
                 )
+                """)).isEqualTo(3);
+            assertThat(queryInt(statement, """
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'email_queue'
+                  AND column_name IN (
+                    'idempotency_key',
+                    'request_fingerprint'
+                  )
                 """)).isEqualTo(2);
         }
     }
 
     @Test
-    void v1ToV3UpgradeNormalizesLifecycleMetadataAndPreservesRows() throws Exception {
+    void v1ToV4UpgradeNormalizesLifecycleMetadataAndPreservesRows() throws Exception {
         String schema = newSchema();
         flyway(schema, MigrationVersion.fromVersion("1")).migrate();
 
@@ -116,8 +127,8 @@ class EmailServiceFlywayMigrationIntegrationTest {
                 SELECT COUNT(*)
                 FROM email_service_flyway_schema_history
                 WHERE success = TRUE
-                  AND version IN ('1', '2', '3')
-                """)).isEqualTo(3);
+                  AND version IN ('1', '2', '3', '4')
+                """)).isEqualTo(4);
             statement.executeUpdate("DELETE FROM email_queue WHERE id = 1");
             assertThat(queryInt(statement,
                 "SELECT COUNT(*) FROM email_logs WHERE queue_id IS NULL")).isEqualTo(1);

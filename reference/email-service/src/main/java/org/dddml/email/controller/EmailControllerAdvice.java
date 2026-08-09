@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+import org.dddml.email.service.IdempotencyConflictException;
 
 import java.util.Map;
 
@@ -31,6 +32,13 @@ public class EmailControllerAdvice {
     ResponseEntity<Map<String, Object>> invalidRequest(Exception exception) {
         log.warn("Rejected invalid email service request: {}", exception.getClass().getSimpleName());
         return errorResponse(HttpStatus.BAD_REQUEST, "Invalid request");
+    }
+
+    @ExceptionHandler(IdempotencyConflictException.class)
+    ResponseEntity<Map<String, Object>> idempotencyConflict(
+            IdempotencyConflictException exception) {
+        log.warn("Rejected conflicting idempotent email request");
+        return errorResponse(HttpStatus.CONFLICT, "Idempotency conflict");
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

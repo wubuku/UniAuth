@@ -23,7 +23,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
 
     private static final List<String> EXPECTED_TABLES = List.of(
+            "auth_rate_limits",
+            "email_delivery_outbox",
             "email_verification_codes",
+            "security_events",
             "spring_session",
             "spring_session_attributes",
             "token_blacklist",
@@ -45,9 +48,9 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Test
-    void freshDatabaseMigratesToVersionFiveAndHibernateValidates() {
+    void freshDatabaseMigratesToVersionSixAndHibernateValidates() {
         assertThat(flyway.info().current()).isNotNull();
-        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("5");
+        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("6");
         assertThat(flyway.migrate().migrationsExecuted).isZero();
 
         List<String> tables = jdbcTemplate.queryForList(
@@ -113,7 +116,11 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
         String userId = UUID.randomUUID().toString();
         String localMethodId = UUID.randomUUID().toString();
         jdbcTemplate.update(
-                "INSERT INTO users (id, username, email) VALUES (?, ?, ?)",
+                """
+                INSERT INTO users (
+                    id, username, email, email_identity_type
+                ) VALUES (?, ?, ?, 'UNVERIFIED_CONTACT')
+                """,
                 userId,
                 "schema-" + userId,
                 "schema-" + userId + "@example.invalid"
@@ -179,7 +186,11 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
     void passwordlessLocalLoginMethodRemainsAValidPersistedShape() {
         String userId = UUID.randomUUID().toString();
         jdbcTemplate.update(
-                "INSERT INTO users (id, username, email) VALUES (?, ?, ?)",
+                """
+                INSERT INTO users (
+                    id, username, email, email_identity_type
+                ) VALUES (?, ?, ?, 'UNVERIFIED_CONTACT')
+                """,
                 userId,
                 "passwordless-" + userId,
                 "passwordless-" + userId + "@example.invalid"
@@ -216,10 +227,30 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
                 .isEqualTo("timestamp with time zone:NO:CURRENT_TIMESTAMP");
         assertThat(columnDescriptor("web3_nonces", "message"))
                 .isEqualTo("text:NO:");
-        assertThat(columnDescriptor("email_verification_codes", "is_used"))
-                .isEqualTo("boolean:NO:false");
+        assertThat(columnDescriptor("users", "email_identity_type"))
+                .isEqualTo("character varying:NO:");
+        assertThat(columnExists("email_verification_codes", "verification_code"))
+                .isFalse();
+        assertThat(columnExists("email_verification_codes", "metadata"))
+                .isFalse();
+        assertThat(columnExists("email_verification_codes", "is_used"))
+                .isFalse();
+        assertThat(columnDescriptor("email_verification_codes", "code_digest"))
+                .isEqualTo("character varying:YES:");
+        assertThat(columnDescriptor("email_verification_codes", "code_key_id"))
+                .isEqualTo("character varying:YES:");
+        assertThat(columnDescriptor("email_verification_codes", "delivery_status"))
+                .isEqualTo("character varying:NO:");
+        assertThat(columnDescriptor("email_verification_codes", "usage_status"))
+                .isEqualTo("character varying:NO:");
         assertThat(columnDescriptor("email_verification_codes", "retry_count"))
                 .isEqualTo("integer:NO:0");
+        assertThat(columnDescriptor("email_delivery_outbox", "attempt_count"))
+                .isEqualTo("integer:NO:0");
+        assertThat(columnDescriptor("auth_rate_limits", "request_count"))
+                .isEqualTo("integer:NO:");
+        assertThat(columnDescriptor("security_events", "created_at"))
+                .isEqualTo("timestamp with time zone:NO:CURRENT_TIMESTAMP");
         assertThat(columnDescriptor("token_blacklist", "token_type"))
                 .isEqualTo("character varying:NO:");
         assertThat(columnDescriptor("token_blacklist", "blacklisted_at"))
@@ -227,11 +258,22 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
 
         assertThat(constraintExists("ck_email_verification_retry_count_nonnegative"))
                 .isTrue();
+        assertThat(constraintExists("ck_users_email_identity_type")).isTrue();
+        assertThat(constraintExists("ck_email_challenge_secret_shape")).isTrue();
+        assertThat(constraintExists("ck_email_delivery_outbox_status")).isTrue();
+        assertThat(constraintExists("ck_auth_rate_limit_count")).isTrue();
+        assertThat(constraintExists("ck_security_event_outcome")).isTrue();
         assertThat(constraintExists("ck_token_blacklist_token_type")).isTrue();
 
-        assertThat(indexExists("idx_email_verification_pending_lookup")).isTrue();
+        assertThat(indexExists("idx_email_verification_pending_lookup")).isFalse();
         assertThat(indexExists("idx_email_verification_email_created_at")).isTrue();
         assertThat(indexExists("idx_email_verification_expires_at")).isTrue();
+        assertThat(indexExists("uk_email_challenge_one_active")).isTrue();
+        assertThat(indexExists("idx_email_challenge_handle_lookup")).isTrue();
+        assertThat(indexExists("idx_email_challenge_delivery")).isTrue();
+        assertThat(indexExists("idx_email_delivery_outbox_pending")).isTrue();
+        assertThat(indexExists("idx_auth_rate_limits_expires_at")).isTrue();
+        assertThat(indexExists("idx_security_events_subject_created")).isTrue();
         assertThat(indexExists("idx_token_blacklist_expires_at")).isTrue();
 
         assertThat(indexExists("idx_users_email")).isFalse();
@@ -249,23 +291,27 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
                     """
                     INSERT INTO email_verification_codes (
                         id, created_at, email, expires_at, purpose,
-                        updated_at, verification_code
+                        updated_at, code_digest, code_key_id,
+                        delivery_status, usage_status
                     ) VALUES (?, CURRENT_TIMESTAMP, ?,
                         CURRENT_TIMESTAMP + INTERVAL '10 minutes',
-                        'REGISTRATION', CURRENT_TIMESTAMP, '123456')
+                        'REGISTRATION', CURRENT_TIMESTAMP,
+                        'test-code-digest', 'test-key-1',
+                        'ACTIVE', 'UNUSED')
                     """,
                     emailCodeId,
                     "schema-default-" + emailCodeId + "@example.invalid"
             );
             assertThat(jdbcTemplate.queryForObject(
                     """
-                    SELECT is_used::text || ':' || retry_count::text
+                    SELECT delivery_status || ':' || usage_status || ':'
+                        || retry_count::text
                     FROM email_verification_codes
                     WHERE id = ?
                     """,
                     String.class,
                     emailCodeId
-            )).isEqualTo("false:0");
+            )).isEqualTo("ACTIVE:UNUSED:0");
             assertThatThrownBy(() -> jdbcTemplate.update(
                     "UPDATE email_verification_codes SET retry_count = -1 WHERE id = ?",
                     emailCodeId
@@ -330,6 +376,34 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
+    void securityEventsAreAppendOnly() {
+        String eventId = UUID.randomUUID().toString();
+        jdbcTemplate.update(
+                """
+                INSERT INTO security_events (
+                    id, event_type, subject_id, request_id, outcome, reason_code
+                ) VALUES (?, 'LOGIN', ?, ?, 'SUCCESS', 'AUTHENTICATED')
+                """,
+                eventId,
+                "subject-" + eventId,
+                "request-" + eventId
+        );
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "UPDATE security_events SET outcome = 'FAILURE' WHERE id = ?",
+                eventId
+        ))
+                .hasRootCauseInstanceOf(SQLException.class)
+                .hasMessageContaining("security_events is append-only");
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "DELETE FROM security_events WHERE id = ?",
+                eventId
+        ))
+                .hasRootCauseInstanceOf(SQLException.class)
+                .hasMessageContaining("security_events is append-only");
+    }
+
+    @Test
     @SuppressWarnings({"unchecked", "rawtypes"})
     void flywayManagedSpringSessionTablesSupportRepositoryRoundTrip() {
         Session session = (Session) sessionRepository.createSession();
@@ -358,6 +432,23 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
                 tableName,
                 columnName
         );
+    }
+
+    private boolean columnExists(String tableName, String columnName) {
+        return Boolean.TRUE.equals(jdbcTemplate.queryForObject(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = ?
+                      AND column_name = ?
+                )
+                """,
+                Boolean.class,
+                tableName,
+                columnName
+        ));
     }
 
     private boolean constraintExists(String constraintName) {

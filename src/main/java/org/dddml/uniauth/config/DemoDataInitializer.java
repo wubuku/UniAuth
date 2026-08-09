@@ -126,6 +126,7 @@ public class DemoDataInitializer implements CommandLineRunner {
         }
         user.setUsername(username);
         user.setEmail(email);
+        user.setEmailIdentityType(UserEntity.EmailIdentityType.VERIFIED_CONTACT);
         user.setDisplayName(displayName);
         user.setEnabled(true);
         user.setEmailVerified(true);

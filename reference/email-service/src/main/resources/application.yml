@@ -39,6 +39,7 @@ spring:
     validate-migration-naming: true
     validate-on-migrate: true
     out-of-order: false
+    group: true
 
   sql:
     init:

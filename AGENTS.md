@@ -73,8 +73,8 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
   PostgreSQL ApplicationContext 断言配置进入真实 `JavaMailSender`。
 - 参考邮件服务的 `dev`、`test`、`prod` profile 只接受 PostgreSQL datasource；
   H2 不再是测试后端。默认 `EMAIL_DATABASE_LAYOUT=dedicated` 要求邮件专用数据库；
-  `shared-uniauth` 是显式 opt-in，可在获准的空 `public` schema 先迁移邮件 V1-V3，
-  也可加入完整 UniAuth V1-V5 peer。两种启动顺序都使用独立 history；后启动一侧
+  `shared-uniauth` 是显式 opt-in，可在获准的空 `public` schema 先迁移邮件 V1-V4，
+  也可加入完整 UniAuth V1-V6 peer。两种启动顺序都使用独立 history；后启动一侧
   验证完整 peer 后创建自己的 V0 baseline，两侧通过同一 PostgreSQL advisory lock
   串行化首次 baseline/migrate。Java guard 会在 Flyway 前拒绝非 PostgreSQL、未知
   layout、受保护数据库和不完整 peer。存在 peer relation 却缺少 peer history 属于
@@ -211,28 +211,26 @@ JWKS、旧 token 和 Python 资源服务器；真实环境仍需外部密钥管�
   和 fragment；允许 context path 和尾部斜杠。timeout 范围是 `100..600000ms`。
 
 真实邮箱注册验证和密码重置依赖该服务及其下游 SMTP/供应商配置。普通
-`POST /api/auth/login` 的邮箱加密码登录不调用邮件服务；虽然 enum 和前端类型仍有
-`LOGIN` purpose，当前没有受支持的邮箱验证码登录 endpoint。
+`POST /api/auth/login` 的邮箱加密码登录不调用邮件服务；verification purpose 和
+前端请求类型当前只允许 `REGISTRATION`、`PASSWORD_RESET`，没有受支持的邮箱验证码
+登录 endpoint。
 
-只有外部邮件服务同步返回 `SUCCESS`/`QUEUED` 时 UniAuth 才保存 challenge；拒绝、
-限流、非法邮箱、超时、网络异常和空结果都失败关闭。正确验证码只允许通过按已选
-challenge id 和 code 的 PostgreSQL 条件更新消费一次；controller 不得再按
-email/purpose 二次标记，否则可能误消费验证期间新建的 challenge。该流程仍不是生产
-可靠状态机：
-外部服务已接受后，如果本地 challenge 事务失败，用户可能收到不可用验证码；异步
-delivery 失败也不会自动撤销 challenge。Java 测试使用完整 ApplicationContext、
-  PostgreSQL 和真实业务 Bean，只 mock 最外层 `EmailService`；独立 client 集成测试和
-  Shell E2E 使用真实 `RestTemplate`。根 HTTP E2E 的正常邮箱流程启动
-  `reference/email-service` 的真实 JAR、独立 PostgreSQL 和真实 HTTP 端口，直接断言
-  模板进入其 `email_queue`；只有参考实现不会自然产生的 `503/429` 失败映射场景才
-  切换到受控 loopback stub。这些测试不证明真实供应商送达。`reference/email-service`
-  的默认 E2E 通过真实 HTTP、Flyway/PostgreSQL、Spring Beans、Thymeleaf、异步队列和
-  GreenMail 验证兼容实现。
+UniAuth 在同一事务中创建 HMAC challenge 与 transactional outbox，初始状态为
+`PENDING_DELIVERY`；worker 使用稳定 idempotency key 调用邮件服务，并通过受鉴权
+delivery status 查询恢复“外部已接受、本地尚未确认”的窗口。challenge 只有在确认
+接受后才进入 `ACTIVE`，最终投递失败会使其不可验证。正确验证码按 opaque handle、
+purpose、canonical email、retry budget 和 HMAC digest 做 PostgreSQL 条件消费；
+同一 canonical `(email,purpose)` 最多一个 active challenge。Java 测试使用完整
+ApplicationContext、PostgreSQL 和真实业务 Bean，只 mock 最外层 `EmailService`；
+独立 client 集成测试和 Shell E2E 使用真实 `RestTemplate`。根 HTTP E2E 的正常邮箱
+流程启动 `reference/email-service` 的真实 JAR、独立 PostgreSQL 和真实 HTTP 端口，
+直接断言模板进入其 `email_queue`；只有参考实现不会自然产生的 `503/429` 失败映射
+场景才切换到受控 loopback stub。这些测试不证明真实供应商最终送达。
 
-参考邮件服务的 schema 由其自己的 Flyway V1/V2/V3 管理，history table 是
+参考邮件服务的 schema 由其自己的 Flyway V1/V2/V3/V4 管理，history table 是
 `email_service_flyway_schema_history`；所有 profile 使用 Hibernate `validate`，
 SQL init 关闭。默认使用独立 PostgreSQL；显式 `shared-uniauth` 允许在获准的空
-`public` schema 先启动任一侧，或与完整 UniAuth V1-V5 peer 共存，且不得连接
+`public` schema 先启动任一侧，或与完整 UniAuth V1-V6 peer 共存，且不得连接
 `blacksheep*` 或其他未获准共享库。后启动一侧只有在对端 history/核心 relation
 完整、本侧 relation 不存在且对端没有失败 migration 时，才在共享 advisory lock
 内创建 baseline V0；全局
@@ -258,7 +256,7 @@ Flyway V3 约束队列生命周期行形状：终态必须有 `processed_time`�
 `reference/email-service/scripts/backup-postgres.sh`：它只读取显式配置，支持
 `dedicated` 和显式 `shared-uniauth`，但只导出邮件队列、日志、对应序列和邮件
 Flyway history，不包含 UniAuth 用户或认证表。脚本拒绝未知布局、缺失邮件 schema、
-非精确 V1-V3 migration 链、不安全目录和 PostgreSQL client/server major 不一致，
+非精确 V1-V4 migration 链、不安全目录和 PostgreSQL client/server major 不一致，
 以临时文件校验后发布 `0600` archive/checksum。共享库的整库灾备仍由仓库外经过
 授权的数据库运维流程负责；组件
 备份不能替代整库备份。默认 restore 自动化只在 disposable 空库 rehearsal 中执行，
@@ -299,9 +297,11 @@ V1 精确复现获准的 8 张 dev auth/session 表；V2 对齐登录方式时�
 `login_methods_revision`，用于登录方式集合变更的乐观 CAS；V4 对齐 users、Web3
 nonce、email verification 和 token blacklist 的既有实体约束，补齐 email repository
 索引并移除有等价唯一/规范索引覆盖的重复索引；V5 将 Web3 nonce 绑定到服务端签发
-的完整 SIWE message，并通过 PostgreSQL 条件删除完成一次性消费。V5 发布时会失效
-所有旧的未消费 Web3 challenge；后续结构修复必须新增 V6+，不得修改已经发布或
-baseline 的 V1/V2/V3/V4/V5 checksum。
+的完整 SIWE message，并通过 PostgreSQL 条件删除完成一次性消费。V6 增加 canonical
+email identity、HMAC challenge、delivery/usage 状态、transactional outbox、共享
+认证限流和 append-only security event。V5 发布时会失效所有旧的未消费 Web3
+challenge；V6 no-return cutover 会失效旧明文邮箱 challenge。后续结构修复必须新增
+V7+，不得修改已经发布或 baseline 的 V1/V2/V3/V4/V5/V6 checksum。
 
 修改 entity/schema 时至少核对：
 
@@ -364,14 +364,14 @@ PYTHON_BIN=python3 scripts/test-email-login-browser-e2e.sh
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-当前验证基线（2026-08-09 工作树；每次后续变更仍须重跑）：
+当前验证基线（2026-08-09 F1 完成工作树；每次后续变更仍须重跑）：
 
-- 当前根统一门禁：Maven 200 tests、shared-schema process E2E 4/4、
-  HTTP 16/16、Flyway baseline guard 14/14、Mock Playwright 28/28、
+- 当前根统一门禁：Maven 212 tests、shared-schema process E2E 4/4、
+  HTTP 16/16、Flyway baseline guard 16/16、Mock Playwright 28/28、
   真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 18/18、邮件 REST stub
-  contract 9/9；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
+  contract 12/12；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
   patch hygiene 均通过。
-- 当前邮件参考服务：148 tests，0 failures/errors/skips；Shell runtime 43/43、
+- 当前邮件参考服务：150 tests，0 failures/errors/skips；Shell runtime 44/44、
   HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10。
 - 以下 2026-08-08 条目保留为加固增量历史，不替代上述当前基线。
 - 邮件参考服务初始纳入基线：94 tests，0 failures/errors/skips；另有 runtime guard 15/15、
@@ -450,13 +450,19 @@ PYTHON_BIN=python3 scripts/verify.sh
   恶意 `state.redirect_uri` 失败关闭，主前端 context path 在成功/失败回跳中保持
   一致，未消费 `Referer` 不再进入 Session。完整根 Maven 200/200，HTTP 16/16、
   Mock Playwright 28/28，统一门禁通过。
+- 2026-08-09 F1 邮箱身份完整性增量：canonical email、统一密码策略和 JSON credential
+  边界、HMAC challenge、transactional outbox、邮件幂等/状态查询、共享认证限流、
+  append-only security event、UniAuth V6 与邮件 V4 已实现。完整根 Maven 212/212、
+  邮件 Maven 150/150、Flyway baseline guard 16/16、邮件 runtime 44/44，统一门禁
+  `12/12` 通过。
 - Shell HTTP E2E：16/16；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
-- Flyway baseline guard：14/14。
+- Flyway baseline guard：16/16。
 - Mock Playwright：28/28；真实邮箱登录浏览器 E2E：1/1。
-- Python 资源服务器：18/18；邮件 REST stub contract：9/9。
+- Python 资源服务器：18/18；邮件 REST stub contract：12/12。
 - 前端 ESLint、TypeScript 和生产构建通过。
-- 每个未提交批次仍必须在完整门禁后重新执行连续三轮无修改检查；无问题轮次只记录在
-  当次工作报告，不为留痕修改仓库文件。
+- 最终加固 F1-F4 每批只执行固定范围验收和完整门禁，不分别执行连续三轮无修改检查；
+  F1-F5 全部实现并通过各自验收后，由 F5 统一执行一次阶段末连续三轮检查。无问题轮次
+  只记录在当次工作报告，不为留痕修改仓库文件。
 - 前端 lockfile 已通过严格 `npm ci`；已显式升级受影响的 Axios、Ethers、
   React Router、Vite 和相关传递依赖，`npm audit --audit-level=high` 通过。
 - npm audit 仍报告 2 个 React Router moderate advisories。当前 SPA 只使用
@@ -537,8 +543,9 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 触达 Python 资源服务器时必须通过离线 RSA/JWKS/Flask 测试，真实 JWKS 网络验证只能显式 opt in。
 - 需要启动服务时，只能使用显式 profile 和隔离可丢弃数据库；联调不能替代两端各自的自动化验证。
 - 不把可自动化的首轮验收转交给用户；“已完成”必须有可复现的测试证据。
-- 基础验证全部通过后，才执行固定范围的三轮收敛检查。任何实质问题引发的修改都将
-  计数器归零，只有连续三轮无问题、无修改才结束。
+- 一般交付在基础验证全部通过后执行固定范围的三轮收敛检查。当前最终加固阶段是明确
+  例外：F1-F4 每轮只以该轮自动化验收收口；F1-F5 全部完成后，由 F5 在完整阶段门禁
+  通过后统一执行三轮检查。阶段末检查中的任何实质修改都令计数器归零。
 
 ## Current Rough Edges
 
@@ -558,25 +565,11 @@ PYTHON_BIN=python3 scripts/verify.sh
   OAuth2 显式绑定意图、provider identity/email trust、scope 与 authorized-client
   生命周期仍未完成。
 - `ApiAuthController` 对 JWT 用户把 provider 默认标成 `local`，不能反映真实主登录方式。
-- 邮件同步接受失败和 challenge 消费并发已经失败关闭/原子化；外部接受后本地事务
-  失败、异步 delivery 失败、单一 pending challenge、canonical email 和可靠
-  outbox/补偿状态机仍未解决。
-- 邮箱验证码当前仍以低熵明文写入 `email_verification_codes.verification_code`；
-  注册 challenge 的 JSON metadata 在消费或清理前还保存 password hash。最终 F1
-  必须改为带服务端密钥的验证码摘要、最小类型化 pending 数据和有界保留，不能只做
-  无密钥快速 hash。
-- 公开 `GET /api/auth/email/status/{email}` 会返回 pending registration 状态；
-  `POST /api/auth/check-verification-code` 当前校验失败不会增加 retry。两者都是邮箱/
-  验证码 oracle，F1 必须在保持注册 UX 的前提下改为 opaque challenge 或唯一原子
-  verify 路径，并纳入统一限流与枚举防护。
-- 非邮箱用户名注册当前仍会把请求中的未验证 email 写入全局唯一 `users.email`，
-  OAuth/Web3 又会生成内部合成地址；未验证/合成值可能阻塞真实邮箱归属或被误当作
-  verified identity。F1/F3 必须明确 verified contact 与内部占位值的状态和约束，
-  坏数据只做 preflight，不自动合并账户。
-- 新密码策略当前不一致：普通注册 DTO 没有服务端约束，add-local 只检查 6 位，重置
-  密码检查 8..128；登录使用 `@RequestParam`，因此也可能从 query 接受 password，
-  且没有多实例一致的失败节流。F1 必须统一所有密码写入入口、禁止 URL 凭据并增加
-  有界防爆破，不通过永久账户锁定制造拒绝服务。
+- F1 已收敛邮箱身份和 challenge 基线：canonical contact 与 synthetic identity 分离，
+  数据库只保存带 key id 的 HMAC digest，不再保存明文 code/credential metadata；
+  opaque handle、唯一 active challenge、outbox/idempotency、delivery 恢复、统一密码
+  策略、JSON-only credential、共享 PostgreSQL 限流和 append-only 安全事件均有
+  Java/Shell/Playwright 覆盖。后续不得重新引入旧 oracle、明文验证码或旁路写路径。
 - Web3 V5 已严格绑定服务端保存的完整 SIWE message；nonce 生成使用 PostgreSQL
   原子 upsert，验证使用带 message/有效期条件的原子消费，旧 challenge 在迁移时失效。
 - 登录方式并发 bind、set-primary、delete/delete 和 delete/set-primary 已由数据库
@@ -607,12 +600,14 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 只有数据丢失、认证/授权绕过、凭据泄露、门禁伪成功或当前批直接引入的实质回归
   可以并入正在执行的固定批次。其他发现进入加固后的普通 backlog，不能借“继续探索”
   延长阶段。
-- 每批仍执行：固定范围 -> PostgreSQL 集成测试与夹具 -> Shell/Flyway E2E ->
-  Playwright/Python/供应链工具 -> 完整硬门槛 -> 连续三轮无修改检查 -> 文档更新与
-  提交推送。百分比按最终退出范围诚实评估，不通过零碎条目虚增。
+- F1-F4 每批执行：固定范围 -> PostgreSQL 集成测试与夹具 -> Shell/Flyway E2E ->
+  Playwright/Python/供应链工具 -> 完整硬门槛 -> 文档更新与提交推送。各批不分别
+  执行连续三轮无修改检查；F5 完成全部剩余实现和统一门禁后，再对整个 F 阶段执行
+  唯一一次连续三轮检查。百分比按最终退出范围诚实评估，不通过零碎条目虚增。
 - 当前总原则是先全面加固已有功能，不增加新功能。
 - 实施前先建立集成测试、Shell E2E 和 Playwright 保护；测试必须覆盖本次修改。
-- 基础门禁通过后执行连续三轮无修改检查；任何实质修改都将计数归零。
+- F1-F4 的基础门禁通过后直接进入下一冻结批次；只在 F1-F5 全部完成后的阶段末检查中
+  使用连续三轮计数器，任何实质修改都将该阶段末计数归零。
 - 并发修复优先数据库约束、条件更新和 CAS，不默认使用悲观锁，也不机械引入 `@Version`。
 - 未经用户允许，不运行真实高成本外部调用；真实 OAuth/mail 也不是默认门禁。
 - 外部依赖下载遇到网络阻断时，可使用用户提供的本机 `http_proxy`、`https_proxy`

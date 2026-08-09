@@ -34,6 +34,7 @@ final class EmailSharedSchemaFlywayBootstrap {
         "idx_email_queue_next_retry",
         "idx_email_queue_status_updated",
         "idx_email_queue_recovery",
+        "uk_email_queue_idempotency_key",
         "email_logs",
         "email_logs_id_seq",
         "email_logs_pkey",
@@ -50,6 +51,9 @@ final class EmailSharedSchemaFlywayBootstrap {
         "user_login_methods",
         "web3_nonces",
         "email_verification_codes",
+        "email_delivery_outbox",
+        "auth_rate_limits",
+        "security_events",
         "user_authorities",
         "token_blacklist",
         "spring_session",
@@ -61,6 +65,9 @@ final class EmailSharedSchemaFlywayBootstrap {
         "user_login_methods",
         "web3_nonces",
         "email_verification_codes",
+        "email_delivery_outbox",
+        "auth_rate_limits",
+        "security_events",
         "user_authorities",
         "token_blacklist",
         "spring_session",
@@ -68,7 +75,7 @@ final class EmailSharedSchemaFlywayBootstrap {
     );
 
     private static final List<String> REQUIRED_PEER_VERSIONS =
-        List.of("1", "2", "3", "4", "5");
+        List.of("1", "2", "3", "4", "5", "6");
 
     private EmailSharedSchemaFlywayBootstrap() {
     }
@@ -208,6 +215,11 @@ final class EmailSharedSchemaFlywayBootstrap {
         if (configuration.isOutOfOrder()) {
             throw new IllegalStateException(
                 "SPRING_FLYWAY_OUT_OF_ORDER must be exactly false"
+            );
+        }
+        if (!configuration.isGroup()) {
+            throw new IllegalStateException(
+                "SPRING_FLYWAY_GROUP must be exactly true"
             );
         }
     }

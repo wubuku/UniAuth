@@ -10,6 +10,7 @@ SCRIPT_DIR="$PROJECT_DIR/scripts"
 FINGERPRINT_SQL="$SCRIPT_DIR/sql/uniauth-schema-fingerprint.sql"
 LOGIN_METHOD_PREFLIGHT_SQL="$SCRIPT_DIR/sql/v2-login-method-preflight.sql"
 ENTITY_SCHEMA_PREFLIGHT_SQL="$SCRIPT_DIR/sql/v4-entity-schema-preflight.sql"
+EMAIL_IDENTITY_PREFLIGHT_SQL="$SCRIPT_DIR/sql/v6-email-identity-preflight.sql"
 MODE="${1:-rehearse}"
 RUN_TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 ARTIFACT_DIR="${UNIAUTH_BASELINE_ARTIFACT_DIR:-$PROJECT_DIR/.local/uniauth/baseline-rehearsal/$RUN_TIMESTAMP-$$}"
@@ -120,6 +121,17 @@ source_entity_schema_violations() {
             -f "$ENTITY_SCHEMA_PREFLIGHT_SQL"
 }
 
+source_email_identity_violations() {
+    PGOPTIONS="-c default_transaction_read_only=on" \
+        PGPASSWORD="$POSTGRES_PASSWORD" \
+        psql -X -qAt -v ON_ERROR_STOP=1 \
+            -h "$POSTGRES_HOST" \
+            -p "$POSTGRES_PORT" \
+            -U "$POSTGRES_USER" \
+            -d "$POSTGRES_DATABASE" \
+            -f "$EMAIL_IDENTITY_PREFLIGHT_SQL"
+}
+
 schema_fingerprint() {
     local host="$1"
     local port="$2"
@@ -221,6 +233,7 @@ run_flyway() {
         printf 'flyway.cleanDisabled=true\n'
         printf 'flyway.validateOnMigrate=true\n'
         printf 'flyway.outOfOrder=false\n'
+        printf 'flyway.group=true\n'
     } > "$config_file"
 
     (
@@ -296,6 +309,12 @@ fi
 SOURCE_ENTITY_SCHEMA_VIOLATIONS="$(source_entity_schema_violations)"
 if [ -n "$SOURCE_ENTITY_SCHEMA_VIOLATIONS" ]; then
     echo "ERROR: source data is not compatible with pending entity-schema migration: $SOURCE_ENTITY_SCHEMA_VIOLATIONS" >&2
+    exit 1
+fi
+
+SOURCE_EMAIL_IDENTITY_VIOLATIONS="$(source_email_identity_violations)"
+if [ -n "$SOURCE_EMAIL_IDENTITY_VIOLATIONS" ]; then
+    echo "ERROR: source data is not compatible with pending email-identity migration: $SOURCE_EMAIL_IDENTITY_VIOLATIONS" >&2
     exit 1
 fi
 
@@ -529,6 +548,29 @@ if [ "$RESTORED_V5_HISTORY_TYPE" != "SQL" ] || [ "$FRESH_V5_HISTORY_TYPE" != "SQ
     exit 1
 fi
 
+RESTORED_V6_HISTORY_TYPE="$(
+    psql_value \
+        127.0.0.1 \
+        "$REHEARSAL_PORT" \
+        "$REHEARSAL_DATABASE" \
+        "$REHEARSAL_USER" \
+        "$REHEARSAL_PASSWORD" \
+        "SELECT type FROM uniauth_flyway_schema_history WHERE version = '6';"
+)"
+FRESH_V6_HISTORY_TYPE="$(
+    psql_value \
+        127.0.0.1 \
+        "$REHEARSAL_PORT" \
+        "$FRESH_DATABASE" \
+        "$REHEARSAL_USER" \
+        "$REHEARSAL_PASSWORD" \
+        "SELECT type FROM uniauth_flyway_schema_history WHERE version = '6';"
+)"
+if [ "$RESTORED_V6_HISTORY_TYPE" != "SQL" ] || [ "$FRESH_V6_HISTORY_TYPE" != "SQL" ]; then
+    echo "ERROR: Flyway V6 was not applied in both rehearsal paths" >&2
+    exit 1
+fi
+
 RESTORED_WEB3_MESSAGE_COLUMN="$(
     psql_value \
         127.0.0.1 \
@@ -579,6 +621,8 @@ REPORT_FILE="$ARTIFACT_DIR/rehearsal-result.txt"
     echo "fresh_v4_history_type=$FRESH_V4_HISTORY_TYPE"
     echo "restored_v5_history_type=$RESTORED_V5_HISTORY_TYPE"
     echo "fresh_v5_history_type=$FRESH_V5_HISTORY_TYPE"
+    echo "restored_v6_history_type=$RESTORED_V6_HISTORY_TYPE"
+    echo "fresh_v6_history_type=$FRESH_V6_HISTORY_TYPE"
     echo "restored_web3_message_column=$RESTORED_WEB3_MESSAGE_COLUMN"
     echo "fresh_web3_message_column=$FRESH_WEB3_MESSAGE_COLUMN"
     echo "source_dump=$SOURCE_DUMP"
@@ -625,6 +669,12 @@ if [ "$MODE" = "apply" ]; then
     APPLY_SOURCE_ENTITY_SCHEMA_VIOLATIONS="$(source_entity_schema_violations)"
     if [ -n "$APPLY_SOURCE_ENTITY_SCHEMA_VIOLATIONS" ]; then
         echo "ERROR: source entity-schema data changed during rehearsal; refusing baseline apply: $APPLY_SOURCE_ENTITY_SCHEMA_VIOLATIONS" >&2
+        exit 1
+    fi
+
+    APPLY_SOURCE_EMAIL_IDENTITY_VIOLATIONS="$(source_email_identity_violations)"
+    if [ -n "$APPLY_SOURCE_EMAIL_IDENTITY_VIOLATIONS" ]; then
+        echo "ERROR: source email-identity data changed during rehearsal; refusing baseline apply: $APPLY_SOURCE_EMAIL_IDENTITY_VIOLATIONS" >&2
         exit 1
     fi
 

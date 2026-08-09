@@ -70,6 +70,7 @@ email_service_validate_schema_ownership_configuration() {
     local validate_migration_naming="${SPRING_FLYWAY_VALIDATE_MIGRATION_NAMING:-true}"
     local validate_on_migrate="${SPRING_FLYWAY_VALIDATE_ON_MIGRATE:-true}"
     local out_of_order="${SPRING_FLYWAY_OUT_OF_ORDER:-false}"
+    local group="${SPRING_FLYWAY_GROUP:-true}"
     local flyway_locations="${SPRING_FLYWAY_LOCATIONS:-classpath:db/migration/postgresql}"
     local flyway_table="${SPRING_FLYWAY_TABLE:-email_service_flyway_schema_history}"
     local flyway_default_schema="${SPRING_FLYWAY_DEFAULT_SCHEMA:-public}"
@@ -97,6 +98,7 @@ email_service_validate_schema_ownership_configuration() {
     email_service_require_boolean \
         SPRING_FLYWAY_OUT_OF_ORDER \
         "$out_of_order" || return 1
+    email_service_require_boolean SPRING_FLYWAY_GROUP "$group" || return 1
 
     email_service_require_exact_value \
         SPRING_FLYWAY_ENABLED "$flyway_enabled" true || return 1
@@ -116,6 +118,8 @@ email_service_validate_schema_ownership_configuration() {
         SPRING_FLYWAY_VALIDATE_ON_MIGRATE "$validate_on_migrate" true || return 1
     email_service_require_exact_value \
         SPRING_FLYWAY_OUT_OF_ORDER "$out_of_order" false || return 1
+    email_service_require_exact_value \
+        SPRING_FLYWAY_GROUP "$group" true || return 1
     email_service_require_exact_value \
         SPRING_FLYWAY_LOCATIONS "$flyway_locations" \
         "classpath:db/migration/postgresql" || return 1

@@ -59,89 +59,89 @@ expect_failure() {
         || fail "$name did not report the expected error"
 }
 
-echo "1/43 Reject an implicit profile"
+echo "1/44 Reject an implicit profile"
 expect_failure \
     missing-profile \
     "SPRING_PROFILES_ACTIVE must be exactly dev or prod" \
     run_guard SPRING_PROFILES_ACTIVE=
 
-echo "2/43 Reject a shared UniAuth database without explicit layout"
+echo "2/44 Reject a shared UniAuth database without explicit layout"
 expect_failure \
     shared-database \
     "EMAIL_DATABASE_LAYOUT=shared-uniauth is required for a UniAuth database" \
     run_guard EMAIL_POSTGRES_DATABASE=uniauth_test
 
-echo "3/43 Reject a non-disposable dev database name"
+echo "3/44 Reject a non-disposable dev database name"
 expect_failure \
     nondisposable-dev \
     "dev profile requires a database named dev/test/demo/local" \
     run_guard EMAIL_POSTGRES_DATABASE=email_service_prod
 
-echo "4/43 Reject non-loopback exposure without an API key"
+echo "4/44 Reject non-loopback exposure without an API key"
 expect_failure \
     exposed-without-key \
     "EMAIL_SERVICE_API_KEY is required for non-loopback binding" \
     run_guard EMAIL_SERVICE_BIND_ADDRESS=0.0.0.0
 
-echo "5/43 Reject SMTP authentication without credentials"
+echo "5/44 Reject SMTP authentication without credentials"
 expect_failure \
     missing-smtp-credentials \
     "one of SMTP_USERNAME or SPRING_MAIL_USERNAME must be set" \
     run_guard SMTP_AUTH=true
 
-echo "6/43 Reject an SMTP host containing URI syntax"
+echo "6/44 Reject an SMTP host containing URI syntax"
 expect_failure \
     invalid-smtp-host \
     "SMTP_HOST must be a host name or IP address without URI syntax or whitespace" \
     run_guard SMTP_HOST=smtp://mail.example.test
 
-echo "7/43 Reject an SMTP host containing whitespace"
+echo "7/44 Reject an SMTP host containing whitespace"
 expect_failure \
     whitespace-smtp-host \
     "SMTP_HOST must be a host name or IP address without URI syntax or whitespace" \
     run_guard SMTP_HOST="mail host.example.test"
 
-echo "8/43 Reject an oversized SMTP host"
+echo "8/44 Reject an oversized SMTP host"
 oversized_smtp_host="$(printf '%0256d' 0)"
 expect_failure \
     oversized-smtp-host \
     "SMTP_HOST must be a host name or IP address without URI syntax or whitespace" \
     run_guard SMTP_HOST="$oversized_smtp_host"
 
-echo "9/43 Accept an IPv6 SMTP host token"
+echo "9/44 Accept an IPv6 SMTP host token"
 run_guard SMTP_HOST=::1 >/dev/null
 
-echo "10/43 Reject a non-numeric SMTP port"
+echo "10/44 Reject a non-numeric SMTP port"
 expect_failure \
     invalid-smtp-port \
     "SMTP_PORT must be an integer from 1 to 65535" \
     run_guard SMTP_PORT=not-a-port
 
-echo "11/43 Reject an out-of-range SMTP port"
+echo "11/44 Reject an out-of-range SMTP port"
 expect_failure \
     out-of-range-smtp-port \
     "SMTP_PORT must be an integer from 1 to 65535" \
     run_guard SMTP_PORT=65536
 
-echo "12/43 Reject an invalid SMTP server identity flag"
+echo "12/44 Reject an invalid SMTP server identity flag"
 expect_failure \
     invalid-server-identity-flag \
     "SMTP_SSL_CHECK_SERVER_IDENTITY must be exactly true or false" \
     run_guard SMTP_SSL_CHECK_SERVER_IDENTITY=TRUE
 
-echo "13/43 Reject required STARTTLS when STARTTLS is disabled"
+echo "13/44 Reject required STARTTLS when STARTTLS is disabled"
 expect_failure \
     required-starttls-disabled \
     "SMTP_STARTTLS_REQUIRED=true requires SMTP_STARTTLS_ENABLE=true" \
     run_guard SMTP_STARTTLS_REQUIRED=true
 
-echo "14/43 Reject simultaneous STARTTLS and implicit SSL"
+echo "14/44 Reject simultaneous STARTTLS and implicit SSL"
 expect_failure \
     conflicting-smtp-tls-modes \
     "SMTP_SSL_ENABLE=true cannot be combined with SMTP_STARTTLS_ENABLE=true" \
     run_guard SMTP_STARTTLS_ENABLE=true SMTP_SSL_ENABLE=true
 
-echo "15/43 Reject optional STARTTLS in production"
+echo "15/44 Reject optional STARTTLS in production"
 expect_failure \
     optional-production-starttls \
     "production SMTP requires forced STARTTLS or implicit SSL" \
@@ -151,7 +151,7 @@ expect_failure \
         SMTP_STARTTLS_ENABLE=true \
         SMTP_STARTTLS_REQUIRED=false
 
-echo "16/43 Reject production without SMTP server identity verification"
+echo "16/44 Reject production without SMTP server identity verification"
 expect_failure \
     production-without-server-identity \
     "production SMTP requires server identity verification" \
@@ -162,14 +162,14 @@ expect_failure \
         SMTP_STARTTLS_REQUIRED=true \
         SMTP_SSL_CHECK_SERVER_IDENTITY=false
 
-echo "17/43 Accept production implicit SSL with server identity verification"
+echo "17/44 Accept production implicit SSL with server identity verification"
 run_guard \
     SPRING_PROFILES_ACTIVE=prod \
     EMAIL_POSTGRES_DATABASE=email_service_prod \
     SMTP_SSL_ENABLE=true \
     >/dev/null
 
-echo "18/43 Reject production without recovery processing"
+echo "18/44 Reject production without recovery processing"
 expect_failure \
     disabled-prod-delivery \
     "production email delivery requires recovery processing" \
@@ -182,13 +182,13 @@ expect_failure \
         SMTP_STARTTLS_REQUIRED=true \
         EMAIL_RECOVERY_ENABLED=false
 
-echo "19/43 Reject an invalid recovery scan interval"
+echo "19/44 Reject an invalid recovery scan interval"
 expect_failure \
     invalid-recovery-scan \
     "EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES must be an integer from 1 to 10080" \
     run_guard EMAIL_RECOVERY_SCAN_INTERVAL_MINUTES=10081
 
-echo "20/43 Reject a recovery window shorter than the SMTP timeout budget"
+echo "20/44 Reject a recovery window shorter than the SMTP timeout budget"
 expect_failure \
     short-recovery-window \
     "EMAIL_STUCK_TIMEOUT_MINUTES must exceed the combined SMTP timeout budget" \
@@ -198,7 +198,7 @@ expect_failure \
         SMTP_WRITE_TIMEOUT_MS=30000 \
         EMAIL_STUCK_TIMEOUT_MINUTES=1
 
-echo "21/43 Reject an environment file readable by group or others"
+echo "21/44 Reject an environment file readable by group or others"
 open_env="$TEMP_DIR/open.env"
 printf '%s\n' 'SPRING_PROFILES_ACTIVE=dev' >"$open_env"
 chmod 644 "$open_env"
@@ -207,7 +207,7 @@ expect_failure \
     "environment file must not be accessible by group or others" \
     email_service_validate_env_file "$open_env"
 
-echo "22/43 Reject a symbolic-link environment file"
+echo "22/44 Reject a symbolic-link environment file"
 secure_env="$TEMP_DIR/secure.env"
 linked_env="$TEMP_DIR/linked.env"
 printf '%s\n' 'SPRING_PROFILES_ACTIVE=dev' >"$secure_env"
@@ -218,26 +218,26 @@ expect_failure \
     "environment file must not be a symbolic link" \
     email_service_validate_env_file "$linked_env"
 
-echo "23/43 Accept an owner-only environment file"
+echo "23/44 Accept an owner-only environment file"
 email_service_validate_env_file "$secure_env"
 
-echo "24/43 Reject an API key containing a line break"
+echo "24/44 Reject an API key containing a line break"
 expect_failure \
     invalid-api-key-line-break \
     "EMAIL_SERVICE_API_KEY must be at most 1024 characters without CR or LF" \
     run_guard EMAIL_SERVICE_API_KEY=$'first\nsecond'
 
-echo "25/43 Reject an oversized API key"
+echo "25/44 Reject an oversized API key"
 oversized_api_key="$(printf '%01025d' 0)"
 expect_failure \
     oversized-api-key \
     "EMAIL_SERVICE_API_KEY must be at most 1024 characters without CR or LF" \
     run_guard EMAIL_SERVICE_API_KEY="$oversized_api_key"
 
-echo "26/43 Accept loopback development with plaintext SMTP"
+echo "26/44 Accept loopback development with plaintext SMTP"
 run_guard >/dev/null
 
-echo "27/43 Accept protected non-loopback production STARTTLS configuration"
+echo "27/44 Accept protected non-loopback production STARTTLS configuration"
 run_guard \
     SPRING_PROFILES_ACTIVE=prod \
     EMAIL_POSTGRES_DATABASE=email_service_prod \
@@ -247,91 +247,91 @@ run_guard \
     SMTP_STARTTLS_REQUIRED=true \
     >/dev/null
 
-echo "28/43 Reject Flyway being disabled"
+echo "28/44 Reject Flyway being disabled"
 expect_failure \
     flyway-disabled \
     "SPRING_FLYWAY_ENABLED must be exactly true" \
     run_guard SPRING_FLYWAY_ENABLED=false
 
-echo "29/43 Reject missing Flyway locations being ignored"
+echo "29/44 Reject missing Flyway locations being ignored"
 expect_failure \
     flyway-missing-location-policy \
     "SPRING_FLYWAY_FAIL_ON_MISSING_LOCATIONS must be exactly true" \
     run_guard SPRING_FLYWAY_FAIL_ON_MISSING_LOCATIONS=false
 
-echo "30/43 Reject automatic Flyway baselining"
+echo "30/44 Reject automatic Flyway baselining"
 expect_failure \
     flyway-baseline \
     "SPRING_FLYWAY_BASELINE_ON_MIGRATE must be exactly false" \
     run_guard SPRING_FLYWAY_BASELINE_ON_MIGRATE=true
 
-echo "31/43 Reject Flyway clean being enabled"
+echo "31/44 Reject Flyway clean being enabled"
 expect_failure \
     flyway-clean \
     "SPRING_FLYWAY_CLEAN_DISABLED must be exactly true" \
     run_guard SPRING_FLYWAY_CLEAN_DISABLED=false
 
-echo "32/43 Reject Flyway migration naming validation being disabled"
+echo "32/44 Reject Flyway migration naming validation being disabled"
 expect_failure \
     flyway-migration-naming \
     "SPRING_FLYWAY_VALIDATE_MIGRATION_NAMING must be exactly true" \
     run_guard SPRING_FLYWAY_VALIDATE_MIGRATION_NAMING=false
 
-echo "33/43 Reject Flyway validation being disabled"
+echo "33/44 Reject Flyway validation being disabled"
 expect_failure \
     flyway-validation \
     "SPRING_FLYWAY_VALIDATE_ON_MIGRATE must be exactly true" \
     run_guard SPRING_FLYWAY_VALIDATE_ON_MIGRATE=false
 
-echo "34/43 Reject out-of-order Flyway migrations"
+echo "34/44 Reject out-of-order Flyway migrations"
 expect_failure \
     flyway-out-of-order \
     "SPRING_FLYWAY_OUT_OF_ORDER must be exactly false" \
     run_guard SPRING_FLYWAY_OUT_OF_ORDER=true
 
-echo "35/43 Reject a Flyway location override"
+echo "35/44 Reject a Flyway location override"
 expect_failure \
     flyway-location \
     "SPRING_FLYWAY_LOCATIONS must be exactly classpath:db/migration/postgresql" \
     run_guard SPRING_FLYWAY_LOCATIONS=classpath:db/migration/other
 
-echo "36/43 Reject a Flyway history-table override"
+echo "36/44 Reject a Flyway history-table override"
 expect_failure \
     flyway-history-table \
     "SPRING_FLYWAY_TABLE must be exactly email_service_flyway_schema_history" \
     run_guard SPRING_FLYWAY_TABLE=flyway_schema_history
 
-echo "37/43 Reject a Flyway schema override"
+echo "37/44 Reject a Flyway schema override"
 expect_failure \
     flyway-schema \
     "SPRING_FLYWAY_DEFAULT_SCHEMA must be exactly public" \
     run_guard SPRING_FLYWAY_DEFAULT_SCHEMA=email
 
-echo "38/43 Reject SQL initialization"
+echo "38/44 Reject SQL initialization"
 expect_failure \
     sql-init \
     "SPRING_SQL_INIT_MODE must be exactly never" \
     run_guard SPRING_SQL_INIT_MODE=always
 
-echo "39/43 Reject Hibernate schema generation"
+echo "39/44 Reject Hibernate schema generation"
 expect_failure \
     hibernate-schema-generation \
     "SPRING_JPA_HIBERNATE_DDL_AUTO must be exactly validate" \
     run_guard SPRING_JPA_HIBERNATE_DDL_AUTO=create-drop
 
-echo "40/43 Accept an explicit shared UniAuth database layout"
+echo "40/44 Accept an explicit shared UniAuth database layout"
 run_guard \
     EMAIL_DATABASE_LAYOUT=shared-uniauth \
     EMAIL_POSTGRES_DATABASE=uniauth_test \
     >/dev/null
 
-echo "41/43 Reject an unknown database layout"
+echo "41/44 Reject an unknown database layout"
 expect_failure \
     invalid-database-layout \
     "EMAIL_DATABASE_LAYOUT must be exactly dedicated or shared-uniauth" \
     run_guard EMAIL_DATABASE_LAYOUT=automatic
 
-echo "42/43 Reject a protected shared database even with explicit layout"
+echo "42/44 Reject a protected shared database even with explicit layout"
 expect_failure \
     protected-shared-database \
     "refusing a shared or reserved PostgreSQL database" \
@@ -339,10 +339,16 @@ expect_failure \
         EMAIL_DATABASE_LAYOUT=shared-uniauth \
         EMAIL_POSTGRES_DATABASE=blacksheep_email_test
 
-echo "43/43 Reject a Flyway baseline-version override"
+echo "43/44 Reject a Flyway baseline-version override"
 expect_failure \
     flyway-baseline-version \
     "SPRING_FLYWAY_BASELINE_VERSION must be exactly 0" \
     run_guard SPRING_FLYWAY_BASELINE_VERSION=1
+
+echo "44/44 Reject disabling grouped Flyway migrations"
+expect_failure \
+    flyway-group \
+    "SPRING_FLYWAY_GROUP must be exactly true" \
+    run_guard SPRING_FLYWAY_GROUP=false
 
 echo "PASS: email service runtime guard"
