@@ -76,9 +76,10 @@ async function mockCurrentUser(page: Parameters<typeof test>[0]['page']) {
 }
 
 test('mock EIP-1193 wallet completes the Web3 login contract', async ({ page }) => {
+  const challengeHandle = '00000000-0000-4000-8000-000000000001';
   const nonce = 'browser-wallet-nonce';
   const message = 'Browser wallet challenge';
-  let verifyBody: Record<string, string> | undefined;
+  let verifyBody: Record<string, string | number> | undefined;
 
   await installWallet(page, 'success');
   await mockCurrentUser(page);
@@ -89,7 +90,13 @@ test('mock EIP-1193 wallet completes the Web3 login contract', async ({ page }) 
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ nonce, message, expiresIn: 300 }),
+      body: JSON.stringify({
+        challengeHandle,
+        nonce,
+        message,
+        chainId: 1,
+        expiresIn: 300
+      }),
     });
   });
   await page.route(/\/api\/auth\/web3\/verify$/, async (route) => {
@@ -116,7 +123,9 @@ test('mock EIP-1193 wallet completes the Web3 login contract', async ({ page }) 
     walletAddress,
     message,
     signature: walletSignature,
+    challengeHandle,
     nonce,
+    chainId: 1,
   });
   await expect.poll(() => page.evaluate(() => localStorage.getItem('accessToken')))
     .toBe('wallet.access.token');
@@ -151,8 +160,10 @@ test('Web3 login reports a rejected signature without submitting verification', 
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
+        challengeHandle: '00000000-0000-4000-8000-000000000002',
         nonce: 'rejected-signature-nonce',
         message: 'Reject this challenge',
+        chainId: 1,
         expiresIn: 300,
       }),
     });

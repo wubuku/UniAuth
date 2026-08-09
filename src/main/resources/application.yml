@@ -36,17 +36,27 @@ app:
       password-reset-limit: ${AUTH_RATE_LIMIT_PASSWORD_RESET_LIMIT:5}
       refresh-limit: ${AUTH_RATE_LIMIT_REFRESH_LIMIT:20}
       introspection-limit: ${AUTH_RATE_LIMIT_INTROSPECTION_LIMIT:60}
+      oauth-authorize-limit: ${AUTH_RATE_LIMIT_OAUTH_AUTHORIZE_LIMIT:20}
+      web3-challenge-limit: ${AUTH_RATE_LIMIT_WEB3_CHALLENGE_LIMIT:10}
+      web3-verify-limit: ${AUTH_RATE_LIMIT_WEB3_VERIFY_LIMIT:20}
+      login-method-mutation-limit: ${AUTH_RATE_LIMIT_LOGIN_METHOD_MUTATION_LIMIT:20}
       key-secret: ${AUTH_RATE_LIMIT_KEY_SECRET:local-only-auth-rate-limit-key-change-me}
       cleanup-delay-ms: ${AUTH_RATE_LIMIT_CLEANUP_DELAY_MS:60000}
     introspection:
       client-id: ${INTROSPECTION_CLIENT_ID:resource-server}
       client-secret: ${INTROSPECTION_CLIENT_SECRET:local-only-introspection-client-secret-change-me}
+    recent-auth:
+      max-age-seconds: ${AUTH_RECENT_AUTH_MAX_AGE_SECONDS:600}
+      future-skew-seconds: ${AUTH_RECENT_AUTH_FUTURE_SKEW_SECONDS:30}
   demo-data:
     enabled: false
     disposable: false
   frontend:
     type: react  # 可选值: thymeleaf（传统模板）, react（现代SPA）
     url: ${APP_FRONTEND_URL:}
+  oauth2:
+    binding:
+      expiration-seconds: ${OAUTH2_BINDING_EXPIRATION_SECONDS:300}
   email:
     service:
       url: ${EMAIL_SERVICE_URL:http://localhost:8095}
@@ -77,6 +87,9 @@ app:
     secret-file: ""  # 配置密钥文件路径
   web3:
     nonce-expiration-seconds: 300  # Nonce有效期（秒）
+    chain-id: ${WEB3_CHAIN_ID:1}
+    max-active-global: ${WEB3_MAX_ACTIVE_GLOBAL:1000}
+    max-active-source: ${WEB3_MAX_ACTIVE_SOURCE:10}
     domain: blacksheepmedia.xyz  # 域名，用于SIWE消息
     # SIWE 签名消息模板
     # 参数说明:
@@ -190,11 +203,7 @@ spring:
             client-secret: ${TWITTER_CLIENT_SECRET}
             authorization-grant-type: authorization_code
             scope:
-              - tweet.read
               - users.read
-              - follows.read
-              - like.read
-              - offline.access
             redirect-uri: ${OAUTH2_CALLBACK_URI}
         provider:
           google:

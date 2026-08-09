@@ -8,7 +8,7 @@ It tests the complete success flow including:
 1. New user registration via Web3 wallet
 2. Existing user wallet binding
 3. JWT token generation
-4. Database verification
+4. Removed wallet-status oracle verification
 
 Requirements:
     pip install eth-account==0.10.0
@@ -20,12 +20,8 @@ Author: UniAuth Development Team
 """
 
 import argparse
-import json
 import sys
-import time
-import secrets
-from datetime import datetime
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 import requests
@@ -65,8 +61,15 @@ class RealWeb3LoginTester:
     Real Web3 Wallet Login Testing with Actual Ethereum Signatures
     """
     
-    def __init__(self, server_url: str):
+    def __init__(
+        self,
+        server_url: str,
+        local_username: Optional[str],
+        local_password: Optional[str]
+    ):
         self.server_url = server_url.rstrip('/')
+        self.local_username = local_username
+        self.local_password = local_password
         self.results: list[TestResult] = []
         self.session = requests.Session()
         self.session.headers.update({
@@ -152,6 +155,8 @@ class RealWeb3LoginTester:
             nonce_data = nonce_response.json()
             nonce = nonce_data.get('nonce')
             message = nonce_data.get('message')
+            challenge_handle = nonce_data.get('challengeHandle')
+            chain_id = nonce_data.get('chainId')
             
             print(f"   Step 2: Signing message with private key...")
             
@@ -166,7 +171,9 @@ class RealWeb3LoginTester:
                     "walletAddress": wallet_address,
                     "message": message,
                     "signature": signature,
-                    "nonce": nonce
+                    "challengeHandle": challenge_handle,
+                    "nonce": nonce,
+                    "chainId": chain_id
                 },
                 timeout=10
             )
@@ -209,48 +216,25 @@ class RealWeb3LoginTester:
         Test: Bind Web3 Wallet to New Local User
         
         Flow:
-        1. Register a new local user (username/password)
-        2. Login with local credentials to get token
-        3. Bind binding_wallet to this user
+        1. Login with explicitly supplied local credentials
+        2. Bind binding_wallet to this user
         """
         print(f"\n{Colors.CYAN}{Colors.BOLD}🔗 Test: Bind Web3 Wallet to Local User{Colors.ENDC}")
         
         try:
-            # Step 1: Register a new local user with unique username
-            local_username = f"localuser_{secrets.token_hex(8)}"
-            local_email = f"{local_username}@test.local"
-            local_password = "Password123!"
-            
-            print("   Step 1: Registering a new local user")
-            
-            register_response = self.session.post(
-                f"{self.server_url}/api/auth/register",
-                json={
-                    "username": local_username,
-                    "email": local_email,
-                    "password": local_password,
-                    "displayName": f"Local Test User"
-                },
-                timeout=10
-            )
-            
-            if register_response.status_code not in [200, 201]:
+            if not self.local_username or not self.local_password:
                 return TestResult(
                     name="Web3 Binding",
-                    status=TestStatus.FAIL,
-                    message=f"Failed to register local user: HTTP {register_response.status_code}"
+                    status=TestStatus.SKIP,
+                    message="Local credentials were not supplied"
                 )
-            
-            print(f"   ✅ Local user registered successfully")
-            
-            # Step 2: Login with local credentials
-            print(f"   Step 2: Logging in with local credentials...")
-            
-            login_response = self.session.post(
+
+            print("   Step 1: Logging in with supplied local credentials")
+            login_response = requests.post(
                 f"{self.server_url}/api/auth/login",
-                params={
-                    "username": local_username,
-                    "password": local_password
+                json={
+                    "username": self.local_username,
+                    "password": self.local_password
                 },
                 timeout=10
             )
@@ -268,8 +252,7 @@ class RealWeb3LoginTester:
             
             print("   ✅ Local login successful")
             
-            # Step 3: Bind binding_wallet to this user
-            print("   Step 3: Binding an ephemeral wallet")
+            print("   Step 2: Binding an ephemeral wallet")
             
             nonce_response = self.session.get(
                 f"{self.server_url}/api/auth/web3/nonce/{self.binding_wallet_address}",
@@ -290,7 +273,7 @@ class RealWeb3LoginTester:
             )
             
             # Use bind endpoint with auth token
-            bind_response = self.session.post(
+            bind_response = requests.post(
                 f"{self.server_url}/api/auth/web3/bind",
                 headers={
                     'Authorization': f'Bearer {access_token}',
@@ -300,7 +283,9 @@ class RealWeb3LoginTester:
                     "walletAddress": self.binding_wallet_address,
                     "message": nonce_data.get('message'),
                     "signature": signature,
-                    "nonce": nonce_data.get('nonce')
+                    "challengeHandle": nonce_data.get('challengeHandle'),
+                    "nonce": nonce_data.get('nonce'),
+                    "chainId": nonce_data.get('chainId')
                 },
                 timeout=10
             )
@@ -371,7 +356,9 @@ class RealWeb3LoginTester:
                     "walletAddress": wallet_address,
                     "message": nonce_data.get('message'),
                     "signature": signature,
-                    "nonce": nonce_data.get('nonce')
+                    "challengeHandle": nonce_data.get('challengeHandle'),
+                    "nonce": nonce_data.get('nonce'),
+                    "chainId": nonce_data.get('chainId')
                 },
                 timeout=10
             )
@@ -415,69 +402,44 @@ class RealWeb3LoginTester:
                 message=f"Unexpected {type(e).__name__}"
             )
     
-    def test_wallet_status_check(self) -> TestResult:
+    def test_wallet_status_oracle_removed(self) -> TestResult:
         """
-        Test: Verify Both Wallets in Database
+        Test: Verify the public wallet-binding status oracle is unavailable
         """
-        print(f"\n{Colors.CYAN}{Colors.BOLD}🗄️  Test: Verify Wallets in Database{Colors.ENDC}")
+        print(f"\n{Colors.CYAN}{Colors.BOLD}Test: Verify Wallet Status Oracle Removal{Colors.ENDC}")
         
         try:
-            # Check wallet 1
             status1_response = self.session.get(
                 f"{self.server_url}/api/auth/web3/status/{self.test_wallet_address}",
                 timeout=10
             )
-            
-            if status1_response.status_code != 200:
-                return TestResult(
-                    name="Database Verification",
-                    status=TestStatus.FAIL,
-                    message=f"Wallet 1 status check failed: {status1_response.status_code}"
-                )
-            
-            status1 = status1_response.json()
-            
-            # Check wallet 2
             status2_response = self.session.get(
                 f"{self.server_url}/api/auth/web3/status/{self.binding_wallet_address}",
                 timeout=10
             )
-            
-            if status2_response.status_code != 200:
+
+            if status1_response.status_code != 404:
                 return TestResult(
-                    name="Database Verification",
+                    name="Status Oracle Removal",
                     status=TestStatus.FAIL,
-                    message=f"Wallet 2 status check failed: {status2_response.status_code}"
+                    message=f"Wallet 1 status endpoint returned {status1_response.status_code}"
                 )
-            
-            status2 = status2_response.json()
-            
-            wallet1_bound = status1.get('isBound')
-            wallet2_bound = status2.get('isBound')
-            
-            print(f"   Test wallet 1 bound: {wallet1_bound}")
-            print(f"   Test wallet 2 bound: {wallet2_bound}")
-            
-            if not wallet1_bound or not wallet2_bound:
+            if status2_response.status_code != 404:
                 return TestResult(
-                    name="Database Verification",
+                    name="Status Oracle Removal",
                     status=TestStatus.FAIL,
-                    message="Wallets not marked as bound"
+                    message=f"Wallet 2 status endpoint returned {status2_response.status_code}"
                 )
-            
+
             return TestResult(
-                name="Database Verification",
+                name="Status Oracle Removal",
                 status=TestStatus.PASS,
-                message="Both wallets verified in database",
-                details={
-                    "wallet1_bound": wallet1_bound,
-                    "wallet2_bound": wallet2_bound
-                }
+                message="Wallet-binding status endpoint is unavailable"
             )
             
         except Exception as e:
             return TestResult(
-                name="Database Verification",
+                name="Status Oracle Removal",
                 status=TestStatus.ERROR,
                 message=f"Unexpected {type(e).__name__}"
             )
@@ -494,7 +456,7 @@ class RealWeb3LoginTester:
             ("Web3 Login", self.test_web3_login_with_new_wallet),
             ("Web3 Binding", self.test_bind_web3_to_local_user),
             ("Repeated Login", self.test_repeated_web3_login),
-            ("Database Verification", self.test_wallet_status_check),
+            ("Status Oracle Removal", self.test_wallet_status_oracle_removed),
         ]
         
         for test_name, test_method in tests:
@@ -537,18 +499,32 @@ def main():
         action='store_true',
         help='Confirm the target uses an isolated, disposable database'
     )
+    parser.add_argument(
+        '--local-username',
+        help='Existing recent-auth local account used for the optional binding test'
+    )
+    parser.add_argument(
+        '--local-password',
+        help='Password for --local-username'
+    )
     
     args = parser.parse_args()
 
     if not args.disposable:
         parser.error("--disposable is required")
+    if bool(args.local_username) != bool(args.local_password):
+        parser.error("--local-username and --local-password must be supplied together")
     
     print(f"\n{Colors.BLUE}{'='*60}{Colors.ENDC}")
     print(f"{Colors.BLUE}Starting Web3 Wallet Login Tests{Colors.ENDC}")
     print(f"{Colors.BLUE}Server URL: {args.server_url}{Colors.ENDC}")
     print(f"{Colors.BLUE}{'='*60}{Colors.ENDC}")
     
-    tester = RealWeb3LoginTester(args.server_url)
+    tester = RealWeb3LoginTester(
+        args.server_url,
+        args.local_username,
+        args.local_password
+    )
     success = tester.run_all_tests()
     
     sys.exit(0 if success else 1)

@@ -70,6 +70,18 @@ public class AuthRateLimiter {
         }
     }
 
+    public String protectedKey(String namespace, String value) {
+        String normalizedNamespace = bounded(
+                namespace == null ? "unknown" : namespace.trim(),
+                64
+        );
+        String normalizedValue = bounded(
+                value == null ? "unknown" : value.trim().toLowerCase(Locale.ROOT),
+                512
+        );
+        return digest(normalizedNamespace + "|" + normalizedValue);
+    }
+
     private void reserve(String bucketKey, int limit) {
         Instant now = Instant.now();
         Instant expiresAt = now.plusSeconds(properties.getWindowSeconds());
@@ -152,6 +164,11 @@ public class AuthRateLimiter {
                     properties.getPasswordResetLimit();
             case REFRESH -> properties.getRefreshLimit();
             case INTROSPECTION -> properties.getIntrospectionLimit();
+            case OAUTH_AUTHORIZE -> properties.getOauthAuthorizeLimit();
+            case WEB3_CHALLENGE -> properties.getWeb3ChallengeLimit();
+            case WEB3_VERIFY -> properties.getWeb3VerifyLimit();
+            case LOGIN_METHOD_MUTATION ->
+                    properties.getLoginMethodMutationLimit();
         };
     }
 
@@ -187,7 +204,11 @@ public class AuthRateLimiter {
         PASSWORD_RESET_SEND,
         PASSWORD_RESET_VERIFY,
         REFRESH,
-        INTROSPECTION
+        INTROSPECTION,
+        OAUTH_AUTHORIZE,
+        WEB3_CHALLENGE,
+        WEB3_VERIFY,
+        LOGIN_METHOD_MUTATION
     }
 
     private record Reservation(int count, Instant expiresAt) {

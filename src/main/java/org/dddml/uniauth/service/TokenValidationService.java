@@ -59,6 +59,10 @@ public class TokenValidationService {
         return toValidatedAccessToken(decodeAccessToken(tokenValue)).userId();
     }
 
+    public ValidatedToken validatedAccessToken(String tokenValue) {
+        return toValidatedAccessToken(decodeAccessToken(tokenValue));
+    }
+
     public ValidatedToken decodeRefreshTokenForRotation(String tokenValue) {
         return decodeSignedRefreshToken(tokenValue);
     }

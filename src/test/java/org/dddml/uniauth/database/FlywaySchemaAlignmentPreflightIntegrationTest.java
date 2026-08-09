@@ -15,13 +15,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class FlywaySchemaAlignmentPreflightIntegrationTest extends PostgreSqlIntegrationTest {
 
     @Test
-    void versionThreeUpgradesToVersionSeven() throws Exception {
+    void versionThreeUpgradesToVersionEight() throws Exception {
         withVersionThreeDatabase((databaseName, jdbcUrl) -> {
             Flyway latest = latestFlyway(jdbcUrl);
 
-            assertThat(latest.migrate().migrationsExecuted).isEqualTo(4);
+            assertThat(latest.migrate().migrationsExecuted).isEqualTo(5);
             assertThat(latest.info().current()).isNotNull();
-            assertThat(latest.info().current().getVersion().toString()).isEqualTo("7");
+            assertThat(latest.info().current().getVersion().toString()).isEqualTo("8");
         });
     }
 

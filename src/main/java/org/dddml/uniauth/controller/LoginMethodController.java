@@ -1,8 +1,19 @@
 package org.dddml.uniauth.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import org.dddml.uniauth.dto.AddLocalLoginRequest;
+import org.dddml.uniauth.dto.LoginMethodDto;
+import org.dddml.uniauth.dto.LoginMethodMutationResponse;
+import org.dddml.uniauth.dto.LoginMethodsResponse;
 import org.dddml.uniauth.entity.UserLoginMethod;
+import org.dddml.uniauth.service.AuthRateLimiter;
+import org.dddml.uniauth.service.AuthRateLimitExceededException;
+import org.dddml.uniauth.service.AuthRateLimiterUnavailableException;
 import org.dddml.uniauth.service.LoginMethodConflictException;
 import org.dddml.uniauth.service.LoginMethodService;
+import org.dddml.uniauth.service.RecentAuthenticationRequiredException;
+import org.dddml.uniauth.service.RecentAuthenticationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -12,7 +23,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * 登录方式管理控制器
@@ -25,32 +35,32 @@ import java.util.stream.Collectors;
 public class LoginMethodController {
 
     private final LoginMethodService loginMethodService;
+    private final RecentAuthenticationService recentAuthenticationService;
+    private final AuthRateLimiter authRateLimiter;
 
     /**
      * 获取当前用户的登录方式列表
      * GET /api/user/login-methods
      */
     @GetMapping
-    public ResponseEntity<?> getLoginMethods(@AuthenticationPrincipal Jwt jwt) {
+    public ResponseEntity<LoginMethodsResponse> getLoginMethods(
+            @AuthenticationPrincipal Jwt jwt) {
         try {
             String userId = jwt.getClaim("userId");
             
             List<UserLoginMethod> methods = loginMethodService.getUserLoginMethods(userId);
             
-            // 转换为DTO
-            List<Map<String, Object>> methodDtos = methods.stream()
+            List<LoginMethodDto> methodDtos = methods.stream()
                 .map(this::convertToDto)
-                .collect(Collectors.toList());
+                .toList();
             
-            return ResponseEntity.ok(Map.of(
-                "loginMethods", methodDtos,
-                "count", methodDtos.size()
+            return ResponseEntity.ok(new LoginMethodsResponse(
+                    methodDtos,
+                    methodDtos.size()
             ));
         } catch (Exception e) {
             log.error("Failed to get login methods");
-            return ResponseEntity.status(500).body(
-                Map.of("error", "获取登录方式失败", "details", e.getMessage())
-            );
+            return ResponseEntity.status(500).build();
         }
     }
 
@@ -61,16 +71,22 @@ public class LoginMethodController {
     @DeleteMapping("/{methodId}")
     public ResponseEntity<?> removeLoginMethod(
             @PathVariable String methodId,
-            @AuthenticationPrincipal Jwt jwt) {
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest request) {
         try {
             String userId = jwt.getClaim("userId");
-            
+            requireSensitiveMutation(jwt, request, userId, "remove");
             loginMethodService.removeLoginMethod(userId, methodId);
             
-            return ResponseEntity.ok(Map.of(
-                "message", "登录方式已移除",
-                "removedMethodId", methodId
+            return ResponseEntity.ok(new LoginMethodMutationResponse(
+                    "登录方式已移除",
+                    methodId,
+                    null
             ));
+        } catch (RecentAuthenticationRequiredException
+                 | AuthRateLimitExceededException
+                 | AuthRateLimiterUnavailableException e) {
+            throw e;
         } catch (LoginMethodConflictException e) {
             log.warn("Concurrent login method removal conflict: {}", e.getMessage());
             return ResponseEntity.status(409).body(
@@ -84,7 +100,7 @@ public class LoginMethodController {
         } catch (Exception e) {
             log.error("Failed to remove login method");
             return ResponseEntity.status(500).body(
-                Map.of("error", "移除登录方式失败", "details", e.getMessage())
+                Map.of("error", "移除登录方式失败")
             );
         }
     }
@@ -96,16 +112,22 @@ public class LoginMethodController {
     @PutMapping("/{methodId}/primary")
     public ResponseEntity<?> setPrimaryLoginMethod(
             @PathVariable String methodId,
-            @AuthenticationPrincipal Jwt jwt) {
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest request) {
         try {
             String userId = jwt.getClaim("userId");
-            
+            requireSensitiveMutation(jwt, request, userId, "primary");
             loginMethodService.setPrimaryLoginMethod(userId, methodId);
             
-            return ResponseEntity.ok(Map.of(
-                "message", "主登录方式已设置",
-                "primaryMethodId", methodId
+            return ResponseEntity.ok(new LoginMethodMutationResponse(
+                    "主登录方式已设置",
+                    methodId,
+                    null
             ));
+        } catch (RecentAuthenticationRequiredException
+                 | AuthRateLimitExceededException
+                 | AuthRateLimiterUnavailableException e) {
+            throw e;
         } catch (LoginMethodConflictException e) {
             log.warn("Concurrent primary login method update: {}", e.getMessage());
             return ResponseEntity.status(409).body(
@@ -119,7 +141,7 @@ public class LoginMethodController {
         } catch (Exception e) {
             log.error("Failed to set primary login method");
             return ResponseEntity.status(500).body(
-                Map.of("error", "设置主登录方式失败", "details", e.getMessage())
+                Map.of("error", "设置主登录方式失败")
             );
         }
     }
@@ -137,48 +159,33 @@ public class LoginMethodController {
      */
     @PostMapping("/add-local-login")
     public ResponseEntity<?> addLocalLoginMethod(
-            @RequestBody Map<String, String> request,
-            @AuthenticationPrincipal Jwt jwt) {
+            @Valid @RequestBody AddLocalLoginRequest request,
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest httpRequest) {
         try {
             String userId = jwt.getClaim("userId");
-            
-            String username = request.get("username");
-            String password = request.get("password");
-            String passwordConfirm = request.get("passwordConfirm");
-            
-            // 验证输入
-            if (username == null || username.trim().isEmpty()) {
-                return ResponseEntity.status(400).body(
-                    Map.of("error", "用户名不能为空")
-                );
-            }
-            
-            if (password == null || password.trim().isEmpty()) {
-                return ResponseEntity.status(400).body(
-                    Map.of("error", "密码不能为空")
-                );
-            }
-            
-            if (!password.equals(passwordConfirm)) {
+            requireSensitiveMutation(jwt, httpRequest, userId, "add-local");
+            if (!request.password().equals(request.passwordConfirm())) {
                 return ResponseEntity.status(400).body(
                     Map.of("error", "两次输入的密码不一致")
                 );
             }
+            var loginMethod = loginMethodService.addLocalLoginMethod(
+                    userId,
+                    request.username(),
+                    request.password()
+            );
             
-            if (password.length() < 6) {
-                return ResponseEntity.status(400).body(
-                    Map.of("error", "密码长度至少6个字符")
-                );
-            }
-            
-            // 调用服务添加本地登录方式
-            var loginMethod = loginMethodService.addLocalLoginMethod(userId, username, password);
-            
-            return ResponseEntity.ok(Map.of(
-                "message", "本地登录方式添加成功",
-                "loginMethod", convertToDto(loginMethod)
+            return ResponseEntity.ok(new LoginMethodMutationResponse(
+                    "本地登录方式添加成功",
+                    loginMethod.getId(),
+                    convertToDto(loginMethod)
             ));
             
+        } catch (RecentAuthenticationRequiredException
+                 | AuthRateLimitExceededException
+                 | AuthRateLimiterUnavailableException e) {
+            throw e;
         } catch (IllegalStateException e) {
             log.warn("Failed to add local login: {}", e.getMessage());
             return ResponseEntity.status(400).body(
@@ -192,7 +199,7 @@ public class LoginMethodController {
         } catch (Exception e) {
             log.error("Failed to add local login method");
             return ResponseEntity.status(500).body(
-                Map.of("error", "添加本地登录方式失败", "details", e.getMessage())
+                Map.of("error", "添加本地登录方式失败")
             );
         }
     }
@@ -200,29 +207,32 @@ public class LoginMethodController {
     /**
      * 转换为DTO
      */
-    private Map<String, Object> convertToDto(UserLoginMethod method) {
-        Map<String, Object> dto = new java.util.HashMap<>();
-        dto.put("id", method.getId());
-        dto.put("authProvider", method.getAuthProvider().name().toLowerCase());
-        dto.put("isPrimary", method.isPrimary());
-        dto.put("isVerified", method.isVerified());
-        dto.put("linkedAt", method.getLinkedAt().toString());
-        
-        if (method.getLastUsedAt() != null) {
-            dto.put("lastUsedAt", method.getLastUsedAt().toString());
-        }
-        
-        // OAuth2特定信息
-        if (method.isOAuth2Method()) {
-            dto.put("providerEmail", method.getProviderEmail());
-            dto.put("providerUsername", method.getProviderUsername());
-        }
-        
-        // 本地登录特定信息
-        if (method.isLocalMethod()) {
-            dto.put("localUsername", method.getLocalUsername());
-        }
-        
-        return dto;
+    private LoginMethodDto convertToDto(UserLoginMethod method) {
+        return new LoginMethodDto(
+                method.getId(),
+                method.getAuthProvider() == UserLoginMethod.AuthProvider.TWITTER
+                        ? "x"
+                        : method.getAuthProvider().name().toLowerCase(),
+                method.isPrimary(),
+                method.isVerified(),
+                method.getLinkedAt(),
+                method.getLastUsedAt(),
+                method.isOAuth2Method() ? method.getProviderEmail() : null,
+                method.isOAuth2Method() ? method.getProviderUsername() : null,
+                method.isLocalMethod() ? method.getLocalUsername() : null
+        );
+    }
+
+    private void requireSensitiveMutation(
+            Jwt jwt,
+            HttpServletRequest request,
+            String userId,
+            String operation) {
+        recentAuthenticationService.requireRecent(jwt);
+        authRateLimiter.requireAllowed(
+                AuthRateLimiter.Policy.LOGIN_METHOD_MUTATION,
+                request.getRemoteAddr(),
+                userId + "|" + operation
+        );
     }
 }

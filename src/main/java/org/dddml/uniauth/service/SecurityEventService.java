@@ -31,6 +31,22 @@ public class SecurityEventService {
                 .build());
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void appendIndependent(
+            String eventType,
+            String subjectId,
+            Outcome outcome,
+            String reasonCode) {
+        repository.save(SecurityEvent.builder()
+                .id(UUID.randomUUID().toString())
+                .eventType(eventType)
+                .subjectId(subjectId)
+                .requestId(UUID.randomUUID().toString())
+                .outcome(outcome.name())
+                .reasonCode(reasonCode)
+                .build());
+    }
+
     public enum Outcome {
         SUCCESS,
         FAILURE,

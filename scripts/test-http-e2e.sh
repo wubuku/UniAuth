@@ -638,8 +638,9 @@ process.stdout.write(JSON.stringify({
   walletAddress: wallet.address.toLowerCase(),
   message: challenge.message,
   signature,
+  challengeHandle: challenge.challengeHandle,
   nonce: challenge.nonce,
-  chainId: 1
+  chainId: challenge.chainId
 }));
 NODE
     )
@@ -649,12 +650,14 @@ resign_web3_challenge() {
     local wallet_json="$1"
     local message="$2"
     local nonce="$3"
+    local challenge_handle="$4"
     local private_key
 
     private_key="$(jq -er '.privateKey' <<<"$wallet_json")"
     (
         cd "$PROJECT_DIR/frontend"
         PRIVATE_KEY="$private_key" SIWE_MESSAGE="$message" SIWE_NONCE="$nonce" \
+            CHALLENGE_HANDLE="$challenge_handle" \
             node --input-type=module <<'NODE'
 import { Wallet } from 'ethers';
 
@@ -664,6 +667,7 @@ process.stdout.write(JSON.stringify({
   walletAddress: wallet.address.toLowerCase(),
   message: process.env.SIWE_MESSAGE,
   signature,
+  challengeHandle: process.env.CHALLENGE_HANDLE,
   nonce: process.env.SIWE_NONCE,
   chainId: 1
 }));
@@ -748,6 +752,11 @@ echo "1/16 Verify Flyway-owned PostgreSQL startup"
 ")" = "1" ] || fail "Flyway V7 was not recorded as a successful SQL migration"
 [ "$(db_value "
     SELECT count(*)
+    FROM uniauth_flyway_schema_history
+    WHERE version = '8' AND type = 'SQL' AND success = true;
+")" = "1" ] || fail "Flyway V8 was not recorded as a successful SQL migration"
+[ "$(db_value "
+    SELECT count(*)
     FROM information_schema.tables
     WHERE table_schema = 'public'
       AND table_name = ANY (ARRAY[
@@ -762,9 +771,11 @@ echo "1/16 Verify Flyway-owned PostgreSQL startup"
         'email_delivery_outbox',
         'auth_rate_limits',
         'security_events',
-        'token_families'
+        'token_families',
+        'oauth2_binding_intents',
+        'web3_challenge_counters'
       ]);
-")" = "12" ] || fail "Flyway did not create all twelve managed tables"
+")" = "14" ] || fail "Flyway did not create all fourteen managed tables"
 [ "$(db_value "SELECT to_regclass('public.flyway_schema_history') IS NULL;")" = "t" ] \
     || fail "the default Flyway history table was unexpectedly created"
 [ "$(db_value "
@@ -872,6 +883,17 @@ echo "1/16 Verify Flyway-owned PostgreSQL startup"
       );
 ")" = "2" ] \
     || fail "Flyway V7 did not create the token-family indexes"
+[ "$(db_value "
+    SELECT count(*)
+    FROM pg_indexes
+    WHERE schemaname = 'public'
+      AND indexname IN (
+        'uk_web3_nonces_challenge_handle',
+        'idx_oauth2_binding_intents_expiry',
+        'idx_oauth2_binding_intents_user_active'
+      );
+")" = "3" ] \
+    || fail "Flyway V8 did not create the OAuth/Web3 contract indexes"
 [ "$(db_value "
     SELECT count(*)
     FROM pg_indexes
@@ -1076,6 +1098,44 @@ family_id="$(db_value "
 ")"
 [ -n "$family_id" ] || fail "local login did not create a token family"
 
+oauth_login_status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -b "$COOKIE_JAR" \
+        -c "$COOKIE_JAR" \
+        "${BASE_URL}/oauth2/authorization/github"
+)"
+[ "$oauth_login_status" = "302" ] \
+    || fail "ordinary OAuth login did not start authorization"
+[ "$(db_value "
+    SELECT count(*)
+    FROM oauth2_binding_intents
+    WHERE user_id = '$local_user_id';
+")" = "0" ] \
+    || fail "ordinary OAuth login created a binding intent from existing cookies"
+
+oauth_bind_status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -b "$COOKIE_JAR" \
+        -c "$COOKIE_JAR" \
+        -H "Authorization: Bearer $access_token" \
+        "${BASE_URL}/oauth2/bind/github"
+)"
+[ "$oauth_bind_status" = "302" ] \
+    || fail "explicit OAuth binding did not start authorization"
+[ "$(db_value "
+    SELECT count(*)
+    FROM oauth2_binding_intents
+    WHERE user_id = '$local_user_id'
+      AND provider = 'github'
+      AND consumed_at IS NULL
+      AND expires_at > CURRENT_TIMESTAMP;
+")" = "1" ] \
+    || fail "explicit OAuth binding did not persist one active intent"
+db_value "
+    DELETE FROM oauth2_binding_intents
+    WHERE user_id = '$local_user_id';
+" >/dev/null
+
 echo "5/16 Verify protected APIs, persistence, and JWT contracts"
 current_user="$(
     curl -sS \
@@ -1164,10 +1224,10 @@ wait_for_application
 [ "$(db_value "
     SELECT count(*)
     FROM uniauth_flyway_schema_history
-    WHERE version IN ('1', '2', '3', '4', '5', '6', '7')
+    WHERE version IN ('1', '2', '3', '4', '5', '6', '7', '8')
       AND type = 'SQL'
       AND success = true;
-")" = "7" ] || fail "application restart changed the Flyway migration history"
+")" = "8" ] || fail "application restart changed the Flyway migration history"
 [ "$(db_value "SELECT count(*) FROM users WHERE id = '$local_user_id';")" = "1" ] \
     || fail "application restart lost the registered user"
 restarted_user="$(
@@ -1268,7 +1328,8 @@ tampered_domain_challenge="$(
     resign_web3_challenge \
         "$web3_wallet" \
         "$tampered_domain_message" \
-        "$(jq -er '.nonce' <<<"$web3_challenge")"
+        "$(jq -er '.nonce' <<<"$web3_challenge")" \
+        "$(jq -er '.challengeHandle' <<<"$web3_challenge")"
 )"
 tampered_domain_status="$(
     curl -sS -o "$TEMP_DIR/web3-domain-tampered.json" -w '%{http_code}' \
@@ -1310,9 +1371,12 @@ replay_status="$(
 )"
 [ "$replay_status" = "401" ] || fail "consumed Web3 nonce was replayable"
 
-wallet_status="$(curl -sS "${BASE_URL}/api/auth/web3/status/${web3_address}")"
-[ "$(jq -er '.isBound' <<<"$wallet_status")" = "true" ] \
-    || fail "Web3 wallet status was not persisted"
+wallet_status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+        "${BASE_URL}/api/auth/web3/status/${web3_address}"
+)"
+[ "$wallet_status" = "404" ] \
+    || fail "removed Web3 wallet status oracle did not return 404"
 
 concurrent_web3_challenge="$(signed_challenge "$web3_wallet")"
 concurrent_status_one="$TEMP_DIR/web3-concurrent-one.status"
@@ -1425,7 +1489,7 @@ second_binding_status="$(
         -H "Content-Type: application/json" \
         --data "$second_binding_challenge"
 )"
-[ "$second_binding_status" = "400" ] \
+[ "$second_binding_status" = "409" ] \
     || fail "a second Web3 wallet was accepted for the same user"
 
 [ "$(db_value "
@@ -1914,10 +1978,30 @@ revoked_introspection="$(introspect_token "$new_access_token")"
 echo "16/16 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
     || fail "the E2E harness connected to an unexpected database"
-[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "7" ] \
+[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "8" ] \
     || fail "Flyway history contained unexpected rows after two application starts"
-[ "$(db_value "SELECT count(*) FROM web3_nonces;")" = "0" ] \
-    || fail "consumed Web3 nonces remained in the database"
+active_web3_challenges="$(db_value "
+    SELECT count(*)
+    FROM web3_nonces
+    WHERE expires_at > CURRENT_TIMESTAMP;
+")"
+[ "$(db_value "
+    SELECT count(*)
+    FROM web3_nonces
+    WHERE expires_at <= CURRENT_TIMESTAMP;
+")" = "0" ] || fail "expired Web3 challenges remained in the database"
+[ "$(db_value "
+    SELECT COALESCE(MAX(active_count), 0)
+    FROM web3_challenge_counters
+    WHERE bucket_key = 'global';
+")" = "$active_web3_challenges" ] \
+    || fail "the global Web3 capacity counter drifted from active challenges"
+[ "$(db_value "
+    SELECT COALESCE(SUM(active_count), 0)
+    FROM web3_challenge_counters
+    WHERE bucket_key LIKE 'source:%';
+")" = "$active_web3_challenges" ] \
+    || fail "Web3 source capacity counters drifted from active challenges"
 [ "$(db_value "
     SELECT count(*)
     FROM users

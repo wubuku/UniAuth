@@ -9,7 +9,9 @@ interface Web3LoginButtonProps {
     walletAddress: string;
     message: string;
     signature: string;
+    challengeHandle: string;
     nonce: string;
+    chainId: number;
   }) => Promise<unknown>;
 }
 
@@ -26,7 +28,12 @@ export default function Web3LoginButton({ onError, onLogin }: Web3LoginButtonPro
       console.log('Wallet connected:', address);
 
       // 2. 获取Nonce
-      const { nonce, message } = await AuthService.getWeb3Nonce(address);
+      const {
+        challengeHandle,
+        nonce,
+        message,
+        chainId
+      } = await AuthService.getWeb3Nonce(address);
       console.log('Nonce received:', nonce);
 
       // 3. 签名消息
@@ -38,7 +45,9 @@ export default function Web3LoginButton({ onError, onLogin }: Web3LoginButtonPro
         walletAddress: address,
         message,
         signature,
-        nonce
+        challengeHandle,
+        nonce,
+        chainId
       });
 
       // 5. 登录成功后跳转到首页

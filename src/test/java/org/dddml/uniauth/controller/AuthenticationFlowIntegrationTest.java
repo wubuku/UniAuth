@@ -247,9 +247,9 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(jsonPath("$.count").value(2));
 
         mockMvc.perform(put("/api/user/login-methods/{id}/primary", githubMethod.getId())
-                        .header("Authorization", "Bearer " + accessToken))
+                .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.primaryMethodId").value(githubMethod.getId()));
+                .andExpect(jsonPath("$.methodId").value(githubMethod.getId()));
 
         assertThat(loginMethodRepository.findByUserIdAndIsPrimary(userId, true))
                 .get()
@@ -259,7 +259,7 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
         mockMvc.perform(delete("/api/user/login-methods/{id}", localMethodId)
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.removedMethodId").value(localMethodId));
+                .andExpect(jsonPath("$.methodId").value(localMethodId));
 
         String renewedAccessToken = issueAccessToken(userId);
         mockMvc.perform(delete("/api/user/login-methods/{id}", githubMethod.getId())

@@ -381,7 +381,13 @@ export class AuthService {
   /**
    * 获取Web3登录用的Nonce
    */
-  static async getWeb3Nonce(walletAddress: string): Promise<{ nonce: string; message: string }> {
+  static async getWeb3Nonce(walletAddress: string): Promise<{
+    challengeHandle: string;
+    nonce: string;
+    message: string;
+    chainId: number;
+    expiresIn: number;
+  }> {
     try {
       const response = await axios.get(`${API_BASE_URL}/api/auth/web3/nonce/${walletAddress}`);
       return response.data;
@@ -398,7 +404,9 @@ export class AuthService {
     walletAddress: string;
     message: string;
     signature: string;
+    challengeHandle: string;
     nonce: string;
+    chainId: number;
   }): Promise<any> {
     try {
       const response = await axios.post(`${API_BASE_URL}/api/auth/web3/verify`, data, {
@@ -418,7 +426,9 @@ export class AuthService {
     walletAddress: string;
     message: string;
     signature: string;
+    challengeHandle: string;
     nonce: string;
+    chainId: number;
   }): Promise<any> {
     try {
       const accessToken = this.diagnosticAccessToken();
@@ -443,6 +453,10 @@ export class AuthService {
     const baseUrl = `${API_BASE_URL}/oauth2/authorization/${provider}`;
     console.log('OAuth2 login URL:', baseUrl);
     return baseUrl;
+  }
+
+  static getBindUrl(provider: 'google' | 'github' | 'x'): string {
+    return `${API_BASE_URL}/oauth2/bind/${provider}`;
   }
 
   /**

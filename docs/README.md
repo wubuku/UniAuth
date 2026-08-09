@@ -15,7 +15,7 @@
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
 | [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md) | Live | 真实 PostgreSQL/UniAuth/Vite/Python/邮件 stub 的注册、登录、回跳与跨域 Bearer 复现 |
-| [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；F1-F2 已完成，F3 下一批，F4-F5 待执行 |
+| [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；F1-F3 已完成，F4 正在执行，F5 待执行 |
 | [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 保存完整风险背景；当前执行边界由最终收尾计划控制 |
 | [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Historical | 已完成批次与证据记录；不再驱动开放循环 |
 
@@ -30,7 +30,8 @@
   约束并补齐 email repository 索引，V5 将 Web3 nonce 绑定到服务端完整 SIWE message
   并原子消费，V6 增加 canonical email、HMAC challenge、transactional outbox、
   PostgreSQL 认证限流和 append-only security event，V7 增加 token family、
-  用户 security version 和 session claim/rotation/revoke 契约。
+  用户 security version 和 session claim/rotation/revoke 契约，V8 增加显式
+  OAuth2 bind intent、Web3 challenge handle/capacity 和 canonical API 契约。
 - Hibernate 只执行 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 邮箱注册验证和密码重置依赖独立邮件服务；UniAuth 主应用只提供 HTTP 客户端适配器，
   仓库另有不纳入根构建的参考实现。依赖契约包括端点、模板、响应语义、可选 API key

@@ -14,36 +14,19 @@ public interface Web3NonceRepository extends JpaRepository<Web3Nonce, String> {
 
     Optional<Web3Nonce> findByWalletAddress(String walletAddress);
 
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query(value = """
-            INSERT INTO web3_nonces (
-                id, wallet_address, nonce, message, expires_at, created_at
-            ) VALUES (
-                :id, :walletAddress, :nonce, :message, :expiresAt, CURRENT_TIMESTAMP
-            )
-            ON CONFLICT (wallet_address) DO UPDATE
-            SET nonce = EXCLUDED.nonce,
-                message = EXCLUDED.message,
-                expires_at = EXCLUDED.expires_at,
-                created_at = CURRENT_TIMESTAMP
-            """, nativeQuery = true)
-    int upsertNonce(
-            String id,
-            String walletAddress,
-            String nonce,
-            String message,
-            Instant expiresAt
-    );
+    Optional<Web3Nonce> findByChallengeHandle(String challengeHandle);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             DELETE FROM Web3Nonce n
-            WHERE n.walletAddress = :walletAddress
+            WHERE n.challengeHandle = :challengeHandle
+              AND n.walletAddress = :walletAddress
               AND n.nonce = :nonce
               AND n.message = :message
               AND n.expiresAt > :now
             """)
     int consumeNonce(
+            String challengeHandle,
             String walletAddress,
             String nonce,
             String message,

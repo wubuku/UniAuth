@@ -26,6 +26,7 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
             "auth_rate_limits",
             "email_delivery_outbox",
             "email_verification_codes",
+            "oauth2_binding_intents",
             "security_events",
             "spring_session",
             "spring_session_attributes",
@@ -35,6 +36,7 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
             "user_authorities",
             "user_login_methods",
             "users",
+            "web3_challenge_counters",
             "web3_nonces"
     );
 
@@ -49,9 +51,9 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
     private SessionRepository sessionRepository;
 
     @Test
-    void freshDatabaseMigratesToVersionSevenAndHibernateValidates() {
+    void freshDatabaseMigratesToVersionEightAndHibernateValidates() {
         assertThat(flyway.info().current()).isNotNull();
-        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("7");
+        assertThat(flyway.info().current().getVersion().toString()).isEqualTo("8");
         assertThat(flyway.migrate().migrationsExecuted).isZero();
 
         List<String> tables = jdbcTemplate.queryForList(
@@ -363,13 +365,16 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
             jdbcTemplate.update(
                     """
                     INSERT INTO web3_nonces (
-                        id, wallet_address, nonce, message, expires_at
-                    ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP + INTERVAL '5 minutes')
+                        id, wallet_address, nonce, message,
+                        challenge_handle, source_key, expires_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP + INTERVAL '5 minutes')
                     """,
                     nonceId,
                     "0x" + nonceId.replace("-", "") + "00000000",
-                    "schema-nonce-" + nonceId,
-                    "schema-siwe-message-" + nonceId
+                    nonceId.replace("-", ""),
+                    "schema-siwe-message-" + nonceId,
+                    nonceId,
+                    "schema-test"
             );
             assertThat(jdbcTemplate.queryForObject(
                     "SELECT created_at IS NOT NULL FROM web3_nonces WHERE id = ?",

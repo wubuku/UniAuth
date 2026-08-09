@@ -127,11 +127,11 @@ SMTP。若外部服务继续向下游 SMTP/供应商投递，生产部署仍必�
 - `EMAIL_DATABASE_LAYOUT` 默认 `dedicated`，要求 `EMAIL_POSTGRES_*` 指向邮件专用
   PostgreSQL 16 数据库。只有显式设置 `shared-uniauth` 时才允许复用获准的 UniAuth
   数据库：目标 `public` schema 可以为空，由任一侧先迁移；若已存在 peer，则必须是
-  完整且 history 精确的 UniAuth V1-V7 或邮件 V1-V5。两侧使用独立 Flyway history
+  完整且 history 精确的 UniAuth V1-V8 或邮件 V1-V5。两侧使用独立 Flyway history
   table 和 advisory-lock 串行化。`blacksheep*`、系统库、未知 layout、H2 和其他
   非 PostgreSQL datasource 均在 Flyway 前拒绝。
 - 邮件侧业务 relation 是 `email_queue`、`email_logs` 及其序列/索引/约束，与
-  UniAuth V1-V7 的表、序列和索引名称没有冲突。不能据此直接移除迁移保护：后启动
+  UniAuth V1-V8 的表、序列和索引名称没有冲突。不能据此直接移除迁移保护：后启动
   Flyway 仍会遇到“schema 非空但缺少自身 history”的启动冲突。
 - Flyway location 是 `classpath:db/migration/postgresql`，history table 是
   `email_service_flyway_schema_history`，当前 migration 为 V1 + V2 + V3 + V4 + V5。
@@ -275,10 +275,11 @@ base 配置固定 `JSESSIONID`、`HttpOnly=true`、`Path=/`、`SameSite=Lax`；
 
 - Flyway location：`classpath:db/migration/postgresql`
 - history table：`uniauth_flyway_schema_history`
-- 当前版本：V7（V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS +
+- 当前版本：V8（V1 baseline + V2 登录方式约束 + V3 登录方式 revision CAS +
   V4 实体约束与索引对齐 + V5 Web3/SIWE challenge message 绑定 +
   V6 邮箱身份/challenge/outbox/限流/安全事件加固 +
-  V7 token family/security version/session claim 加固）
+  V7 token family/security version/session claim 加固 +
+  V8 OAuth2 bind intent/Web3 challenge/canonical API 加固）
 - `fail-on-missing-locations=true`
 - `baseline-on-migrate=false`
 - `baseline-version=0`
@@ -333,7 +334,10 @@ V7 增加 `users.token_security_version` 和 `token_families`，固定 family ow
 generation、`auth_time`、expiry、revoke 状态和查询索引；新 token 的 `sid`、
 `generation`、`ver`、`auth_time` 与该持久状态共同验证。
 
-后续结构修复从 V8 开始；不得改写 V1/V2/V3/V4/V5/V6/V7 checksum。
+V8 增加 `oauth2_binding_intents`、Web3 challenge handle 和 source/global capacity
+counter，并固定显式 OAuth2 绑定、精确 challenge 消费与唯一冲突语义。
+
+后续结构修复从 V9 开始；不得改写 V1/V2/V3/V4/V5/V6/V7/V8 checksum。
 
 ## Existing-schema baseline
 

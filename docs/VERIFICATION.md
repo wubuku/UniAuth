@@ -172,16 +172,17 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 > Batch B2b、邮件服务边界、邮箱 challenge 投递接受/原子消费、敏感响应、API key
 > 单值鉴权、认证 Cookie/浏览器 refresh 存储预备切片，以及当前格式 refresh
 > replay/logout 持久撤销、CORS 单一来源、OAuth2 redirect/Referer 信任边界和
-> F1 邮箱身份完整性、F2 token family/浏览器 transport/CSRF/strict introspection；
+> F1 邮箱身份完整性、F2 token family/浏览器 transport/CSRF/strict introspection、
+> F3 OAuth2/Web3/canonical API 契约；
 > 不代表 H1.4-H8、完整认证正确性或生产就绪。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 219/219；0 failures/errors/skips |
+| `mvn test` | 通过 | 222/222；0 failures/errors/skips |
 | `scripts/test-http-e2e.sh` | 通过 | 16/16；真实应用、独立 PostgreSQL、四条安全链 CORS allow/deny、refresh replay、logout 后 access/refresh/introspection 拒绝与 blacklist 行形状，以及既有邮件、Web3、JWT、登录方式和重启路径 |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 16/16；覆盖 exact schema、V2/V4/V6 初始及 apply 前只读预检、PostgreSQL major、确认 token、V2-V6 grouped rollback 与临时凭据清理 |
-| Flyway integration | 通过 | fresh V1→V7、existing baseline V1→V7、V3→V7、Hibernate validate、Session、checksum/failure recovery |
+| Flyway integration | 通过 | fresh V1→V8、existing baseline V1→V8、V7→V8、Hibernate validate、Session、checksum/failure recovery |
 | Shared-schema process E2E | 通过 | 4/4；UniAuth-first 与 email-first 两种启动顺序、独立 history、受控 baseline V0、重启与业务表共存 |
 | 邮件参考服务 | 通过 | 154 tests；Shell runtime 44/44、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；Flyway V1-V5、idempotency identity、终态载荷脱敏、schema-owner、migration discovery/naming、精确 peer history、半成品 peer、队列生命周期行形状、database layout 和非 PostgreSQL datasource 拒绝矩阵通过 |
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
@@ -190,7 +191,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `npm audit --audit-level=high` | 通过 | 0 high/critical；2 个 React Router moderate advisories 见下文 |
 | `npx tsc --noEmit` | 通过 | 无 TypeScript 错误 |
 | `npm run build` | 通过 | Vite 生产构建成功，保留 chunk warning |
-| `npm run test:e2e` | 通过 | 28/28 Chrome-channel Mock Playwright tests；OAuth provider 导航不附加客户端 redirect/state，同页面与同源双标签页只消费一次 refresh，logout 保留无关存储，跨标签页 logout 不会被迟到 refresh continuation 恢复 |
+| `npm run test:e2e` | 通过 | 29/29 Chrome-channel Mock Playwright tests；OAuth 登录/显式绑定入口分离，同页面与同源双标签页只消费一次 refresh，logout 保留无关存储，跨标签页 logout 不会被迟到 refresh continuation 恢复 |
 | `npm run test:e2e:production` | 通过 | 2/2；生产静态构建不包含诊断路由/bundle，普通登录不持久化 bearer credential |
 | 邮箱登录浏览器 E2E | 通过 | 1/1；真实 PostgreSQL/UniAuth/Vite/Python/stub，注册、验证码、同源回跳、跨 hostname Bearer、`credentials: omit`、资源域哨兵 Cookie 不随请求发送、邮箱密码再次登录 |
 | Python | 通过 | 20/20 离线 RSA/JWKS/Flask tests；refresh、legacy session token、缺失/畸形 `sid`/generation/`ver`/`auth_time`、`type`/`jti` 和非法 Bearer 格式失败关闭 |
@@ -204,15 +205,15 @@ disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列�
 参考服务的 `email_queue`；第 13/16、14/16 步骤为获得稳定的 `503/429` 失败夹具
 而重启应用并切换到受控 loopback 邮件 REST stub。它验证：
 
-- Flyway V1/V2/V3/V4/V5/V6/V7 和自定义 history table。
+- Flyway V1/V2/V3/V4/V5/V6/V7/V8 和自定义 history table。
 - 应用重启后的 migration 幂等和用户数据保留。
 - `/api/auth/**` allowlist 与资源服务器拒绝边界。
 - 四条 Security filter chain 共用同一 CORS source，允许 origin 的 credentialed
   preflight 成功，恶意 origin 不获得 allow-origin header。
 - 本地注册/登录、JWT claims、cookie/header 优先级和持久化。
 - refresh rotation 与 access/refresh type confusion。
-- 本地签名 Web3 登录、domain/chain/完整 message 字段 tamper、并发 replay、nonce
-  upsert 覆盖、原子消费和钱包绑定。
+- 本地签名 Web3 登录、challenge handle、domain/chain/完整 message 字段 tamper、
+  并发 replay、source/global capacity、原子消费和钱包绑定。
 - 登录方式 primary/delete/最后方式拒绝，以及真实并发 mutation 的 `200/409` 和最终
   “至少一个登录方式、恰好一个 primary”不变量。
 - 邮箱注册、canonical identity、opaque handle、HMAC challenge、唯一 active
@@ -239,7 +240,7 @@ F2 token session、浏览器 transport 与 CSRF 切片还验证：
 
 - Flyway V7 创建 `token_families` 并增加 `users.token_security_version`；
   fresh/upgrade、Hibernate `validate`、schema fingerprint、shared-schema 两种启动顺序
-  和双方精确 peer history 全部接受 V1-V7，未知 V8 失败关闭。
+  和双方精确 peer history 在 F2 候选上接受 V1-V7，并拒绝当时未知的 V8。
 - access/refresh pair 共用 `sid`、generation、security version 和 `auth_time`；
   refresh generation 通过 PostgreSQL CAS 单次推进，replay、logout、密码重置和
   登录凭据变化撤销整个 family，并覆盖事务回滚和并发竞争。
@@ -255,6 +256,24 @@ F2 token session、浏览器 transport 与 CSRF 切片还验证：
   启动命令中临时启用 diagnostics，没有创建 `.env.local`。
 - Python 资源服务器校验完整 session claim 并拒绝 legacy token；纯离线 JWKS 模式
   仍明确不能感知 PostgreSQL family 的实时撤销。
+
+F3 OAuth2、Web3 与 canonical API 切片还验证：
+
+- Flyway V8 增加 `oauth2_binding_intents`、Web3 challenge handle 与 source/global
+  capacity counter；fresh、V7 upgrade、baseline guard、schema fingerprint、
+  Hibernate `validate` 和双方 shared-schema peer inventory 全部接受精确 V1-V8。
+- 普通 `/oauth2/authorization/{provider}` 登录不能创建 binding intent；
+  `/oauth2/bind/{provider}` 必须通过 recent-auth，并把 intent 绑定当前用户、
+  registration id、Session、state 和 security version 后一次性消费。
+- Google/GitHub/X provider profile 的 subject/email trust、opaque 新用户 identity、
+  disabled/security-version 漂移和并发唯一冲突均失败关闭。
+- Web3 verify/bind 必须提交 opaque challenge handle 和精确 `chainId`；单 wallet、
+  单来源和全局 active challenge 容量受 PostgreSQL CAS 约束，过期清理同步释放。
+- `/api/user` 和 login-method API 使用 typed DTO 并返回数据库 primary provider；
+  公开 wallet status oracle 已移除。
+- F3 定向 PostgreSQL/Java 63/63、migration/shared-schema 根项目 15/15、邮件 peer
+  guard 8/8、相关 Playwright 15/15 和显式 OAuth bind 1/1 通过；完整统一门禁
+  12/12 重新通过。
 
 CORS/OAuth2 redirect 信任边界切片还验证：
 

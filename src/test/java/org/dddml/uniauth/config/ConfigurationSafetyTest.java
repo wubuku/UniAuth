@@ -141,7 +141,8 @@ class ConfigurationSafetyTest {
                             "V4__align_entity_constraints_and_indexes.sql",
                             "V5__bind_web3_nonce_to_siwe_message.sql",
                             "V6__harden_email_identity_and_challenges.sql",
-                            "V7__add_token_families_and_security_version.sql"
+                            "V7__add_token_families_and_security_version.sql",
+                            "V8__harden_oauth_web3_contracts.sql"
                     );
         }
     }

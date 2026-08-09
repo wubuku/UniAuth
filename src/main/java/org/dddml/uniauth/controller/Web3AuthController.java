@@ -19,6 +19,14 @@ import org.dddml.uniauth.service.TokenIssuanceFacade;
 import org.dddml.uniauth.service.TokenValidationService;
 import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.service.AuthenticationCredentialResolver;
+import org.dddml.uniauth.service.AuthRateLimitExceededException;
+import org.dddml.uniauth.service.AuthRateLimiter;
+import org.dddml.uniauth.service.AuthRateLimiterUnavailableException;
+import org.dddml.uniauth.service.RecentAuthenticationRequiredException;
+import org.dddml.uniauth.service.RecentAuthenticationService;
+import org.dddml.uniauth.service.Web3AuthenticationRejectedException;
+import org.dddml.uniauth.service.Web3BindingConflictException;
+import org.dddml.uniauth.service.Web3ChallengeCapacityExceededException;
 import org.dddml.uniauth.service.Web3AuthService;
 import org.dddml.uniauth.util.Web3SignatureUtils;
 import org.springframework.http.HttpStatus;
@@ -44,6 +52,8 @@ public class Web3AuthController {
     private final TokenIssuanceFacade tokenIssuanceFacade;
     private final UserService userService;
     private final AuthenticationCredentialResolver credentialResolver;
+    private final RecentAuthenticationService recentAuthenticationService;
+    private final AuthRateLimiter authRateLimiter;
 
     @GetMapping("/nonce/{walletAddress}")
     @Operation(summary = "Get nonce for wallet authentication",
@@ -54,7 +64,9 @@ public class Web3AuthController {
         @ApiResponse(responseCode = "400", description = "Invalid wallet address",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
-    public ResponseEntity<?> getNonce(@PathVariable String walletAddress) {
+    public ResponseEntity<?> getNonce(
+            @PathVariable String walletAddress,
+            HttpServletRequest httpRequest) {
         try {
             if (!Web3SignatureUtils.isValidAddress(walletAddress)) {
                 return ResponseEntity.badRequest()
@@ -66,8 +78,20 @@ public class Web3AuthController {
                                 .build());
             }
 
-            Web3NonceResponse response = web3AuthService.generateNonce(walletAddress);
+            authRateLimiter.requireAllowed(
+                    AuthRateLimiter.Policy.WEB3_CHALLENGE,
+                    httpRequest.getRemoteAddr(),
+                    walletAddress
+            );
+            Web3NonceResponse response = web3AuthService.generateNonce(
+                    walletAddress,
+                    httpRequest.getRemoteAddr()
+            );
             return ResponseEntity.ok(response);
+        } catch (AuthRateLimitExceededException
+                 | AuthRateLimiterUnavailableException
+                 | Web3ChallengeCapacityExceededException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Web3 nonce generation failed");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -98,26 +122,14 @@ public class Web3AuthController {
         try {
             String normalizedAddress = Web3SignatureUtils.normalizeAddress(request.getWalletAddress());
 
-            boolean isValid = web3AuthService.verifySignature(
-                    normalizedAddress,
-                    request.getMessage(),
-                    request.getSignature(),
-                    request.getNonce(),
-                    request.getChainId()
+            authRateLimiter.requireAllowed(
+                    AuthRateLimiter.Policy.WEB3_VERIFY,
+                    httpRequest.getRemoteAddr(),
+                    normalizedAddress
             );
-
-            if (!isValid) {
-                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                        .body(ErrorResponse.builder()
-                                .status(401)
-                                .errorCode("INVALID_SIGNATURE")
-                                .message("Signature verification failed")
-                                .timestamp(LocalDateTime.now())
-                                .build());
-            }
-
-            boolean isNewUser = !web3AuthService.isWalletBound(normalizedAddress);
-            UserEntity user = web3AuthService.findOrCreateUser(normalizedAddress);
+            Web3AuthService.AuthenticationResult result =
+                    web3AuthService.authenticate(request);
+            UserEntity user = result.user();
 
             Map<String, Object> responseBody = new LinkedHashMap<>(
                     tokenIssuanceFacade.issue(
@@ -130,11 +142,30 @@ public class Web3AuthController {
             );
             responseBody.put("walletAddress", normalizedAddress);
             responseBody.put("userId", user.getId());
-            responseBody.put("isNewUser", isNewUser);
+            responseBody.put("isNewUser", result.newUser());
 
             log.info("Web3 login completed");
 
             return ResponseEntity.ok(responseBody);
+        } catch (AuthRateLimitExceededException
+                 | AuthRateLimiterUnavailableException e) {
+            throw e;
+        } catch (Web3AuthenticationRejectedException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(ErrorResponse.builder()
+                            .status(401)
+                            .errorCode("INVALID_SIGNATURE")
+                            .message("Signature verification failed")
+                            .timestamp(LocalDateTime.now())
+                            .build());
+        } catch (Web3BindingConflictException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(ErrorResponse.builder()
+                            .status(409)
+                            .errorCode("AUTHENTICATION_CONFLICT")
+                            .message("Authentication could not be completed")
+                            .timestamp(LocalDateTime.now())
+                            .build());
         } catch (Exception e) {
             log.error("Web3 authentication failed");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -172,35 +203,22 @@ public class Web3AuthController {
                                 .build());
             }
 
-            String userId = tokenValidationService.getUserIdFromAccessToken(
+            var token = tokenValidationService.validatedAccessToken(
                     bearerToken.orElseThrow()
             );
+            recentAuthenticationService.requireRecent(token);
 
             String normalizedAddress = Web3SignatureUtils.normalizeAddress(request.getWalletAddress());
-
-            boolean isValid = web3AuthService.verifySignature(
-                    normalizedAddress,
-                    request.getMessage(),
-                    request.getSignature(),
-                    request.getNonce(),
-                    request.getChainId()
+            authRateLimiter.requireAllowed(
+                    AuthRateLimiter.Policy.LOGIN_METHOD_MUTATION,
+                    httpRequest.getRemoteAddr(),
+                    token.userId() + "|" + normalizedAddress
             );
-
-            if (!isValid) {
-                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                        .body(ErrorResponse.builder()
-                                .status(401)
-                                .errorCode("INVALID_SIGNATURE")
-                                .message("Signature verification failed")
-                                .timestamp(LocalDateTime.now())
-                                .build());
-            }
-
-            if (!web3AuthService.bindWalletToUser(userId, normalizedAddress)) {
-                throw new IllegalStateException(
-                        "Wallet is already bound or the user already has a Web3 wallet"
-                );
-            }
+            web3AuthService.bindWalletToUser(
+                    token.userId(),
+                    token.securityVersion(),
+                    request
+            );
 
             log.info("Web3 wallet binding completed");
 
@@ -219,12 +237,24 @@ public class Web3AuthController {
                             .message("A valid access token is required")
                             .timestamp(LocalDateTime.now())
                             .build());
-        } catch (IllegalStateException e) {
-            return ResponseEntity.badRequest()
+        } catch (RecentAuthenticationRequiredException
+                 | AuthRateLimitExceededException
+                 | AuthRateLimiterUnavailableException e) {
+            throw e;
+        } catch (Web3AuthenticationRejectedException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(ErrorResponse.builder()
-                            .status(400)
+                            .status(401)
+                            .errorCode("INVALID_SIGNATURE")
+                            .message("Signature verification failed")
+                            .timestamp(LocalDateTime.now())
+                            .build());
+        } catch (Web3BindingConflictException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(ErrorResponse.builder()
+                            .status(409)
                             .errorCode("BINDING_FAILED")
-                            .message(e.getMessage())
+                            .message("Wallet could not be bound")
                             .timestamp(LocalDateTime.now())
                             .build());
         } catch (Exception e) {
@@ -239,37 +269,4 @@ public class Web3AuthController {
         }
     }
 
-    @GetMapping("/status/{walletAddress}")
-    @Operation(summary = "Check wallet binding status",
-               description = "Checks if a wallet address is already bound to an account")
-    public ResponseEntity<?> checkWalletStatus(@PathVariable String walletAddress) {
-        try {
-            if (!Web3SignatureUtils.isValidAddress(walletAddress)) {
-                return ResponseEntity.badRequest()
-                        .body(ErrorResponse.builder()
-                                .status(400)
-                                .errorCode("INVALID_ADDRESS")
-                                .message("Invalid wallet address format")
-                                .timestamp(LocalDateTime.now())
-                                .build());
-            }
-
-            String normalizedAddress = Web3SignatureUtils.normalizeAddress(walletAddress);
-            boolean isBound = web3AuthService.isWalletBound(normalizedAddress);
-
-            return ResponseEntity.ok()
-                    .body(new WalletStatusResponse(normalizedAddress, isBound));
-        } catch (Exception e) {
-            log.error("Web3 wallet status check failed");
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(ErrorResponse.builder()
-                            .status(500)
-                            .errorCode("INTERNAL_ERROR")
-                            .message("Failed to check wallet status")
-                            .timestamp(LocalDateTime.now())
-                            .build());
-        }
-    }
-
-    public record WalletStatusResponse(String walletAddress, boolean isBound) {}
 }

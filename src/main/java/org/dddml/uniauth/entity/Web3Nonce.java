@@ -29,6 +29,12 @@ public class Web3Nonce {
     @Column(name = "message", nullable = false, columnDefinition = "text")
     private String message;
 
+    @Column(name = "challenge_handle", nullable = false, unique = true, length = 64)
+    private String challengeHandle;
+
+    @Column(name = "source_key", nullable = false, length = 128)
+    private String sourceKey;
+
     @Column(name = "expires_at", nullable = false)
     private Instant expiresAt;
 

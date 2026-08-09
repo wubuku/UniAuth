@@ -51,8 +51,8 @@ export default function TestPage() {
     setBindingMessage(null);
     try {
       // 重定向到OAuth2授权端点
-      const loginUrl = AuthService.getLoginUrl(provider as 'google' | 'github' | 'x');
-      window.location.href = loginUrl;
+      const bindUrl = AuthService.getBindUrl(provider as 'google' | 'github' | 'x');
+      window.location.href = bindUrl;
     } catch (error) {
       setBindingMessage({
         type: 'error',

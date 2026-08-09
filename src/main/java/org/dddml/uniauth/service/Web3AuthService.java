@@ -1,6 +1,7 @@
 package org.dddml.uniauth.service;
 
 import org.dddml.uniauth.dto.web3.Web3NonceResponse;
+import org.dddml.uniauth.dto.web3.Web3LoginRequest;
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.entity.UserLoginMethod.AuthProvider;
@@ -10,13 +11,13 @@ import org.dddml.uniauth.util.Web3SignatureUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -29,6 +30,7 @@ public class Web3AuthService {
     private final UserLoginMethodRepository loginMethodRepository;
     private final Web3NonceService web3NonceService;
     private final TokenSessionTransactionService tokenSessionTransactionService;
+    private final SecurityEventService securityEventService;
     
     @Value("${app.web3.domain:localhost}")
     private String domain;
@@ -36,10 +38,16 @@ public class Web3AuthService {
     @Value("${app.web3.nonce-expiration-seconds:300}")
     private long nonceExpirationSeconds;
 
+    @Value("${app.web3.chain-id:1}")
+    private int chainId;
+
     @Value("${app.web3.message-format}")
     private String messageFormat;
 
-    public Web3NonceResponse generateNonce(String walletAddress) {
+    @Transactional
+    public Web3NonceResponse generateNonce(
+            String walletAddress,
+            String trustedSource) {
         if (!Web3SignatureUtils.isValidAddress(walletAddress)) {
             throw new IllegalArgumentException("Invalid wallet address format");
         }
@@ -50,16 +58,23 @@ public class Web3AuthService {
         Instant expiresAt = issuedAt.plusSeconds(nonceExpirationSeconds);
         String message = buildSiweMessage(normalizedAddress, nonce, issuedAt, expiresAt);
         
-        web3NonceService.saveNonce(
+        String challengeHandle = web3NonceService.saveNonce(
                 normalizedAddress,
                 nonce,
                 message,
+                trustedSource,
                 expiresAt
         );
 
         log.info("Web3 nonce generated");
 
-        return new Web3NonceResponse(nonce, message, nonceExpirationSeconds);
+        return new Web3NonceResponse(
+                challengeHandle,
+                nonce,
+                message,
+                chainId,
+                nonceExpirationSeconds
+        );
     }
 
     private String buildSiweMessage(
@@ -77,7 +92,7 @@ public class Web3AuthService {
                 "By signing, you agree to authenticate with your wallet.\n\n" +
                 "URI: %3$s\n" +
                 "Version: 1\n" +
-                "Chain ID: 1\n" +
+                "Chain ID: %7$d\n" +
                 "Nonce: %4$s\n" +
                 "Issued At: %5$s\n" +
                 "Expiration Time: %6$s";
@@ -89,58 +104,33 @@ public class Web3AuthService {
                 uri,
                 nonce,
                 issuedAt.toString(),
-                expiresAt.toString()
+                expiresAt.toString(),
+                chainId
         );
     }
 
-    @Transactional
-    public boolean verifySignature(
-            String walletAddress,
-            String message,
-            String signature,
-            String nonce,
-            Integer chainId
-    ) {
-        try {
-            String normalizedAddress = Web3SignatureUtils.normalizeAddress(walletAddress);
-            if (chainId != null && chainId != 1) {
-                log.warn("Web3 chain ID mismatch");
-                return false;
-            }
-
-            boolean isValid = Web3SignatureUtils.verifySignature(message, signature, normalizedAddress);
-
-            if (isValid && web3NonceService.consumeNonce(normalizedAddress, nonce, message)) {
-                log.info("Web3 signature verification succeeded");
-                return true;
-            }
-
-            log.warn("Web3 signature verification failed or challenge was not current");
-            return false;
-        } catch (Exception e) {
-            log.warn("Web3 signature verification could not be completed");
-            return false;
-        }
-    }
-
-    public UserEntity findOrCreateUser(String walletAddress) {
-        String normalizedAddress = walletAddress.toLowerCase();
-        
+    @Transactional(noRollbackFor = Web3AuthenticationRejectedException.class)
+    public AuthenticationResult authenticate(Web3LoginRequest request) {
+        String normalizedAddress = verifyAndConsume(request);
         Optional<UserLoginMethod> existingMethod = loginMethodRepository
                 .findByAuthProviderAndProviderUserId(AuthProvider.WEB3, normalizedAddress);
-        
+
         if (existingMethod.isPresent()) {
             UserLoginMethod method = existingMethod.get();
             UserEntity user = method.getUser();
+            requireEnabled(user);
+            method.updateLastUsedAt();
             user.setLastLoginAt(LocalDateTime.now());
+            loginMethodRepository.save(method);
             userRepository.save(user);
-            return user;
+            return new AuthenticationResult(user, false);
         }
-        
+
+        String opaqueIdentity = opaqueIdentity();
         UserEntity newUser = UserEntity.builder()
                 .id(UUID.randomUUID().toString())
-                .username(normalizedAddress)
-                .email(normalizedAddress + "@web3.local")
+                .username(opaqueIdentity)
+                .email(opaqueIdentity + "@web3.local")
                 .emailIdentityType(UserEntity.EmailIdentityType.SYNTHETIC)
                 .displayName("Web3 User")
                 .emailVerified(false)
@@ -160,49 +150,41 @@ public class Web3AuthService {
                 .isVerified(true)
                 .linkedAt(Instant.now())
                 .build();
-        loginMethodRepository.save(newMethod);
-        
-        log.info("Web3 account created");
-        
-        return newUser;
+        try {
+            loginMethodRepository.saveAndFlush(newMethod);
+            log.info("Web3 account created");
+            return new AuthenticationResult(newUser, true);
+        } catch (DataIntegrityViolationException exception) {
+            throw new Web3BindingConflictException();
+        }
     }
 
-    @Transactional
-    public boolean bindWalletToUser(String userId, String walletAddress) {
-        String normalizedAddress = Web3SignatureUtils.normalizeAddress(walletAddress);
-        
+    @Transactional(noRollbackFor = Web3AuthenticationRejectedException.class)
+    public void bindWalletToUser(
+            String userId,
+            long expectedSecurityVersion,
+            Web3LoginRequest request) {
+        String normalizedAddress = verifyAndConsume(request);
+
         Optional<UserLoginMethod> existingMethod = loginMethodRepository
                 .findByAuthProviderAndProviderUserId(AuthProvider.WEB3, normalizedAddress);
-        
         if (existingMethod.isPresent()) {
-            log.warn("Web3 wallet is already bound");
-            return false;
+            throw new Web3BindingConflictException();
         }
-        
-        List<UserLoginMethod> userMethods = loginMethodRepository.findByUserId(userId);
-        boolean hasWeb3 = userMethods.stream()
-                .anyMatch(m -> m.getAuthProvider() == AuthProvider.WEB3);
-        if (hasWeb3) {
-            log.error("User already has a Web3 wallet bound");
-            return false;
+        if (loginMethodRepository.findByUserIdAndAuthProvider(
+                userId,
+                AuthProvider.WEB3
+        ).isPresent()) {
+            throw new Web3BindingConflictException();
         }
-        
-        for (UserLoginMethod method : loginMethodRepository.findAll()) {
-            if (method.getUser().getId().equals(userId) && 
-                method.getAuthProvider() == AuthProvider.WEB3) {
-                log.error("User already has a Web3 wallet bound");
-                return false;
-            }
+
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(Web3BindingConflictException::new);
+        requireEnabled(user);
+        if (user.getTokenSecurityVersion() != expectedSecurityVersion) {
+            throw new Web3BindingConflictException();
         }
-        
-        Optional<UserEntity> userOpt = userRepository.findById(userId);
-        if (userOpt.isEmpty()) {
-            log.warn("Web3 binding target user was not found");
-            return false;
-        }
-        
-        UserEntity user = userOpt.get();
-        
+
         UserLoginMethod newMethod = UserLoginMethod.builder()
                 .id(UUID.randomUUID().toString())
                 .user(user)
@@ -212,21 +194,68 @@ public class Web3AuthService {
                 .isVerified(true)
                 .linkedAt(Instant.now())
                 .build();
-        loginMethodRepository.save(newMethod);
-        tokenSessionTransactionService.incrementSecurityVersionAndRevoke(
-                userId,
-                "WEB3_CREDENTIAL_ADDED"
-        );
-        
-        log.info("Web3 wallet binding completed");
-        
-        return true;
+        try {
+            loginMethodRepository.saveAndFlush(newMethod);
+            tokenSessionTransactionService.incrementSecurityVersionAndRevoke(
+                    userId,
+                    "WEB3_CREDENTIAL_ADDED"
+            );
+            securityEventService.append(
+                    "WEB3_CREDENTIAL_BOUND",
+                    userId,
+                    SecurityEventService.Outcome.SUCCESS,
+                    null
+            );
+            log.info("Web3 wallet binding completed");
+        } catch (DataIntegrityViolationException exception) {
+            securityEventService.appendIndependent(
+                    "WEB3_CREDENTIAL_BIND_CONFLICT",
+                    userId,
+                    SecurityEventService.Outcome.DENIED,
+                    "UNIQUE_CONFLICT"
+            );
+            throw new Web3BindingConflictException();
+        }
     }
 
-    public boolean isWalletBound(String walletAddress) {
-        String normalizedAddress = walletAddress.toLowerCase();
-        return loginMethodRepository
-                .findByAuthProviderAndProviderUserId(AuthProvider.WEB3, normalizedAddress)
-                .isPresent();
+    private String verifyAndConsume(Web3LoginRequest request) {
+        try {
+            String normalizedAddress = Web3SignatureUtils.normalizeAddress(
+                    request.getWalletAddress()
+            );
+            if (request.getChainId() == null
+                    || request.getChainId() != chainId
+                    || !Web3SignatureUtils.verifySignature(
+                    request.getMessage(),
+                    request.getSignature(),
+                    normalizedAddress
+            )
+                    || !web3NonceService.consumeNonce(
+                    request.getChallengeHandle(),
+                    normalizedAddress,
+                    request.getNonce(),
+                    request.getMessage()
+            )) {
+                throw new Web3AuthenticationRejectedException();
+            }
+            return normalizedAddress;
+        } catch (Web3AuthenticationRejectedException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new Web3AuthenticationRejectedException();
+        }
+    }
+
+    private void requireEnabled(UserEntity user) {
+        if (!user.isEnabled()) {
+            throw new Web3AuthenticationRejectedException();
+        }
+    }
+
+    private String opaqueIdentity() {
+        return "usr_" + UUID.randomUUID().toString().replace("-", "");
+    }
+
+    public record AuthenticationResult(UserEntity user, boolean newUser) {
     }
 }

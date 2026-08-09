@@ -1,15 +1,15 @@
 # UniAuth 加固阶段最终收尾计划
 
-> 状态：F1-F2 completed；F3 next；F4-F5 scope frozen
+> 状态：F1-F3 completed；F4 in progress；F5 scope frozen
 > 冻结日期：2026-08-09
-> 当前总体进度：约 91%
+> 当前总体进度：约 95%
 > 目标：只加固、修复和验证现有功能；完成本文五个批次后退出加固阶段
 > 上位路线图：[全面加固实施规划](HARDENING_IMPLEMENTATION_PLAN.md)
 > 历史执行记录：[下一轮加固实施计划](NEXT_HARDENING_IMPLEMENTATION_PLAN.md)
 
 ## 1. 为什么需要最终计划
 
-此前加固工作已经建立 PostgreSQL 16-only、Flyway V1-V7、Testcontainers、Java
+此前加固工作已经建立 PostgreSQL 16-only、Flyway V1-V8、Testcontainers、Java
 集成测试、Shell HTTP/Flyway E2E、Playwright、Python 契约测试和统一门禁，并完成
 登录方式并发、Web3 challenge、refresh replay/logout、Cookie、CORS 与 OAuth2
 redirect 等多批修复；邮件参考服务已推进到独立 Flyway V5。
@@ -33,21 +33,21 @@ redirect 等多批修复；邮件参考服务已推进到独立 Flyway V5。
 |------|----------|------------|
 | 数据库、Flyway、测试隔离和恢复基座 | 已建立并反复验证 | 100% |
 | Java/Shell/Playwright/Python/CI 基础门禁 | 已建立，供应链覆盖仍缺 Maven/Python | 92% |
-| 登录方式、Web3 challenge、token family/replay/logout、CORS/redirect | 主要高风险路径已加固 | 95% |
+| 登录方式、Web3 challenge、token family/replay/logout、CORS/redirect | F3 固定范围已完成 | 100% |
 | 邮箱 challenge、canonical identity、可靠投递和枚举防护 | F1 固定范围已完成 | 100% |
 | token family、浏览器 transport、CSRF 和身份来源消歧 | F2 固定范围已完成 | 100% |
-| OAuth2 显式绑定、provider trust、生产配置和密钥运维 | 部分完成 | 60% |
+| OAuth2 显式绑定、provider trust、生产配置和密钥运维 | OAuth2/provider 已完成；F4 运维项待执行 | 75% |
 
-F1 启动前综合进度约 82%。F1、F2 已于 2026-08-09 分别通过完整统一门禁；
-当前综合进度约 91%。后续只按 F3-F5 固定退出项推进，不能通过增加零碎测试或文档
+F1 启动前综合进度约 82%。F1、F2、F3 已于 2026-08-09 分别通过完整统一门禁；
+当前综合进度约 95%。后续只按 F4-F5 固定退出项推进，不能通过增加零碎测试或文档
 条目虚增。
 
 | 批次 | 状态 | 进度口径 |
 |------|------|----------|
 | F1 邮箱与身份状态完整性 | 已完成并通过统一门禁 | 82% -> 86% |
 | F2 Token family、浏览器 transport 与 CSRF | 已完成并通过统一门禁 | 86% -> 91% |
-| F3 OAuth2、Web3 与 canonical API 契约 | 下一批 | 91% -> 95% |
-| F4 依赖、生产配置、密钥和运维门禁 | 待执行 | 95% -> 98% |
+| F3 OAuth2、Web3 与 canonical API 契约 | 已完成并通过统一门禁 | 91% -> 95% |
+| F4 依赖、生产配置、密钥和运维门禁 | 执行中 | 95% -> 98% |
 | F5 最终证据、阶段末三轮检查和退出 | 待执行 | 98% -> 100% |
 
 ## 3. F1 开始前冻结事实
@@ -334,6 +334,19 @@ F1-F5 全部完成后的阶段末检查发生实质修改时，才将该统一�
 - Shell/Playwright 覆盖普通登录不绑定、显式绑定只消费一次、recent-auth、
   status oracle 关闭、限流/故障语义、`/api/user` provider 和生产诊断路由不可达。
 - 不调用真实 provider；真实 provider 验证仍是发布环境 opt-in。
+
+实施结果（2026-08-09）：
+
+- Flyway V8、显式 OAuth2 login/bind 分离、一次性 binding intent、provider profile
+  信任规则、opaque Web3 challenge handle、source/global capacity CAS、recent-auth、
+  typed login-method DTO 和真实 primary provider 已完成。
+- F3 定向 PostgreSQL/Java 测试 63/63；migration/shared-schema 定向测试根项目 15/15、
+  邮件 peer guard 8/8；shared-schema process E2E 4/4、HTTP/Flyway/Web3/email
+  E2E 16/16、相关 Playwright 15/15 和显式 OAuth bind 1/1 通过。
+- 完整统一门禁重新执行并 12/12 通过：根 Maven 222/222、邮件 Maven 154/154、
+  Mock Playwright 29/29、生产 Playwright 2/2、真实浏览器 1/1、Python
+  12/12 + 20/20，文档链接和 patch hygiene 通过。
+- F3 未执行单批三轮无修改检查；按阶段规则进入 F4。
 
 ### F4：依赖、生产配置、密钥和运维门禁（95% -> 98%）
 

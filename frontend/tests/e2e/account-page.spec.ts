@@ -128,7 +128,7 @@ test('account page sends UUID login-method operations and refreshes the list', a
       contentType: 'application/json',
       body: JSON.stringify({
         message: '主登录方式已设置',
-        primaryMethodId: githubId,
+        methodId: githubId,
       }),
     });
   });
@@ -143,7 +143,7 @@ test('account page sends UUID login-method operations and refreshes the list', a
       contentType: 'application/json',
       body: JSON.stringify({
         message: '登录方式已移除',
-        removedMethodId: localId,
+        methodId: localId,
       }),
     });
   });
@@ -202,6 +202,9 @@ test('account page sends UUID login-method operations and refreshes the list', a
       }),
     });
   });
+  await page.route(/\/oauth2\/bind\/github$/, async (route) => {
+    await route.abort();
+  });
 
   await page.goto('/test');
   await expect(page.getByText('已绑定的登录方式 (2)')).toBeVisible();
@@ -227,4 +230,56 @@ test('account page sends UUID login-method operations and refreshes the list', a
     `/api/user/login-methods/${localId}`,
     '/api/user/login-methods/add-local-login',
   ]);
+});
+
+test('account page uses the explicit OAuth binding endpoint', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('auth_user', JSON.stringify({
+      authenticated: true,
+      provider: 'local',
+      userName: 'mock-user',
+      userEmail: 'mock-user@example.invalid',
+      userId: 'mock-user-id',
+    }));
+    localStorage.setItem('accessToken', 'mock.access.token');
+  });
+  await page.route(/\/api\/user\/login-methods$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        loginMethods: [{
+          id: '00000000-0000-0000-0000-000000000001',
+          authProvider: 'local',
+          localUsername: 'mock-user',
+          isPrimary: true,
+          isVerified: true,
+          linkedAt: '2026-08-09T00:00:00Z',
+        }],
+        count: 1,
+      }),
+    });
+  });
+  await page.route(/\/api\/user(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        authenticated: true,
+        provider: 'local',
+        userName: 'mock-user',
+        userEmail: 'mock-user@example.invalid',
+        userId: 'mock-user-id',
+      }),
+    });
+  });
+
+  await page.goto('/test');
+  const bindingRequest = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === '/oauth2/bind/github'
+  );
+  await page.getByRole('button', { name: /GitHub/ }).click();
+
+  const request = await bindingRequest;
+  expect(new URL(request.url()).pathname).toBe('/oauth2/bind/github');
 });

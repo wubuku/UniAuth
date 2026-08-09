@@ -2,6 +2,7 @@ package org.dddml.uniauth.controller;
 
 import org.dddml.uniauth.entity.UserEntity;
 import org.dddml.uniauth.repository.UserRepository;
+import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.service.AuthCookieService;
 import org.dddml.uniauth.service.AuthenticationLogoutService;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ public class ApiAuthController {
     private final UserRepository userRepository;
     private final AuthCookieService authCookieService;
     private final AuthenticationLogoutService authenticationLogoutService;
+    private final UserLoginMethodRepository loginMethodRepository;
 
     /**
      * 获取当前用户信息
@@ -43,66 +45,38 @@ public class ApiAuthController {
         Map<String, Object> userInfo = new HashMap<>();
         userInfo.put("authenticated", true);
 
-        // 处理OAuth2用户（第三方登录）
-        if (principal instanceof OAuth2User oauth2User) {
-            // 基础用户信息
-            String provider = getProviderFromUser(oauth2User);
-            userInfo.put("provider", provider);
-            userInfo.put("userName", getUserName(oauth2User, provider));
-            userInfo.put("userEmail", getUserEmail(oauth2User, provider));
-            userInfo.put("userId", getUserId(oauth2User, provider));
-            userInfo.put("userAvatar", getUserAvatar(oauth2User, provider));
-
-            // 提供商特定信息
-            Map<String, Object> providerInfo = new HashMap<>();
-            switch (provider) {
-                case "google":
-                    providerInfo.put("sub", oauth2User.getAttribute("sub"));
-                    break;
-                case "github":
-                    providerInfo.put("htmlUrl", getUserHtmlUrl(oauth2User, provider));
-                    providerInfo.put("publicRepos", oauth2User.getAttribute("public_repos"));
-                    providerInfo.put("followers", oauth2User.getAttribute("followers"));
-                    break;
-                case "x":  // ✅ 使用注册ID 'x'，与 OAuth2 配置一致
-                    providerInfo.put("location", getUserLocation(oauth2User));
-                    providerInfo.put("verified", getUserVerified(oauth2User));
-                    providerInfo.put("description", getUserDescription(oauth2User));
-                    break;
-            }
-            userInfo.put("providerInfo", providerInfo);
-        }
-        // 处理JWT用户（本地登录或OAuth2登录后的JWT认证）
-        else if (principal instanceof org.springframework.security.oauth2.jwt.Jwt jwt) {
+        if (principal instanceof org.springframework.security.oauth2.jwt.Jwt jwt) {
             String userId = jwt.getClaim("userId");
-            // 优先从 username claim 获取用户名（新版Token），兼容旧版Token（sub即用户名）
             String username = jwt.getClaim("username");
             if (username == null) {
                 username = jwt.getSubject();
             }
 
-            // 从数据库查询用户信息（provider信息已在JWT中）
-            UserEntity user = userRepository.findById(userId).orElse(null);
-            String actualProvider = "local"; // 默认值
+            UserEntity user = userRepository.findById(userId)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "User does not exist"
+                    ));
+            String actualProvider = loginMethodRepository
+                    .findByUserIdAndIsPrimary(userId, true)
+                    .map(method -> method.getAuthProvider()
+                            == org.dddml.uniauth.entity.UserLoginMethod.AuthProvider.TWITTER
+                            ? "x"
+                            : method.getAuthProvider().name().toLowerCase())
+                    .orElse("unknown");
 
             userInfo.put("provider", actualProvider);
             userInfo.put("userId", userId);
             userInfo.put("userName", username);
-            userInfo.put("userEmail", jwt.getClaim("email"));
-            userInfo.put("userAvatar", user != null ? user.getAvatarUrl() : null);
+            userInfo.put("userEmail", user.getEmail());
+            userInfo.put("userAvatar", user.getAvatarUrl());
             userInfo.put("providerInfo", new HashMap<>());
-        }
-        // 处理其他类型的认证主体
-        else {
-            userInfo.put("provider", "unknown");
-            userInfo.put("userName", principal.toString());
-            userInfo.put("userEmail", null);
-            userInfo.put("userId", null);
-            userInfo.put("userAvatar", null);
-            userInfo.put("providerInfo", new HashMap<>());
+            return ResponseEntity.ok(userInfo);
         }
 
-        return ResponseEntity.ok(userInfo);
+        return ResponseEntity.status(401).body(Map.of(
+                "error",
+                "User not authenticated"
+        ));
     }
 
     /**
@@ -128,75 +102,5 @@ public class ApiAuthController {
      * GET /api/oauth2/authorization/{provider}
      * 注意：这个实际上会被Spring Security处理，这里只是为了文档
      */
-
-    // ===== 辅助方法 =====
-
-    private String getProviderFromUser(OAuth2User oauth2User) {
-        if (oauth2User.getAttribute("sub") != null) {
-            return "google";
-        } else if (oauth2User.getAttribute("login") != null) {
-            return "github";
-        } else if (oauth2User.getAttribute("username") != null) {
-            return "x";  // ✅ 返回注册ID 'x'，与 OAuth2 配置一致
-        }
-        return "unknown";
-    }
-
-    private String getUserName(OAuth2User oauth2User, String provider) {
-        switch (provider) {
-            case "google": return oauth2User.getAttribute("name");
-            case "github": return oauth2User.getAttribute("login");
-            case "x": return oauth2User.getAttribute("username");  // ✅ 使用注册ID 'x'
-            default: return oauth2User.getName();
-        }
-    }
-
-    private String getUserEmail(OAuth2User oauth2User, String provider) {
-        switch (provider) {
-            case "google": return oauth2User.getAttribute("email");
-            case "github": return oauth2User.getAttribute("email");
-            case "x": return null; // X/Twitter不提供email
-            default: return null;
-        }
-    }
-
-    private String getUserId(OAuth2User oauth2User, String provider) {
-        switch (provider) {
-            case "google": return oauth2User.getAttribute("sub");
-            case "github":
-                Object id = oauth2User.getAttribute("id");
-                return id != null ? id.toString() : null;
-            case "x": return oauth2User.getAttribute("id");  // ✅ 使用注册ID 'x'
-            default: return null;
-        }
-    }
-
-    private String getUserAvatar(OAuth2User oauth2User, String provider) {
-        switch (provider) {
-            case "google": return oauth2User.getAttribute("picture");
-            case "github": return oauth2User.getAttribute("avatar_url");
-            case "x": return oauth2User.getAttribute("profile_image_url");  // ✅ 使用注册ID 'x'
-            default: return null;
-        }
-    }
-
-    private String getUserHtmlUrl(OAuth2User oauth2User, String provider) {
-        if ("github".equals(provider)) {
-            return oauth2User.getAttribute("html_url");
-        }
-        return null;
-    }
-
-    private String getUserLocation(OAuth2User oauth2User) {
-        return oauth2User.getAttribute("location");
-    }
-
-    private Boolean getUserVerified(OAuth2User oauth2User) {
-        return oauth2User.getAttribute("verified");
-    }
-
-    private String getUserDescription(OAuth2User oauth2User) {
-        return oauth2User.getAttribute("description");
-    }
 
 }

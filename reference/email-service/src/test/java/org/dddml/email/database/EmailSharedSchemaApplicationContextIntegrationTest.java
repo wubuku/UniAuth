@@ -108,11 +108,11 @@ class EmailSharedSchemaApplicationContextIntegrationTest {
             SELECT count(*)
             FROM uniauth_flyway_schema_history
             WHERE type = 'SQL'
-              AND version IN ('1', '2', '3', '4', '5', '6', '7')
+              AND version IN ('1', '2', '3', '4', '5', '6', '7', '8')
               AND success
             """,
             Integer.class
-        )).isEqualTo(7);
+        )).isEqualTo(8);
         assertThat(jdbcTemplate.queryForObject(
             "SELECT to_regclass('public.users')",
             String.class
@@ -121,6 +121,14 @@ class EmailSharedSchemaApplicationContextIntegrationTest {
             "SELECT to_regclass('public.token_families')",
             String.class
         )).isEqualTo("token_families");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT to_regclass('public.oauth2_binding_intents')",
+            String.class
+        )).isEqualTo("oauth2_binding_intents");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT to_regclass('public.web3_challenge_counters')",
+            String.class
+        )).isEqualTo("web3_challenge_counters");
         assertThat(jdbcTemplate.queryForObject(
             """
             SELECT count(*)

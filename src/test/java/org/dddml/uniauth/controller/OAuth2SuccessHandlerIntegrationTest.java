@@ -7,6 +7,7 @@ import org.dddml.uniauth.dto.RegisterRequest;
 import org.dddml.uniauth.dto.UserDto;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
+import org.dddml.uniauth.service.LoginMethodService;
 import org.dddml.uniauth.service.TokenIssuanceFacade;
 import org.dddml.uniauth.service.TokenSessionTransactionService;
 import org.dddml.uniauth.service.UserService;
@@ -20,10 +21,12 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
+import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
 import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
@@ -62,6 +65,9 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
 
     @Autowired
     private UserService userService;
+
+    @Autowired
+    private LoginMethodService loginMethodService;
 
     @Autowired
     private TokenSessionTransactionService tokenSessionTransactionService;
@@ -106,14 +112,41 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
-    void authenticatedCallbackBindsNewProviderToExistingUser() throws Exception {
+    void accessCookieDoesNotTurnOrdinaryCallbackIntoBinding() throws Exception {
         UserDto localUser = registerLocalUser("oauth-binding");
         String accessToken = accessToken(localUser);
         String providerSubject = "github-binding-" + UUID.randomUUID();
+        loginMethodService.bindOAuth2LoginMethod(
+                localUser.getId(),
+                UserLoginMethod.AuthProvider.GITHUB,
+                providerSubject,
+                providerSubject + "@example.invalid",
+                "Existing GitHub Login"
+        );
 
         JsonNode response = executeJsonCallback(
                 authentication("github", providerSubject),
                 accessToken
+        );
+
+        assertThat(response.path("message").asText()).isEqualTo("Login successful");
+        assertThat(response.path("user").path("id").asText()).isEqualTo(localUser.getId());
+        assertThat(loginMethodRepository.findByAuthProviderAndProviderUserId(
+                UserLoginMethod.AuthProvider.GITHUB,
+                providerSubject
+        )).get().extracting(method -> method.getUser().getId())
+                .isEqualTo(localUser.getId());
+    }
+
+    @Test
+    void explicitBindingIntentBindsNewProviderToExistingUser() throws Exception {
+        UserDto localUser = registerLocalUser("oauth-explicit-binding");
+        String providerSubject = "github-explicit-binding-" + UUID.randomUUID();
+
+        JsonNode response = executeJsonBindingCallback(
+                authentication("github", providerSubject),
+                accessToken(localUser),
+                "github"
         );
 
         assertThat(response.path("message").asText()).isEqualTo("Binding successful");
@@ -135,18 +168,78 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
 
         UserDto secondUser = registerLocalUser("oauth-conflict-target");
         String secondUserToken = accessToken(secondUser);
-        JsonNode conflictResponse = executeJsonCallback(
+        JsonNode conflictResponse = executeJsonBindingCallback(
                 authentication("github", providerSubject),
-                secondUserToken
+                secondUserToken,
+                "github"
         );
 
         assertThat(conflictResponse.path("authenticated").asBoolean()).isFalse();
         assertThat(conflictResponse.path("error").asText())
-                .isEqualTo("该OAuth2账户已被其他用户绑定");
+                .isEqualTo("oauth2_processing_failed");
         assertThat(loginMethodRepository.findByAuthProviderAndProviderUserId(
                 UserLoginMethod.AuthProvider.GITHUB,
                 providerSubject
         )).get().extracting(method -> method.getUser().getId()).isEqualTo(ownerId);
+    }
+
+    @Test
+    void bindingIntentCannotBeReplayed() throws Exception {
+        UserDto localUser = registerLocalUser("oauth-bind-replay");
+        String providerSubject = "github-bind-replay-" + UUID.randomUUID();
+        BindingCallback binding = prepareBindingCallback(
+                accessToken(localUser),
+                "github"
+        );
+
+        JsonNode first = executeJsonCallback(
+                authentication("github", providerSubject),
+                binding.state(),
+                binding.session()
+        );
+        JsonNode replay = executeJsonCallback(
+                authentication("github", providerSubject),
+                binding.state(),
+                binding.session()
+        );
+
+        assertThat(first.path("message").asText()).isEqualTo("Binding successful");
+        assertThat(replay.path("authenticated").asBoolean()).isFalse();
+        assertThat(replay.path("error").asText()).isEqualTo("oauth2_processing_failed");
+        assertThat(loginMethodRepository.findByAuthProviderAndProviderUserId(
+                UserLoginMethod.AuthProvider.GITHUB,
+                providerSubject
+        )).get().extracting(method -> method.getUser().getId()).isEqualTo(localUser.getId());
+    }
+
+    @Test
+    void bindingIntentRejectsSessionAndProviderMismatch() throws Exception {
+        UserDto localUser = registerLocalUser("oauth-bind-boundaries");
+
+        BindingCallback sessionBound = prepareBindingCallback(
+                accessToken(localUser),
+                "github"
+        );
+        JsonNode sessionMismatch = executeJsonCallback(
+                authentication("github", "github-session-mismatch-" + UUID.randomUUID()),
+                sessionBound.state(),
+                new MockHttpSession()
+        );
+
+        BindingCallback providerBound = prepareBindingCallback(
+                accessToken(localUser),
+                "github"
+        );
+        JsonNode providerMismatch = executeJsonCallback(
+                authentication("x", "x-provider-mismatch-" + UUID.randomUUID()),
+                providerBound.state(),
+                providerBound.session()
+        );
+
+        assertThat(sessionMismatch.path("error").asText())
+                .isEqualTo("oauth2_processing_failed");
+        assertThat(providerMismatch.path("error").asText())
+                .isEqualTo("oauth2_processing_failed");
     }
 
     @Test
@@ -246,9 +339,9 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
 
         assertThat(response.getStatus()).isEqualTo(302);
         assertThat(response.getRedirectedUrl())
-                .startsWith(
-                        "https://alternate.example.test/oauth/complete"
-                                + "?source=github&error="
+                .isEqualTo(
+                        "https://frontend.example.test/console/login"
+                                + "?error=oauth2_processing_failed"
                 );
     }
 
@@ -298,6 +391,54 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
         if (accessToken != null) {
             request.setCookies(new Cookie("accessToken", accessToken));
         }
+        return executeJsonRequest(authentication, request);
+    }
+
+    private JsonNode executeJsonBindingCallback(
+            OAuth2AuthenticationToken authentication,
+            String accessToken,
+            String provider) throws Exception {
+        BindingCallback binding = prepareBindingCallback(accessToken, provider);
+        return executeJsonCallback(
+                authentication,
+                binding.state(),
+                binding.session()
+        );
+    }
+
+    private BindingCallback prepareBindingCallback(
+            String accessToken,
+            String provider) {
+        MockHttpSession session = new MockHttpSession();
+        MockHttpServletRequest authorizationRequest = new MockHttpServletRequest(
+                "GET",
+                "/oauth2/bind/" + provider
+        );
+        authorizationRequest.setServletPath("/oauth2/bind/" + provider);
+        authorizationRequest.setSession(session);
+        authorizationRequest.setCookies(new Cookie("accessToken", accessToken));
+        OAuth2AuthorizationRequest resolved =
+                authorizationRequestResolver.resolve(authorizationRequest);
+        assertThat(resolved).isNotNull();
+        assertThat(resolved.getState()).isNotBlank();
+        return new BindingCallback(resolved.getState(), session);
+    }
+
+    private JsonNode executeJsonCallback(
+            OAuth2AuthenticationToken authentication,
+            String state,
+            MockHttpSession session) throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/oauth2/callback");
+        request.addHeader("Accept", MediaType.APPLICATION_JSON_VALUE);
+        request.setParameter("state", state);
+        request.setSession(session);
+        return executeJsonRequest(authentication, request);
+    }
+
+    private JsonNode executeJsonRequest(
+            OAuth2AuthenticationToken authentication,
+            MockHttpServletRequest request) throws Exception {
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         successHandler.onAuthenticationSuccess(request, response, authentication);
@@ -322,6 +463,9 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
                     });
         }
         return responseBody;
+    }
+
+    private record BindingCallback(String state, MockHttpSession session) {
     }
 
     private String accessToken(UserDto user) {

@@ -17,6 +17,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.client.userinfo.OAuth2UserRequest;
 import org.springframework.security.oauth2.client.userinfo.OAuth2UserService;
 import org.springframework.security.oauth2.client.userinfo.DefaultOAuth2UserService;
@@ -44,6 +45,13 @@ import org.dddml.uniauth.service.AuthCookieService;
 import org.dddml.uniauth.service.TokenValidationService;
 import org.dddml.uniauth.service.TokenIssuanceFacade;
 import org.dddml.uniauth.service.AuthenticationCredentialResolver;
+import org.dddml.uniauth.service.AuthRateLimitExceededException;
+import org.dddml.uniauth.service.AuthRateLimiter;
+import org.dddml.uniauth.service.AuthRateLimiterUnavailableException;
+import org.dddml.uniauth.service.OAuth2BindingIntentService;
+import org.dddml.uniauth.service.OAuth2ProviderProfile;
+import org.dddml.uniauth.service.OAuth2ProviderProfileService;
+import org.dddml.uniauth.service.RecentAuthenticationService;
 import org.springframework.http.*;
 import org.springframework.core.ParameterizedTypeReference;
 import java.util.List;
@@ -98,6 +106,18 @@ public class SecurityConfig {
     @Autowired
     private OAuth2RedirectPolicy oauth2RedirectPolicy;
 
+    @Autowired
+    private OAuth2ProviderProfileService oauth2ProviderProfileService;
+
+    @Autowired
+    private OAuth2BindingIntentService oauth2BindingIntentService;
+
+    @Autowired
+    private RecentAuthenticationService recentAuthenticationService;
+
+    @Autowired
+    private AuthRateLimiter authRateLimiter;
+
     /**
      * 配置AuthenticationManager用于本地用户认证
      */
@@ -109,223 +129,59 @@ public class SecurityConfig {
         return new ProviderManager(authProvider);
     }
 
-    /**
-     * OAuth2登录成功处理器 - 智能路由版本
-     * 根据用户登录状态自动选择登录或绑定流程
-     * 支持Token双重传递（cookie + JSON响应体）
-     */
     @Bean
     public AuthenticationSuccessHandler oauth2SuccessHandler() {
-        return new AuthenticationSuccessHandler() {
-            @Override
-            public void onAuthenticationSuccess(HttpServletRequest request, HttpServletResponse response,
-                                              Authentication authentication) throws IOException {
-                log.debug("OAuth2 authentication callback received");
-
-                try {
-                    // 🎯 核心：检查用户是否已登录
-                    String currentUserId = getCurrentUserIdFromRequest(request);
-                    boolean isUserLoggedIn = false;
-                    
-                    // 验证用户是否真正存在（防止无效token导致的绑定失败）
-                    if (currentUserId != null) {
-                        try {
-                            if (userService.getUserById(currentUserId) != null) {
-                                isUserLoggedIn = true;
-                            } else {
-                                log.warn("OAuth2 binding context referenced a missing user");
-                                currentUserId = null;
-                            }
-                        } catch (Exception e) {
-                            log.warn("OAuth2 binding context could not be verified");
-                            currentUserId = null;
-                        }
-                    }
-                    
-                    log.debug("OAuth2 callback mode: {}", isUserLoggedIn ? "binding" : "login");
-
-                    UserDto userDto = null;
-                    // 处理Google用户（OpenID Connect）
-                    if (authentication.getPrincipal() instanceof OidcUser oidcUser) {
-                        String providerUserId = oidcUser.getSubject();
-                        String email = oidcUser.getEmail();
-                        String name = oidcUser.getFullName();
-                        String picture = oidcUser.getPicture();
-
-                        // 调用新的方法，传入isBinding和currentUserId
-                        userDto = userService.getOrCreateOAuthUser(
-                            "GOOGLE",
-                            providerUserId, email, name, picture,
-                            isUserLoggedIn, currentUserId
+        return (request, response, authentication) -> {
+            OAuth2AuthenticationToken oauthToken =
+                    (OAuth2AuthenticationToken) authentication;
+            try {
+                OAuth2ProviderProfile profile =
+                        oauth2ProviderProfileService.resolve(authentication);
+                String sessionId = request.getSession(false) == null
+                        ? null
+                        : request.getSession(false).getId();
+                UserService.OAuthAuthenticationResult result =
+                        userService.completeOAuth(
+                                profile,
+                                request.getParameter("state"),
+                                sessionId
                         );
-
-                        log.debug("OAuth2 provider resolved: google");
-                    }
-                    // 处理GitHub和Twitter用户（OAuth2）
-                    else if (authentication.getPrincipal() instanceof OAuth2User oauth2User) {
-                        String provider = determineProvider(oauth2User);
-                        // ✅ 最小修复：registrationId 'x' 对应枚举值 'TWITTER'（UserService 需要枚举值）
-                        if (authentication instanceof org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken oauth2Token) {
-                            String registrationId = oauth2Token.getAuthorizedClientRegistrationId();
-                            if ("x".equals(registrationId)) {
-                                provider = "TWITTER";  // UserService 需要枚举值 "TWITTER"
-                            } else if ("github".equals(registrationId)) {
-                                provider = "GITHUB";  // UserService 需要枚举值 "GITHUB"
-                            }
-                        }
-                        log.debug("OAuth2 provider resolved: {}", provider);
-                        String providerUserId = getProviderUserId(oauth2User, provider);
-                        String email = getProviderEmail(oauth2User, provider);
-                        String name = getProviderName(oauth2User, provider);
-                        String picture = getProviderPicture(oauth2User, provider);
-
-                        userDto = userService.getOrCreateOAuthUser(
-                            provider, providerUserId, email, name, picture,
-                            isUserLoggedIn, currentUserId
-                        );
-
-                    }
-
-                    if (userDto != null) {
-                        Map<String, Object> issued = tokenIssuanceFacade.issue(
-                                userDto,
+                Map<String, Object> issued = result.binding()
+                        ? tokenIssuanceFacade.issue(
+                                result.user(),
+                                response,
+                                "Binding successful",
+                                result.authTime(),
+                                null
+                        )
+                        : tokenIssuanceFacade.issue(
+                                result.user(),
                                 request,
                                 response,
-                                isUserLoggedIn
-                                        ? "Binding successful"
-                                        : "Login successful",
-                                null
+                                "Login successful",
+                                result.authTime()
                         );
-
-                        if (isUserLoggedIn) {
-                            log.info("OAuth2 account binding completed");
-                        } else {
-                            log.info("OAuth2 login completed");
-                        }
-                        
-                        // 检测回调模式：使用Accept头判断
-                        String callbackMode = "redirect";
-                        // 如果没有指定回调模式，使用Accept头判断
-                        if ("redirect".equals(callbackMode)) {
-                            String acceptHeader = request.getHeader("Accept");
-                            if (acceptHeader != null && acceptHeader.contains("application/json")) {
-                                callbackMode = "json";
-                            }
-                        }
-                        
-                        if ("json".equals(callbackMode)) {
-                            // 返回JSON响应 - 无头服务模式
-                            response.setContentType("application/json");
-                            response.setCharacterEncoding("UTF-8");
-                            
-                            // 构建响应数据
-                            // 序列化并写入响应
-                            ObjectMapper objectMapper = new ObjectMapper();
-                            objectMapper.writeValue(response.getWriter(), issued);
-                        } else {
-                            // 重定向目标只来自经过校验的服务端部署配置。
-                            log.debug("OAuth2 redirect response selected");
-                            response.sendRedirect(oauth2RedirectPolicy.successRedirect());
-                        }
-                    }
-
-                } catch (IllegalArgumentException e) {
-                    // 业务逻辑错误（如账户已被绑定）
-                    log.warn("OAuth2 processing rejected by account policy");
-                    handleOAuth2Error(request, response, e.getMessage());
-                } catch (Exception e) {
-                    // 系统错误
-                    log.error("OAuth2 processing failed");
-                    handleOAuth2Error(request, response, "oauth2_processing_failed");
-                }
-            }
-
-            /**
-             * 从请求中获取当前登录用户ID
-             * 通过JWT Cookie判断
-             */
-            private String getCurrentUserIdFromRequest(HttpServletRequest request) {
-                try {
-                    // 尝试提取userId，异常则返回null（不是登录状态）
-                    try {
-                        return credentialResolver.resolveAccessToken(request)
-                                .map(tokenValidationService::getUserIdFromAccessToken)
-                                .orElse(null);
-                    } catch (RuntimeException e) {
-                        log.debug("OAuth2 binding cookie was invalid or expired");
-                        return null;
-                    }
-                } catch (Exception e) {
-                    log.debug("OAuth2 binding cookie could not be processed");
-                    return null;
-                }
-            }
-
-            /**
-             * 处理OAuth2错误，支持JSON响应和重定向
-             */
-            private void handleOAuth2Error(HttpServletRequest request, HttpServletResponse response, String errorMessage) throws IOException {
-                // 默认 resolver 生成 opaque state；这里只防御性兼容旧 handler 输入。
-                String callbackMode = "redirect";
-                String requestedRedirect = null;
-                
-                // 即使旧输入携带 redirect URI，最终目标仍必须通过服务端 allowlist。
-                String state = request.getParameter("state");
-                if (state != null) {
-                    try {
-                        // 解码state参数
-                        String decodedState = java.net.URLDecoder.decode(state, "UTF-8");
-                        // 尝试解析为JSON
-                        ObjectMapper objectMapper = new ObjectMapper();
-                        Map<String, Object> stateData = objectMapper.readValue(decodedState, Map.class);
-                        
-                        // 获取回调模式
-                        if (stateData.containsKey("response_type")) {
-                            String responseType = stateData.get("response_type").toString();
-                            if ("json".equals(responseType)) {
-                                callbackMode = "json";
-                            }
-                        }
-                        
-                        // 获取重定向URI
-                        if (stateData.containsKey("redirect_uri")) {
-                            requestedRedirect = stateData.get("redirect_uri").toString();
-                        }
-                    } catch (Exception e) {
-                        // 解析失败，使用默认值
-                        log.debug("OAuth2 state could not be parsed");
-                    }
-                }
-                
-                // 如果没有指定回调模式，使用Accept头判断
-                if ("redirect".equals(callbackMode)) {
-                    String acceptHeader = request.getHeader("Accept");
-                    if (acceptHeader != null && acceptHeader.contains("application/json")) {
-                        callbackMode = "json";
-                    }
-                }
-                
-                if ("json".equals(callbackMode)) {
-                    // 返回JSON响应 - 无头服务模式
-                    response.setContentType("application/json");
+                log.info(result.binding()
+                        ? "OAuth2 account binding completed"
+                        : "OAuth2 login completed");
+                if (acceptsJson(request)) {
+                    response.setContentType(MediaType.APPLICATION_JSON_VALUE);
                     response.setCharacterEncoding("UTF-8");
-                    
-                    // 构建错误响应数据
-                    Map<String, Object> responseData = new HashMap<>();
-                    responseData.put("message", "OAuth2 processing failed");
-                    responseData.put("authenticated", false);
-                    responseData.put("error", errorMessage);
-                    responseData.put("timestamp", System.currentTimeMillis());
-                    responseData.put("path", request.getRequestURI());
-                    
-                    // 序列化并写入响应
-                    ObjectMapper objectMapper = new ObjectMapper();
-                    objectMapper.writeValue(response.getWriter(), responseData);
+                    new ObjectMapper().writeValue(response.getWriter(), issued);
                 } else {
-                    response.sendRedirect(
-                            oauth2RedirectPolicy.errorRedirect(requestedRedirect, errorMessage)
-                    );
+                    response.sendRedirect(oauth2RedirectPolicy.successRedirect());
                 }
+            } catch (RuntimeException exception) {
+                log.warn(
+                        "OAuth2 processing rejected: {}",
+                        exception.getClass().getSimpleName()
+                );
+                writeOAuth2Error(request, response);
+            } finally {
+                authorizedClientService.removeAuthorizedClient(
+                        oauthToken.getAuthorizedClientRegistrationId(),
+                        authentication.getName()
+                );
             }
         };
     }
@@ -334,6 +190,19 @@ public class SecurityConfig {
     public AuthenticationFailureHandler oauth2FailureHandler() {
         return (request, response, exception) -> {
             log.warn("OAuth2 login failed");
+            try {
+                authRateLimiter.requireAllowed(
+                        AuthRateLimiter.Policy.OAUTH_AUTHORIZE,
+                        request.getRemoteAddr(),
+                        "failure"
+                );
+            } catch (AuthRateLimitExceededException rateLimited) {
+                response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
+                return;
+            } catch (AuthRateLimiterUnavailableException unavailable) {
+                response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
+                return;
+            }
             response.sendRedirect(
                     oauth2RedirectPolicy.loginErrorRedirect("oauth2_failed")
             );
@@ -474,13 +343,17 @@ public class SecurityConfig {
 
     private OAuth2User processGitHubUser(OAuth2User oauth2User, OAuth2AccessToken accessToken) {
         Map<String, Object> attributes = new HashMap<>(oauth2User.getAttributes());
+        attributes.remove(OAuth2ProviderProfileService.VERIFIED_GITHUB_EMAIL);
 
-        // GitHub邮箱获取：如果主用户信息中没有邮箱，尝试获取用户的邮箱列表
-        if (attributes.get("email") == null && accessToken.getScopes().contains("user:email")) {
+        // Only the verified primary email endpoint can establish contact trust.
+        if (accessToken.getScopes().contains("user:email")) {
             try {
                 String email = getGitHubUserEmail(accessToken.getTokenValue());
                 if (email != null) {
-                    attributes.put("email", email);
+                    attributes.put(
+                            OAuth2ProviderProfileService.VERIFIED_GITHUB_EMAIL,
+                            email
+                    );
                     log.debug("Verified primary GitHub email retrieved");
                 } else {
                     log.debug("No verified primary GitHub email available");
@@ -536,74 +409,40 @@ public class SecurityConfig {
     // 使用 Spring Security 生成的 state，并为支持的客户端启用 PKCE。
     @Bean
     public OAuth2AuthorizationRequestResolver authorizationRequestResolver(ClientRegistrationRepository clientRegistrationRepository) {
-        DefaultOAuth2AuthorizationRequestResolver defaultResolver = 
-            new DefaultOAuth2AuthorizationRequestResolver(
-                clientRegistrationRepository, "/oauth2/authorization");
-
-        // 配置自定义的授权请求参数 - 先启用PKCE
-        defaultResolver.setAuthorizationRequestCustomizer(OAuth2AuthorizationRequestCustomizers.withPkce());
-
-        return defaultResolver;
+        return ExplicitOAuth2AuthorizationRequestResolver.create(
+                clientRegistrationRepository,
+                credentialResolver,
+                tokenValidationService,
+                recentAuthenticationService,
+                oauth2BindingIntentService,
+                authRateLimiter
+        );
     }
 
-    /**
-     * 辅助方法：确定OAuth2提供商（后备方案，当无法从 Authentication 获取 registrationId 时使用）
-     * 返回小写字符串（如 "github", "x"），与前端和 ApiAuthController 保持一致
-     */
-    private String determineProvider(OAuth2User oauth2User) {
-        if (oauth2User.getAttribute("login") != null) {
-            return "github";
-        } else if (oauth2User.getAttribute("username") != null) {
-            return "x";  // ✅ 返回注册ID 'x'，与前端和 ApiAuthController 保持一致
-        }
-        return "unknown";
+    private boolean acceptsJson(HttpServletRequest request) {
+        String accept = request.getHeader(HttpHeaders.ACCEPT);
+        return accept != null && accept.contains(MediaType.APPLICATION_JSON_VALUE);
     }
 
-    /**
-     * 辅助方法：获取提供商用户ID
-     */
-    private String getProviderUserId(OAuth2User oauth2User, String provider) {
-        switch (provider.toLowerCase()) {
-            case "github": return oauth2User.getAttribute("id").toString();
-            case "twitter":
-            case "x": return oauth2User.getAttribute("id");  // ✅ 支持 "twitter" 和 "x"
-            default: return null;
-        }
-    }
-
-    /**
-     * 辅助方法：获取提供商邮箱
-     */
-    private String getProviderEmail(OAuth2User oauth2User, String provider) {
-        switch (provider.toLowerCase()) {
-            case "github": return oauth2User.getAttribute("email");
-            case "twitter":
-            case "x": return null; // Twitter/X不提供邮箱
-            default: return null;
-        }
-    }
-
-    /**
-     * 辅助方法：获取提供商用户名
-     */
-    private String getProviderName(OAuth2User oauth2User, String provider) {
-        switch (provider.toLowerCase()) {
-            case "github": return (String) oauth2User.getAttribute("login");
-            case "twitter":
-            case "x": return (String) oauth2User.getAttribute("username");  // ✅ 支持 "twitter" 和 "x"
-            default: return oauth2User.getName();
-        }
-    }
-
-    /**
-     * 辅助方法：获取提供商头像
-     */
-    private String getProviderPicture(OAuth2User oauth2User, String provider) {
-        switch (provider.toLowerCase()) {
-            case "github": return (String) oauth2User.getAttribute("avatar_url");
-            case "twitter":
-            case "x": return (String) oauth2User.getAttribute("profile_image_url");  // ✅ 支持 "twitter" 和 "x"
-            default: return null;
+    private void writeOAuth2Error(
+            HttpServletRequest request,
+            HttpServletResponse response) throws IOException {
+        if (acceptsJson(request)) {
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.setCharacterEncoding("UTF-8");
+            new ObjectMapper().writeValue(response.getWriter(), Map.of(
+                    "message", "OAuth2 processing failed",
+                    "authenticated", false,
+                    "error", "oauth2_processing_failed",
+                    "timestamp", System.currentTimeMillis(),
+                    "path", request.getRequestURI()
+            ));
+        } else {
+            response.sendRedirect(
+                    oauth2RedirectPolicy.loginErrorRedirect(
+                            "oauth2_processing_failed"
+                    )
+            );
         }
     }
 

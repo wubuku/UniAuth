@@ -201,7 +201,9 @@ export function useAuth() {
     walletAddress: string;
     message: string;
     signature: string;
+    challengeHandle: string;
     nonce: string;
+    chainId: number;
   }) => {
     try {
       setLoading(true);

@@ -8,7 +8,9 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Web3NonceResponse {
+    private String challengeHandle;
     private String nonce;
     private String message;
+    private int chainId;
     private long expiresIn;
 }

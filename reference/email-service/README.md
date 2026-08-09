@@ -248,7 +248,7 @@ Flyway 是本组件唯一的 schema owner：
 - datasource：所有 profile 只接受 `jdbc:postgresql:` URL；H2 不受支持
 - database layout：默认 `EMAIL_DATABASE_LAYOUT=dedicated`；显式
   `shared-uniauth` 才允许在获准的空 `public` schema 先迁移，或与完整
-  UniAuth V1-V7 peer 共用该 schema
+  UniAuth V1-V8 peer 共用该 schema
 - location：`classpath:db/migration/postgresql`
 - history table：`email_service_flyway_schema_history`
 - 当前 migration：V1 建表 + V2 队列/日志完整性 + V3 队列生命周期行形状 +
@@ -291,7 +291,7 @@ index，固定重复请求的稳定 queue identity。V5 清空历史
 变更必须新增 V6+。默认独立
 布局要求邮件专用数据库。显式
 `shared-uniauth` 在空 `public` schema 上可先迁移邮件 V1-V5，不创建 baseline；
-若 UniAuth V1-V7 已存在，则先验证其完整 relation 和成功 history，再以 baseline V0
+若 UniAuth V1-V8 已存在，则先验证其完整 relation 和成功 history，再以 baseline V0
 建立独立 `email_service_flyway_schema_history` 并迁移 V1-V5。UniAuth 后启动时也会
 验证邮件 V1-V5 后建立自己的 V0 history。两侧使用同一 PostgreSQL advisory lock
 串行化首次迁移，拒绝 managed relation 冲突、不完整 peer 和不精确 history。
@@ -304,7 +304,7 @@ relation 却没有 peer history 时视为半成品布局并失败关闭。
 
 命名层面可以直接共存：邮件 migration 只创建 `email_queue`、`email_logs`、对应
 `BIGSERIAL` 序列、邮件索引/约束和 `email_service_flyway_schema_history`，与
-UniAuth V1-V7 的 relation 名称没有交集，也没有指向 UniAuth 业务表的外键。不能只凭
+UniAuth V1-V8 的 relation 名称没有交集，也没有指向 UniAuth 业务表的外键。不能只凭
 “表名不冲突”关闭保护，因为第二套 Flyway 首次进入非空 `public` schema 时仍缺少
 自己的 history。兼容实现保留 `baseline-on-migrate=false`，只在确认对端完整、
 本侧 managed relation 不存在且对端 history 无失败 migration 后显式创建 baseline
@@ -426,13 +426,13 @@ ApplicationContext/PostgreSQL/SMTP 覆盖：
   baseline。
 - migration checksum 失配时失败关闭，并保留已有 migration history 和业务数据。
 
-2026-08-09 F2 与 post-F1 邮件 V5 合并验证基线：
+2026-08-09 F3 与邮件 V5 合并验证基线：
 
 - 本组件 Maven：154 tests，0 failures/errors/skips。
 - 本组件 Shell runtime 44/44、HTTP/PostgreSQL E2E 11/11、Flyway guard 15/15。
 - PostgreSQL backup/restore rehearsal 10/10。
-- 合并后的 UniAuth 根项目：Java 219 tests、shared-schema process E2E 4/4、HTTP 16/16、
-  Flyway 16/16、Mock Playwright 28/28、真实邮箱登录浏览器 E2E 1/1、
+- 合并后的 UniAuth 根项目：Java 222 tests、shared-schema process E2E 4/4、HTTP 16/16、
+  Flyway 16/16、Mock Playwright 29/29、真实邮箱登录浏览器 E2E 1/1、
   生产 Playwright 2/2、Python 资源服务器 20/20、邮件 REST stub contract 12/12，
   完整根统一门禁 12/12 已通过。
 - 合并后的组合树已重新运行完整根门禁，没有继承同步前两个源码快照的成功状态。

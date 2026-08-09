@@ -51,6 +51,22 @@ public class AuthRateLimitProperties {
     @Max(10000)
     private int introspectionLimit = 60;
 
+    @Min(1)
+    @Max(10000)
+    private int oauthAuthorizeLimit = 20;
+
+    @Min(1)
+    @Max(10000)
+    private int web3ChallengeLimit = 10;
+
+    @Min(1)
+    @Max(10000)
+    private int web3VerifyLimit = 20;
+
+    @Min(1)
+    @Max(10000)
+    private int loginMethodMutationLimit = 20;
+
     @NotBlank
     @Size(min = 32, max = 1024)
     private String keySecret = "local-only-auth-rate-limit-key-change-me";
@@ -141,5 +157,37 @@ public class AuthRateLimitProperties {
 
     public void setIntrospectionLimit(int introspectionLimit) {
         this.introspectionLimit = introspectionLimit;
+    }
+
+    public int getOauthAuthorizeLimit() {
+        return oauthAuthorizeLimit;
+    }
+
+    public void setOauthAuthorizeLimit(int oauthAuthorizeLimit) {
+        this.oauthAuthorizeLimit = oauthAuthorizeLimit;
+    }
+
+    public int getWeb3ChallengeLimit() {
+        return web3ChallengeLimit;
+    }
+
+    public void setWeb3ChallengeLimit(int web3ChallengeLimit) {
+        this.web3ChallengeLimit = web3ChallengeLimit;
+    }
+
+    public int getWeb3VerifyLimit() {
+        return web3VerifyLimit;
+    }
+
+    public void setWeb3VerifyLimit(int web3VerifyLimit) {
+        this.web3VerifyLimit = web3VerifyLimit;
+    }
+
+    public int getLoginMethodMutationLimit() {
+        return loginMethodMutationLimit;
+    }
+
+    public void setLoginMethodMutationLimit(int loginMethodMutationLimit) {
+        this.loginMethodMutationLimit = loginMethodMutationLimit;
     }
 }

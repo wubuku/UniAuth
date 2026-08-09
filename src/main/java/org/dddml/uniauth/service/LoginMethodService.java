@@ -36,6 +36,7 @@ public class LoginMethodService {
     private final CanonicalEmailService canonicalEmailService;
     private final PasswordPolicyService passwordPolicyService;
     private final TokenSessionTransactionService tokenSessionTransactionService;
+    private final SecurityEventService securityEventService;
 
     /**
      * 获取用户的所有登录方式
@@ -101,9 +102,21 @@ public class LoginMethodService {
                     userId,
                     "OAUTH_CREDENTIAL_ADDED"
             );
+            securityEventService.append(
+                    "OAUTH2_CREDENTIAL_BOUND",
+                    userId,
+                    SecurityEventService.Outcome.SUCCESS,
+                    null
+            );
             log.info("OAuth2 login method binding completed");
             return saved;
         } catch (DataIntegrityViolationException exception) {
+            securityEventService.appendIndependent(
+                    "OAUTH2_CREDENTIAL_BIND_CONFLICT",
+                    userId,
+                    SecurityEventService.Outcome.DENIED,
+                    "UNIQUE_CONFLICT"
+            );
             throw translateBindingConflict(exception);
         }
     }
@@ -204,6 +217,12 @@ public class LoginMethodService {
                 userId,
                 "LOGIN_METHOD_REMOVED"
         );
+        securityEventService.append(
+                "LOGIN_METHOD_REMOVED",
+                userId,
+                SecurityEventService.Outcome.SUCCESS,
+                null
+        );
         log.info("Login method removed successfully");
     }
 
@@ -236,6 +255,12 @@ public class LoginMethodService {
                 throw new IllegalArgumentException("登录方式不存在");
             }
             loginMethodRepository.flush();
+            securityEventService.append(
+                    "LOGIN_METHOD_PRIMARY_CHANGED",
+                    userId,
+                    SecurityEventService.Outcome.SUCCESS,
+                    null
+            );
             log.info("Primary login method set successfully");
         } catch (DataIntegrityViolationException exception) {
             throw translatePrimaryConflict(exception);
@@ -298,6 +323,12 @@ public class LoginMethodService {
             tokenSessionTransactionService.incrementSecurityVersionAndRevoke(
                     userId,
                     "LOCAL_CREDENTIAL_ADDED"
+            );
+            securityEventService.append(
+                    "LOCAL_CREDENTIAL_ADDED",
+                    userId,
+                    SecurityEventService.Outcome.SUCCESS,
+                    null
             );
             log.info("Local login method added");
             return saved;

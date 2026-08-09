@@ -102,9 +102,7 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(jsonPath("$.errorCode").value("INVALID_SIGNATURE"));
 
         mockMvc.perform(get("/api/auth/web3/status/{wallet}", walletAddress))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.walletAddress").value(walletAddress))
-                .andExpect(jsonPath("$.isBound").value(true));
+                .andExpect(status().isNotFound());
 
         SignedChallenge secondChallenge = requestSignedChallenge(walletAddress, keyPair);
         mockMvc.perform(post("/api/auth/web3/verify")
@@ -186,9 +184,9 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
         SignedChallenge secondChallenge = requestSignedChallenge(secondWallet, secondKeyPair);
         mockMvc.perform(post("/api/auth/web3/bind")
                         .header("Authorization", "Bearer " + renewedAccessToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(secondChallenge.requestBody()))
-                .andExpect(status().isBadRequest())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(secondChallenge.requestBody()))
+                .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("BINDING_FAILED"));
     }
 
@@ -232,6 +230,7 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                                 challenge.walletAddress(),
                                 challenge.message() + "\nTampered",
                                 challenge.signature(),
+                                challenge.challengeHandle(),
                                 challenge.nonce()
                         )))
                 .andExpect(status().isUnauthorized())
@@ -243,7 +242,8 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                                 challenge.walletAddress(),
                                 challenge.message(),
                                 challenge.signature(),
-                                "different-nonce"
+                                challenge.challengeHandle(),
+                                "0000000000000000"
                         )))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.errorCode").value("INVALID_SIGNATURE"));
@@ -296,6 +296,7 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                                     challenge.walletAddress(),
                                     tamperedMessage,
                                     tamperedSignature,
+                                    challenge.challengeHandle(),
                                     challenge.nonce(),
                                     1
                             )))
@@ -321,6 +322,7 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                                 challenge.walletAddress(),
                                 challenge.message(),
                                 challenge.signature(),
+                                challenge.challengeHandle(),
                                 challenge.nonce(),
                                 5
                         )))
@@ -378,41 +380,39 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
-    void latestNonceSupersedesEarlierChallengeForTheSameWallet() throws Exception {
+    void secondNonceRequestCannotOverwriteAnActiveChallengeForTheSameWallet()
+            throws Exception {
         ECKeyPair keyPair = Keys.createEcKeyPair();
         String walletAddress = "0x" + Keys.getAddress(keyPair.getPublicKey());
         SignedChallenge firstChallenge = requestSignedChallenge(walletAddress, keyPair);
-        SignedChallenge latestChallenge = requestSignedChallenge(walletAddress, keyPair);
+
+        mockMvc.perform(get("/api/auth/web3/nonce/{wallet}", walletAddress))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.error").value("WEB3_CHALLENGE_CAPACITY"));
 
         mockMvc.perform(post("/api/auth/web3/verify")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(firstChallenge.requestBody()))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.errorCode").value("INVALID_SIGNATURE"));
-
-        mockMvc.perform(post("/api/auth/web3/verify")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(latestChallenge.requestBody()))
                 .andExpect(status().isOk());
     }
 
     @Test
-    void concurrentNonceGenerationLeavesOneCompleteLatestChallenge() throws Exception {
+    void concurrentNonceGenerationCreatesOnlyOneActiveChallenge() throws Exception {
         ECKeyPair keyPair = Keys.createEcKeyPair();
         String walletAddress = "0x" + Keys.getAddress(keyPair.getPublicKey());
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
-        List<JsonNode> responses = new ArrayList<>();
+        List<MvcResult> responses = new ArrayList<>();
 
         try {
             var futures = List.of(1, 2).stream()
                     .map(ignored -> executor.submit(() -> {
                         ready.countDown();
                         assertThat(start.await(10, TimeUnit.SECONDS)).isTrue();
-                        return responseJson(mockMvc.perform(
+                        return mockMvc.perform(
                                 get("/api/auth/web3/nonce/{wallet}", walletAddress)
-                        ).andExpect(status().isOk()).andReturn());
+                        ).andReturn();
                     }))
                     .toList();
             assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
@@ -428,16 +428,38 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
             executor.shutdownNow();
         }
 
-        assertThat(responses).hasSize(2);
-        assertThat(web3NonceRepository.findByWalletAddress(walletAddress))
-                .isPresent()
-                .get()
-                .satisfies(nonce -> {
-                    assertThat(responses).anyMatch(response ->
-                            nonce.getMessage().equals(response.path("message").asText())
-                                    && nonce.getNonce().equals(response.path("nonce").asText())
-                    );
-                });
+        assertThat(responses)
+                .extracting(response -> response.getResponse().getStatus())
+                .containsExactlyInAnyOrder(200, 429);
+        var stored = web3NonceRepository.findByWalletAddress(walletAddress)
+                .orElseThrow();
+        JsonNode successfulResponse = responses.stream()
+                .filter(response -> response.getResponse().getStatus() == 200)
+                .map(response -> {
+                    try {
+                        return responseJson(response);
+                    } catch (Exception exception) {
+                        throw new AssertionError(exception);
+                    }
+                })
+                .findFirst()
+                .orElseThrow();
+        assertThat(stored.getMessage())
+                .isEqualTo(successfulResponse.path("message").asText());
+        assertThat(stored.getChallengeHandle())
+                .isEqualTo(successfulResponse.path("challengeHandle").asText());
+
+        String signature = signMessage(stored.getMessage(), keyPair);
+        mockMvc.perform(post("/api/auth/web3/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody(
+                                walletAddress,
+                                stored.getMessage(),
+                                signature,
+                                stored.getChallengeHandle(),
+                                stored.getNonce()
+                        )))
+                .andExpect(status().isOk());
     }
 
     @Test
@@ -445,8 +467,9 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
         String walletAddress = "0x0000000000000000000000000000000000000001";
         web3NonceService.saveNonce(
                 walletAddress,
-                "expired-nonce",
+                "ExpiredNonceValue123",
                 "expired-message",
+                "127.0.0.1",
                 Instant.now().minusSeconds(1)
         );
 
@@ -481,8 +504,10 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(jsonPath("$.expiresIn").value(300))
                 .andReturn();
         JsonNode nonceBody = responseJson(nonceResult);
+        String challengeHandle = nonceBody.path("challengeHandle").asText();
         String nonce = nonceBody.path("nonce").asText();
         String message = nonceBody.path("message").asText();
+        assertThat(challengeHandle).isNotBlank();
         Instant messageExpiration = message.lines()
                 .filter(line -> line.startsWith("Expiration Time: "))
                 .map(line -> line.substring("Expiration Time: ".length()))
@@ -497,10 +522,17 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
         String signature = signMessage(message, keyPair);
 
         return new SignedChallenge(
-                requestBody(walletAddress, message, signature, nonce),
+                requestBody(
+                        walletAddress,
+                        message,
+                        signature,
+                        challengeHandle,
+                        nonce
+                ),
                 walletAddress,
                 message,
                 signature,
+                challengeHandle,
                 nonce
         );
     }
@@ -509,20 +541,30 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
             String walletAddress,
             String message,
             String signature,
+            String challengeHandle,
             String nonce) throws Exception {
-        return requestBody(walletAddress, message, signature, nonce, 1);
+        return requestBody(
+                walletAddress,
+                message,
+                signature,
+                challengeHandle,
+                nonce,
+                1
+        );
     }
 
     private String requestBody(
             String walletAddress,
             String message,
             String signature,
+            String challengeHandle,
             String nonce,
             Integer chainId) throws Exception {
         return objectMapper.writeValueAsString(new Web3Request(
                 walletAddress,
                 message,
                 signature,
+                challengeHandle,
                 nonce,
                 chainId
         ));
@@ -566,6 +608,7 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
             String walletAddress,
             String message,
             String signature,
+            String challengeHandle,
             String nonce) {
     }
 
@@ -573,6 +616,7 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
             String walletAddress,
             String message,
             String signature,
+            String challengeHandle,
             String nonce,
             Integer chainId
     ) {

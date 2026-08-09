@@ -57,6 +57,8 @@ final class EmailSharedSchemaFlywayBootstrap {
         "user_authorities",
         "token_blacklist",
         "token_families",
+        "oauth2_binding_intents",
+        "web3_challenge_counters",
         "spring_session",
         "spring_session_attributes"
     );
@@ -72,12 +74,14 @@ final class EmailSharedSchemaFlywayBootstrap {
         "user_authorities",
         "token_blacklist",
         "token_families",
+        "oauth2_binding_intents",
+        "web3_challenge_counters",
         "spring_session",
         "spring_session_attributes"
     );
 
     private static final List<String> REQUIRED_PEER_VERSIONS =
-        List.of("1", "2", "3", "4", "5", "6", "7");
+        List.of("1", "2", "3", "4", "5", "6", "7", "8");
 
     private EmailSharedSchemaFlywayBootstrap() {
     }

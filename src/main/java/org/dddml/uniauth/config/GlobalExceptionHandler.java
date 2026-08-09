@@ -15,6 +15,8 @@ import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.dddml.uniauth.service.AuthRateLimitExceededException;
 import org.dddml.uniauth.service.AuthRateLimiterUnavailableException;
+import org.dddml.uniauth.service.RecentAuthenticationRequiredException;
+import org.dddml.uniauth.service.Web3ChallengeCapacityExceededException;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -51,6 +53,29 @@ public class GlobalExceptionHandler {
                         "success", false,
                         "error", "RATE_LIMITER_UNAVAILABLE",
                         "message", "Authentication service is temporarily unavailable"
+                ));
+    }
+
+    @ExceptionHandler(Web3ChallengeCapacityExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleWeb3CapacityExceeded(
+            Web3ChallengeCapacityExceededException exception) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", "1")
+                .body(Map.of(
+                        "success", false,
+                        "error", "WEB3_CHALLENGE_CAPACITY",
+                        "message", "Web3 challenge capacity is temporarily exhausted"
+                ));
+    }
+
+    @ExceptionHandler(RecentAuthenticationRequiredException.class)
+    public ResponseEntity<Map<String, Object>> handleRecentAuthRequired(
+            RecentAuthenticationRequiredException exception) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(Map.of(
+                        "success", false,
+                        "error", "RECENT_AUTH_REQUIRED",
+                        "message", "Recent authentication is required"
                 ));
     }
 

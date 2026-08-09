@@ -7,6 +7,7 @@ import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserRepository;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +31,7 @@ public class UserService {
     private final UserLoginMethodRepository loginMethodRepository;
     private final CanonicalEmailService canonicalEmailService;
     private final PasswordPolicyService passwordPolicyService;
+    private final OAuth2BindingIntentService oauth2BindingIntentService;
 
     /**
      * 本地用户注册
@@ -153,107 +155,67 @@ public class UserService {
         return convertToDto(loginMethod.getUser());
     }
 
-    /**
-     * 获取或创建OAuth2用户
-     * 
-     * @param isBinding 是否为绑定流程（true=绑定到已登录用户，false=登录/注册流程）
-     * @param existingUserId 如果是绑定流程，传入已登录用户ID
-     */
-    public UserDto getOrCreateOAuthUser(
-            String provider,
-            String providerUserId,
-            String email,
-            String name,
-            String picture,
-            boolean isBinding,
-            String existingUserId) {
-        
-        // 1. 查找是否已存在该OAuth2登录方式
-        UserLoginMethod existingMethod = loginMethodService.findByOAuth2Provider(
-            UserLoginMethod.AuthProvider.valueOf(provider.toUpperCase()),
-            providerUserId
+    public OAuthAuthenticationResult completeOAuth(
+            OAuth2ProviderProfile profile,
+            String state,
+            String sessionId) {
+        var bindingContext = oauth2BindingIntentService.consume(
+                state,
+                sessionId,
+                profile.registrationId()
         );
-        
-        if (existingMethod != null) {
-            // 场景A: OAuth2账户已存在
-            if (isBinding && !existingMethod.getUser().getId().equals(existingUserId)) {
-                throw new IllegalArgumentException("该OAuth2账户已被其他用户绑定");
-            }
-            // 更新最后使用时间
-            loginMethodService.updateLastUsedAt(existingMethod.getId());
-            return convertToDto(existingMethod.getUser());
-        }
-        
-        if (isBinding) {
-            // 场景B: 绑定流程 - 关联到现有用户
-            UserEntity existingUser = userRepository.findById(existingUserId)
-                .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
-            
-            loginMethodService.bindOAuth2LoginMethod(
-                existingUserId,
-                UserLoginMethod.AuthProvider.valueOf(provider.toUpperCase()),
-                providerUserId,
-                email,
-                name
-            );
+        UserLoginMethod existingMethod = loginMethodService.findByOAuth2Provider(
+                profile.provider(),
+                profile.subject()
+        );
 
-            UserEntity updatedUser = userRepository.findById(existingUserId)
-                .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
-            return convertToDto(updatedUser);
-        } else {
-            // 场景C: 登录流程 - 创建新用户
-            
-            // 检查邮箱是否已被使用
-            if (email != null) {
-                email = canonicalEmailService.canonicalize(email);
+        if (bindingContext.isPresent()) {
+            OAuth2BindingIntentService.BindingContext context =
+                    bindingContext.orElseThrow();
+            if (existingMethod != null) {
+                throw new LoginMethodConflictException(
+                        "OAuth2 credential could not be bound"
+                );
             }
-            if (email != null && userRepository.findByEmail(email).isPresent()) {
-                throw new IllegalArgumentException("Email already registered with different provider");
-            }
-            
-            // 生成虚拟邮箱（如果没有邮箱）
-            if (email == null) {
-                email = provider.toLowerCase() + "_" + providerUserId + "@oauth.local";
-            }
-            boolean syntheticEmail = email.endsWith("@oauth.local");
-            
-            // 创建用户
-            UserEntity newUser = new UserEntity();
-            newUser.setId(UUID.randomUUID().toString());  // 生成 UUID
-            newUser.setEmail(email);
-            newUser.setEmailIdentityType(
-                    syntheticEmail
-                            ? UserEntity.EmailIdentityType.SYNTHETIC
-                            : UserEntity.EmailIdentityType.VERIFIED_CONTACT
+            UserEntity user = requireEnabledUser(
+                    context.userId(),
+                    context.securityVersion()
             );
-            newUser.setUsername(email);
-            newUser.setDisplayName(name);
-            newUser.setAvatarUrl(picture);
-            newUser.setEmailVerified(!syntheticEmail);
-            Set<String> authorities = new HashSet<>();
-            authorities.add("ROLE_USER");
-            newUser.setAuthorities(authorities);
-            newUser.setEnabled(true);
-            
-            userRepository.save(newUser);
-            
-            // 创建OAuth2登录方式
-            UserLoginMethod loginMethod = UserLoginMethod.builder()
-                .id(UUID.randomUUID().toString())  // 生成 UUID
-                .user(newUser)
-                .authProvider(UserLoginMethod.AuthProvider.valueOf(provider.toUpperCase()))
-                .providerUserId(providerUserId)
-                .providerEmail(email)
-                .providerUsername(name)
-                .isPrimary(true)
-                .isVerified(true)
-                .build();
-            
-            newUser.addLoginMethod(loginMethod);
-            userRepository.save(newUser);
-            
-            return convertToDto(newUser);
+            loginMethodService.bindOAuth2LoginMethod(
+                    user.getId(),
+                    profile.provider(),
+                    profile.subject(),
+                    profile.email(),
+                    profile.displayName()
+            );
+            UserEntity updatedUser = requireEnabledUser(
+                    context.userId(),
+                    context.securityVersion() + 1
+            );
+            return new OAuthAuthenticationResult(
+                    convertToDto(updatedUser),
+                    true,
+                    context.authTime()
+            );
         }
+
+        if (existingMethod != null) {
+            UserEntity user = existingMethod.getUser();
+            requireEnabledUser(user);
+            existingMethod.setProviderEmail(profile.email());
+            existingMethod.setProviderUsername(profile.displayName());
+            existingMethod.updateLastUsedAt();
+            user.setLastLoginAt(java.time.LocalDateTime.now());
+            loginMethodRepository.save(existingMethod);
+            userRepository.save(user);
+            return new OAuthAuthenticationResult(
+                    convertToDto(user),
+                    false,
+                    java.time.Instant.now()
+            );
+        }
+
+        return createOAuthUser(profile);
     }
 
     /**
@@ -276,16 +238,29 @@ public class UserService {
         return convertToDto(user);
     }
 
-    /**
-     * 获取或创建OAuth2用户（重载方法，用于向后兼容现有调用）
-     */
     public UserDto getOrCreateOAuthUser(String provider,
                                         String providerUserId,
                                         String email,
                                         String name,
                                         String picture) {
-        // 调用新的方法，isBinding=false（登录流程）
-        return getOrCreateOAuthUser(provider, providerUserId, email, name, picture, false, null);
+        UserLoginMethod.AuthProvider authProvider =
+                UserLoginMethod.AuthProvider.valueOf(provider.toUpperCase());
+        String registrationId = authProvider == UserLoginMethod.AuthProvider.TWITTER
+                ? "x"
+                : provider.toLowerCase();
+        return completeOAuth(
+                new OAuth2ProviderProfile(
+                        registrationId,
+                        authProvider,
+                        providerUserId,
+                        email,
+                        email != null,
+                        name,
+                        picture
+                ),
+                null,
+                null
+        ).user();
     }
 
     public UserDto convertToDto(UserEntity user) {
@@ -305,9 +280,95 @@ public class UserService {
                 .findFirst()
                 .orElse(user.getLoginMethods().iterator().next());
             
-            dto.setProvider(primaryMethod.getAuthProvider().name().toLowerCase());
+            dto.setProvider(providerName(primaryMethod.getAuthProvider()));
         }
         
         return dto;
+    }
+
+    private OAuthAuthenticationResult createOAuthUser(
+            OAuth2ProviderProfile profile) {
+        if (profile.email() != null
+                && userRepository.findByEmail(profile.email()).isPresent()) {
+            throw new LoginMethodConflictException(
+                    "OAuth2 credential could not be linked"
+            );
+        }
+        String opaqueIdentity = opaqueIdentity();
+        String email = profile.email() != null
+                ? profile.email()
+                : opaqueIdentity + "@oauth.local";
+        UserEntity.EmailIdentityType identityType = profile.email() == null
+                ? UserEntity.EmailIdentityType.SYNTHETIC
+                : (profile.emailTrusted()
+                ? UserEntity.EmailIdentityType.VERIFIED_CONTACT
+                : UserEntity.EmailIdentityType.UNVERIFIED_CONTACT);
+
+        UserEntity user = new UserEntity();
+        user.setId(UUID.randomUUID().toString());
+        user.setUsername(opaqueIdentity);
+        user.setEmail(email);
+        user.setEmailIdentityType(identityType);
+        user.setDisplayName(profile.displayName());
+        user.setAvatarUrl(profile.picture());
+        user.setEmailVerified(profile.emailTrusted());
+        user.setAuthorities(new HashSet<>(Set.of("ROLE_USER")));
+        user.setEnabled(true);
+
+        UserLoginMethod loginMethod = UserLoginMethod.builder()
+                .id(UUID.randomUUID().toString())
+                .user(user)
+                .authProvider(profile.provider())
+                .providerUserId(profile.subject())
+                .providerEmail(profile.email())
+                .providerUsername(profile.displayName())
+                .isPrimary(true)
+                .isVerified(true)
+                .build();
+        user.addLoginMethod(loginMethod);
+        try {
+            userRepository.saveAndFlush(user);
+            return new OAuthAuthenticationResult(
+                    convertToDto(user),
+                    false,
+                    java.time.Instant.now()
+            );
+        } catch (DataIntegrityViolationException exception) {
+            throw new LoginMethodConflictException(
+                    "OAuth2 credential could not be linked"
+            );
+        }
+    }
+
+    private UserEntity requireEnabledUser(String userId, long securityVersion) {
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(OAuth2BindingIntentRejectedException::new);
+        requireEnabledUser(user);
+        if (user.getTokenSecurityVersion() != securityVersion) {
+            throw new OAuth2BindingIntentRejectedException();
+        }
+        return user;
+    }
+
+    private void requireEnabledUser(UserEntity user) {
+        if (!user.isEnabled()) {
+            throw new OAuth2BindingIntentRejectedException();
+        }
+    }
+
+    private String opaqueIdentity() {
+        return "usr_" + UUID.randomUUID().toString().replace("-", "");
+    }
+
+    private String providerName(UserLoginMethod.AuthProvider provider) {
+        return provider == UserLoginMethod.AuthProvider.TWITTER
+                ? "x"
+                : provider.name().toLowerCase();
+    }
+
+    public record OAuthAuthenticationResult(
+            UserDto user,
+            boolean binding,
+            java.time.Instant authTime) {
     }
 }

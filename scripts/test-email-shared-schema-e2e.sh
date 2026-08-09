@@ -258,7 +258,7 @@ stop_application
     SELECT count(*)
     FROM uniauth_flyway_schema_history
     WHERE success;
-")" = "7" ] || fail "root-first restart changed UniAuth Flyway history"
+")" = "8" ] || fail "root-first restart changed UniAuth Flyway history"
 [ "$(db_value "$ROOT_FIRST_DATABASE" "
     SELECT count(*)
     FROM email_service_flyway_schema_history
@@ -286,9 +286,9 @@ stop_application
     SELECT count(*)
     FROM uniauth_flyway_schema_history
     WHERE type = 'SQL'
-      AND version IN ('1', '2', '3', '4', '5', '6', '7')
+      AND version IN ('1', '2', '3', '4', '5', '6', '7', '8')
       AND success;
-")" = "7" ] || fail "UniAuth did not apply V1 through V7"
+")" = "8" ] || fail "UniAuth did not apply V1 through V8"
 [ "$(db_value "$EMAIL_FIRST_DATABASE" "
     SELECT count(*)
     FROM information_schema.tables
@@ -316,6 +316,6 @@ stop_application
     SELECT count(*)
     FROM uniauth_flyway_schema_history
     WHERE success;
-")" = "8" ] || fail "email-first restart changed UniAuth Flyway history"
+")" = "9" ] || fail "email-first restart changed UniAuth Flyway history"
 
 echo "PASS: shared database/public schema process E2E"

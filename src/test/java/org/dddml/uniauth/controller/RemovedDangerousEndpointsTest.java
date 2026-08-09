@@ -1,6 +1,7 @@
 package org.dddml.uniauth.controller;
 
 import org.dddml.uniauth.repository.UserRepository;
+import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.service.JwtTokenService;
 import org.dddml.uniauth.service.Web3AuthService;
 import org.dddml.uniauth.service.AuthCookieService;
@@ -8,6 +9,7 @@ import org.dddml.uniauth.service.AuthenticationLogoutService;
 import org.dddml.uniauth.service.AuthRateLimiter;
 import org.dddml.uniauth.service.CredentialAuthenticationService;
 import org.dddml.uniauth.service.RegistrationService;
+import org.dddml.uniauth.service.RecentAuthenticationService;
 import org.dddml.uniauth.service.TokenIssuanceFacade;
 import org.dddml.uniauth.service.TokenValidationService;
 import org.dddml.uniauth.service.TokenIntrospectionService;
@@ -40,7 +42,8 @@ class RemovedDangerousEndpointsTest {
         ApiAuthController apiAuthController = new ApiAuthController(
                 mock(UserRepository.class),
                 mock(AuthCookieService.class),
-                mock(AuthenticationLogoutService.class)
+                mock(AuthenticationLogoutService.class),
+                mock(UserLoginMethodRepository.class)
         );
         OAuth2TokenController oAuth2TokenController =
                 new OAuth2TokenController(
@@ -55,7 +58,9 @@ class RemovedDangerousEndpointsTest {
                 mock(TokenValidationService.class),
                 mock(TokenIssuanceFacade.class),
                 mock(UserService.class),
-                mock(AuthenticationCredentialResolver.class)
+                mock(AuthenticationCredentialResolver.class),
+                mock(RecentAuthenticationService.class),
+                mock(AuthRateLimiter.class)
         );
 
         mockMvc = standaloneSetup(
@@ -82,6 +87,9 @@ class RemovedDangerousEndpointsTest {
         assertNotFound(post("/api/validate-x-token"));
         assertNotFound(get("/oauth2/introspect-test"));
         assertNotFound(post("/oauth2/validate").param("token", "token"));
+        assertNotFound(get(
+                "/api/auth/web3/status/0x0000000000000000000000000000000000000000"
+        ));
         mockMvc.perform(delete("/api/auth/web3/nonce/0x0000000000000000000000000000000000000000"))
                 .andExpect(status().isMethodNotAllowed());
     }

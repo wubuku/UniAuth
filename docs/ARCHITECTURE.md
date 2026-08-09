@@ -79,11 +79,11 @@ SMTP 或邮件供应商。外部服务必须提供 health、模板邮件端点�
 仓库提供一个独立的[邮件服务参考实现](../reference/email-service/README.md)，其 schema
 由独立 Flyway V1/V2/V3/V4/V5 管理，并通过真实 HTTP、PostgreSQL、Spring Beans 和本地 SMTP
 E2E 验证。数据库默认使用独立 PostgreSQL；显式 `shared-uniauth` 可在获准的空
-`public` schema 先启动任一侧，或与完整 UniAuth V1-V7 peer 使用独立 history table
+`public` schema 先启动任一侧，或与完整 UniAuth V1-V8 peer 使用独立 history table
 共存。两种启动顺序由共享 advisory lock 串行化，并有真实 ApplicationContext 与
 双进程 E2E。邮件组件只创建
 `email_queue`、`email_logs`、对应序列/索引/约束和
-`email_service_flyway_schema_history`；这些 relation 名称与 UniAuth V1-V7 无冲突。
+`email_service_flyway_schema_history`；这些 relation 名称与 UniAuth V1-V8 无冲突。
 原始兼容问题是后启动 Flyway 面对非空 `public` schema 且缺少自身 history，而不是
 业务表重名。受控兼容路径只在 peer 完整、本侧 relation 不存在且 history 无失败记录
 时创建 baseline V0，`baseline-on-migrate` 仍保持 `false`。非 PostgreSQL datasource 会
@@ -269,7 +269,8 @@ introspection 会查询持久 session 状态；纯 JWKS 的 Python 示例只能�
 - Flyway 当前为 dev-derived V1 baseline + V2 登录方式约束 + V3 登录方式 revision
   CAS + V4 实体约束与索引对齐 + V5 Web3/SIWE challenge message 绑定 + V6 邮箱身份/
   challenge/outbox/限流/安全事件加固 + V7 token family/security version/session
-  claim 加固；不得修改已发布的 V1/V2/V3/V4/V5/V6/V7。
+  claim 加固 + V8 OAuth2 bind intent/Web3 challenge/canonical API 加固；不得修改
+  已发布的 V1/V2/V3/V4/V5/V6/V7/V8。
 - V2 已对齐登录方式的时区/nullability，并增加 provider/行形状与 primary 唯一约束；
   V3 已保护 remove/set-primary 组合并发；V4 已对齐 users、Web3 nonce、email
   verification 和 token blacklist 的目标 nullability/default/check，并补齐 email 查询
@@ -281,6 +282,8 @@ introspection 会查询持久 session 状态；纯 JWKS 的 Python 示例只能�
   PostgreSQL 认证限流和 append-only security event。
 - V7 增加 `users.token_security_version` 和 `token_families`，固定 family owner、
   generation、`auth_time`、expiry、revoke 状态及查询索引。
+- V8 增加 `oauth2_binding_intents`、Web3 challenge handle 与 source/global
+  capacity counter，固定显式绑定、一次性消费和有界 challenge 契约。
 - Spring Session 表由 Flyway V1 管理，框架自动建表关闭。
 - `blacksheep_dev` 已通过只读 baseline rehearsal，尚未执行 baseline apply。
 

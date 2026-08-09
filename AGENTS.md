@@ -19,6 +19,8 @@
   基线、固定实施切片、迁移边界、验收矩阵和 post-F1 邮件 V5 收尾记录。
 - `docs/drafts/F2_TOKEN_SESSION_HARDENING_IMPLEMENTATION.md`: 已完成 F2 的
   token family、浏览器 transport、CSRF、严格 introspection 实施和验收记录。
+- `docs/drafts/F3_OAUTH_WEB3_CONTRACT_HARDENING_IMPLEMENTATION.md`: 已完成的
+  F3 OAuth2 bind intent、Web3 challenge、recent-auth 和 canonical API 实施与验收记录。
 - `docs/drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md`: 历史批次执行记录；不再驱动开放循环。
 - `docs/archive/database/README.md`: 旧 SQL 的历史归档和当前替代路径。
 - `reference/email-service/README.md`: 外部邮件 REST 服务的独立参考实现、Flyway 和 E2E。
@@ -61,7 +63,8 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - Flyway 是唯一 schema owner；当前 runtime migration 链是 PostgreSQL V1 baseline +
   V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束与索引对齐 + V5
   Web3/SIWE challenge message 绑定 + V6 邮箱身份/challenge/outbox/限流/安全事件加固 +
-  V7 token family/security version/session claim 加固。
+  V7 token family/security version/session claim 加固 + V8 OAuth2 bind intent、
+  Web3 challenge handle/capacity 和 canonical API 契约加固。
 - Hibernate 使用 `validate`；SQL init 和 Spring Session 自动建表均关闭。
 - 外部邮件服务默认地址：`http://localhost:8095`。
 - UniAuth 主应用只实现邮件服务 HTTP 适配器；真实邮箱注册验证和密码重置需要独立
@@ -78,7 +81,7 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - 参考邮件服务的 `dev`、`test`、`prod` profile 只接受 PostgreSQL datasource；
   H2 不再是测试后端。默认 `EMAIL_DATABASE_LAYOUT=dedicated` 要求邮件专用数据库；
   `shared-uniauth` 是显式 opt-in，可在获准的空 `public` schema 先迁移邮件 V1-V5，
-  也可加入完整 UniAuth V1-V7 peer。两种启动顺序都使用独立 history；后启动一侧
+  也可加入完整 UniAuth V1-V8 peer。两种启动顺序都使用独立 history；后启动一侧
   验证完整 peer 后创建自己的 V0 baseline，两侧通过同一 PostgreSQL advisory lock
   串行化首次 baseline/migrate。Java guard 会在 Flyway 前拒绝非 PostgreSQL、未知
   layout、受保护数据库和不完整 peer。存在 peer relation 却缺少 peer history 属于
@@ -241,7 +244,7 @@ ApplicationContext、PostgreSQL 和真实业务 Bean，只 mock 最外层 `Email
 参考邮件服务的 schema 由其自己的 Flyway V1/V2/V3/V4/V5 管理，history table 是
 `email_service_flyway_schema_history`；所有 profile 使用 Hibernate `validate`，
 SQL init 关闭。默认使用独立 PostgreSQL；显式 `shared-uniauth` 允许在获准的空
-`public` schema 先启动任一侧，或与完整 UniAuth V1-V7 peer 共存，且不得连接
+`public` schema 先启动任一侧，或与完整 UniAuth V1-V8 peer 共存，且不得连接
 `blacksheep*` 或其他未获准共享库。后启动一侧只有在对端 history/核心 relation
 完整、本侧 relation 不存在且对端没有失败 migration 时，才在共享 advisory lock
 内创建 baseline V0；全局
@@ -317,8 +320,10 @@ email identity、HMAC challenge、delivery/usage 状态、transactional outbox�
 认证限流和 append-only security event。V7 增加用户 token security version 和
 refresh token family/generation/revoke 状态，并用 `sid`、`generation`、`ver`、
 `auth_time` 将签发 token 绑定到持久 session。V5 发布时会失效所有旧的未消费 Web3
-challenge；V6 no-return cutover 会失效旧明文邮箱 challenge。后续结构修复必须新增
-V8+，不得修改已经发布或 baseline 的 V1/V2/V3/V4/V5/V6/V7 checksum。
+challenge；V6 no-return cutover 会失效旧明文邮箱 challenge。V8 增加一次性
+OAuth2 binding intent、Web3 challenge handle 和 source/global capacity counter，
+并收紧 OAuth/Web3 唯一冲突与 typed API 契约。后续结构修复必须新增 V9+，不得修改
+已经发布或 baseline 的 V1/V2/V3/V4/V5/V6/V7/V8 checksum。
 
 修改 entity/schema 时至少核对：
 
@@ -381,10 +386,10 @@ PYTHON_BIN=python3 scripts/test-email-login-browser-e2e.sh
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-当前候选基线（2026-08-09 F2 与 post-F1 邮件 V5 合并树；合并后的完整门禁已重跑）：
+当前候选基线（2026-08-09 F3 与邮件 V5 合并树；完整门禁已重跑）：
 
-- 当前根统一门禁：Maven 219 tests、shared-schema process E2E 4/4、
-  HTTP 16/16、Flyway baseline guard 16/16、Mock Playwright 28/28、
+- 当前根统一门禁：Maven 222 tests、shared-schema process E2E 4/4、
+  HTTP 16/16、Flyway baseline guard 16/16、Mock Playwright 29/29、
   生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 20/20、邮件 REST stub
   contract 12/12；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
   patch hygiene 均通过；完整 `scripts/verify.sh` 12/12 以
@@ -481,9 +486,15 @@ PYTHON_BIN=python3 scripts/verify.sh
   完整根 Maven 219/219、shared-schema 4/4、HTTP/Flyway 16/16、Mock Playwright
   28/28、生产 Playwright 2/2、真实浏览器 1/1、Python 12/12 + 20/20，统一门禁
   `12/12` 通过。
+- 2026-08-09 F3 OAuth2/Web3/canonical API 增量：UniAuth V8、显式 OAuth2 bind
+  intent、provider profile 信任边界、opaque Web3 challenge handle、source/global
+  capacity CAS、recent-auth、typed login-method API 和真实 primary provider 已实现。
+  完整根 Maven 222/222、邮件 Maven 154/154、shared-schema 4/4、HTTP/Flyway
+  16/16、Mock Playwright 29/29、生产 Playwright 2/2、真实浏览器 1/1、Python
+  12/12 + 20/20，统一门禁 `12/12` 通过。
 - Shell HTTP E2E：16/16；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
 - Flyway baseline guard：16/16。
-- Mock Playwright：28/28；生产 Playwright：2/2；真实邮箱登录浏览器 E2E：1/1。
+- Mock Playwright：29/29；生产 Playwright：2/2；真实邮箱登录浏览器 E2E：1/1。
 - Python 资源服务器：20/20；邮件 REST stub contract：12/12。
 - 前端 ESLint、TypeScript 和生产构建通过。
 - 最终加固 F1-F5 每批只执行固定范围验收和完整门禁，不分别执行连续三轮无修改检查；
@@ -622,8 +633,8 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 每次状态汇报都给出诚实的粗略完成百分比；发现遗漏或风险时允许回退，但必须说明
   当前固定范围和下一步如何继续收敛。
 - 加固阶段不再开放循环。当前范围以
-  `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md` 冻结的 F1-F5 为准；F1-F2 已完成，
-  F3 是下一批，完成五批及统一阶段末检查后必须退出，不得自动创建第六批。
+  `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md` 冻结的 F1-F5 为准；F1-F3 已完成，
+  F4 正在执行，完成五批及统一阶段末检查后必须退出，不得自动创建第六批。
 - 只有数据丢失、认证/授权绕过、凭据泄露、门禁伪成功或当前批直接引入的实质回归
   可以并入正在执行的固定批次。其他发现进入加固后的普通 backlog，不能借“继续探索”
   延长阶段。
