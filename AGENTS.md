@@ -14,7 +14,8 @@
   Python API Bearer 访问和独立服务脚本。
 - `docs/drafts/README.md`: 既有计划、调查和历史记录索引。
 - `docs/drafts/DOCUMENTATION_PLAN.md`: 文档体系建设计划。
-- `docs/drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md`: 下一轮测试优先实施切片。
+- `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md`: 已冻结的五批最终加固收尾范围和退出条件。
+- `docs/drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md`: 历史批次执行记录；不再驱动开放循环。
 - `docs/archive/database/README.md`: 旧 SQL 的历史归档和当前替代路径。
 - `reference/email-service/README.md`: 外部邮件 REST 服务的独立参考实现、Flyway 和 E2E。
 
@@ -558,6 +559,22 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 邮件同步接受失败和 challenge 消费并发已经失败关闭/原子化；外部接受后本地事务
   失败、异步 delivery 失败、单一 pending challenge、canonical email 和可靠
   outbox/补偿状态机仍未解决。
+- 邮箱验证码当前仍以低熵明文写入 `email_verification_codes.verification_code`；
+  注册 challenge 的 JSON metadata 在消费或清理前还保存 password hash。最终 F1
+  必须改为带服务端密钥的验证码摘要、最小类型化 pending 数据和有界保留，不能只做
+  无密钥快速 hash。
+- 公开 `GET /api/auth/email/status/{email}` 会返回 pending registration 状态；
+  `POST /api/auth/check-verification-code` 当前校验失败不会增加 retry。两者都是邮箱/
+  验证码 oracle，F1 必须在保持注册 UX 的前提下改为 opaque challenge 或唯一原子
+  verify 路径，并纳入统一限流与枚举防护。
+- 非邮箱用户名注册当前仍会把请求中的未验证 email 写入全局唯一 `users.email`，
+  OAuth/Web3 又会生成内部合成地址；未验证/合成值可能阻塞真实邮箱归属或被误当作
+  verified identity。F1/F3 必须明确 verified contact 与内部占位值的状态和约束，
+  坏数据只做 preflight，不自动合并账户。
+- 新密码策略当前不一致：普通注册 DTO 没有服务端约束，add-local 只检查 6 位，重置
+  密码检查 8..128；登录使用 `@RequestParam`，因此也可能从 query 接受 password，
+  且没有多实例一致的失败节流。F1 必须统一所有密码写入入口、禁止 URL 凭据并增加
+  有界防爆破，不通过永久账户锁定制造拒绝服务。
 - Web3 V5 已严格绑定服务端保存的完整 SIWE message；nonce 生成使用 PostgreSQL
   原子 upsert，验证使用带 message/有效期条件的原子消费，旧 challenge 在迁移时失效。
 - 登录方式并发 bind、set-primary、delete/delete 和 delete/set-primary 已由数据库
@@ -566,6 +583,14 @@ PYTHON_BIN=python3 scripts/verify.sh
 - live 端口已统一到后端 `8081`、Python `5002`；OAuth2 callback、主前端 URL 和
   UniAuth CORS allowlist 已外部化，Web3 domain/URI、JWT issuer 与内存
   Authorization Server client redirect 等剩余部署配置仍需收敛。
+- Spring Authorization Server 当前仍注册固定 `auth-client`、`{noop}auth-secret`、
+  localhost redirect、password grant 和无 PKCE 客户端。自定义 JWT 才是当前主要
+  业务签发路径；F4 必须默认关闭未明确启用的 Authorization Server 客户端能力，或将
+  其完整配置、grant 和凭据失败关闭，不能把当前固定值带入生产。
+- 自定义 `/oauth2/introspect` 和 `/oauth2/api/introspect` 当前无需客户端鉴权，并兼容
+  query/form/raw body 多种 token 输入。F2 必须改成受鉴权、严格单值的服务到服务
+  endpoint，禁止 query token、浏览器 Cookie 和重复凭据，不能把当前公开接口用于实时
+  撤销判断。
 
 这些条目是工作提示，不代替针对当前任务的代码阅读和测试。
 
@@ -574,14 +599,15 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 多步骤任务持续使用 plan 工具；关键提醒必须写入本文件或任务实施文档。
 - 每次状态汇报都给出诚实的粗略完成百分比；发现遗漏或风险时允许回退，但必须说明
   当前固定范围和下一步如何继续收敛。
-- 剩余既有功能加固按约五个中等规模批次收敛；每轮规划应有足以推动总体进度约
-  `2%` 到 `3%` 的固定范围。百分比是诚实的粗略评估，不是通过增加零碎测试数量
-  自动获得的积分；发现新风险时允许回退，但每轮都必须明显减少最终剩余风险。
-- 加固工作采用持续循环：固定范围规划 -> PostgreSQL 集成测试与夹具 ->
-  Shell/Flyway E2E -> Playwright/Python/质量工具 -> 完整硬门槛 -> 连续三轮无修改
-  检查 -> 文档更新与提交推送。每轮推送后立即重新充分探索并规划下一轮，不把单个
-  batch 完成当作停止点；只有用户明确要求暂停，或全面复查确认已无任何有意义的
-  加固工作时才能停止。
+- 加固阶段不再开放循环。剩余范围以
+  `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md` 冻结的 F1-F5 为准；完成五批后必须退出
+  加固阶段，不得自动创建第六批。
+- 只有数据丢失、认证/授权绕过、凭据泄露、门禁伪成功或当前批直接引入的实质回归
+  可以并入正在执行的固定批次。其他发现进入加固后的普通 backlog，不能借“继续探索”
+  延长阶段。
+- 每批仍执行：固定范围 -> PostgreSQL 集成测试与夹具 -> Shell/Flyway E2E ->
+  Playwright/Python/供应链工具 -> 完整硬门槛 -> 连续三轮无修改检查 -> 文档更新与
+  提交推送。百分比按最终退出范围诚实评估，不通过零碎条目虚增。
 - 当前总原则是先全面加固已有功能，不增加新功能。
 - 实施前先建立集成测试、Shell E2E 和 Playwright 保护；测试必须覆盖本次修改。
 - 基础门禁通过后执行连续三轮无修改检查；任何实质修改都将计数归零。

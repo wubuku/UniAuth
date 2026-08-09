@@ -15,8 +15,9 @@
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
 | [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md) | Live | 真实 PostgreSQL/UniAuth/Vite/Python/邮件 stub 的注册、登录、回跳与跨域 Bearer 复现 |
-| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | In progress | H0.1-H0.3、H1.1-H1.3、H1.4 Batch B1/B2a/B2b 已验证；其余 H1.4-H8 待实施 |
-| [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Draft | Web3/SIWE challenge 加固切片已完成；继续按测试优先切片冻结下一轮 |
+| [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；剩余范围固定为 F1-F5，完成后退出加固阶段 |
+| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 保存完整风险背景；当前执行边界由最终收尾计划控制 |
+| [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Historical | 已完成批次与证据记录；不再驱动开放循环 |
 
 ## 当前关键结论
 
@@ -62,8 +63,8 @@
 |------|------|------|
 | [前后端契约](FRONTEND_BACKEND_CONTRACT.md) | Needs verification | 大型设计/契约材料，代码示例和端口存在漂移 |
 | [GitHub OAuth2 集成规划](GitHub-OAuth2-Integration-Planning.md) | Historical | GitHub 集成前的规划，功能现已部分落地 |
-| [草稿与历史索引](drafts/README.md) | Live index | 23 份计划、调查、实施记录的逐项分类 |
-| [文档体系计划](drafts/DOCUMENTATION_PLAN.md) | Draft | 本轮文档整理范围、顺序和验收标准 |
+| [草稿与历史索引](drafts/README.md) | Live | 24 份计划、调查、实施记录的逐项分类 |
+| [文档体系计划](drafts/DOCUMENTATION_PLAN.md) | Live | 文档体系范围、维护规则和持续校准状态 |
 
 ## Perplexity 历史资料
 

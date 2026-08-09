@@ -649,4 +649,5 @@ HTTP E2E、Flyway baseline guard、frontend lint/type/build/Mock Playwright、�
 - [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md)
 - [历史异构资源服务器验证记录](../VERIFICATION_CHECKLIST.md)
 - [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md)
-- [下一轮加固实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md)
+- [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md)
+- [历史下一轮加固实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md)

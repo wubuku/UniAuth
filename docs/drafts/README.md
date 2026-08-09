@@ -1,7 +1,7 @@
 # 草稿、计划与历史材料索引
 
-> 状态：Live index。本目录中的文件全部保留原路径。
-> 分类基于 2026-08-08 的当前代码和配置，
+> 状态：Live。本目录中的文件全部保留原路径。
+> 分类基于 2026-08-09 的当前代码和配置，
 > 不代表文件名中的 `COMPLETE`、勾选项或正文中的“已完成”仍然成立。
 > 当前运行事实请先阅读 [配置基线](../CONFIGURATION.md) 和
 > [验证指南](../VERIFICATION.md)。
@@ -10,6 +10,7 @@
 
 | 状态 | 含义 |
 |------|------|
+| Live | 当前持续维护的索引或计划 |
 | Draft | 仍可用于指导后续决策的计划 |
 | Reference | 有参考价值，但使用前应核对当前实现 |
 | Historical | 记录过去的方案、实施过程或验证结果 |
@@ -19,9 +20,10 @@
 
 | 文档 | 状态 | 用途 |
 |------|------|------|
-| [DOCUMENTATION_PLAN.md](DOCUMENTATION_PLAN.md) | In progress | 文档体系范围、维护规则和当前校准状态 |
-| [HARDENING_IMPLEMENTATION_PLAN.md](HARDENING_IMPLEMENTATION_PLAN.md) | In progress | 总加固路线图；H0.1-H0.3、H1.1-H1.3 已验证 |
-| [NEXT_HARDENING_IMPLEMENTATION_PLAN.md](NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Draft | 下一轮测试优先实施切片和验收矩阵 |
+| [DOCUMENTATION_PLAN.md](DOCUMENTATION_PLAN.md) | Live | 文档体系范围、维护规则和当前校准状态 |
+| [FINAL_HARDENING_EXIT_PLAN.md](FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；五个最终收尾批次、范围控制和加固退出条件 |
+| [HARDENING_IMPLEMENTATION_PLAN.md](HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 完整风险路线图；当前实施范围由最终收尾计划控制 |
+| [NEXT_HARDENING_IMPLEMENTATION_PLAN.md](NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Historical | 既有测试优先批次和验收记录；不再驱动开放循环 |
 
 ## 邮箱与密码
 

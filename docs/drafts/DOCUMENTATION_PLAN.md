@@ -1,6 +1,6 @@
 # UniAuth 文档体系建设计划
 
-> 状态：Live maintenance；首版体系已建立，随加固 batch 持续校准
+> 状态：Live；首版体系已建立，随加固 batch 持续校准
 > 首版基线：2026-08-07；最近校准：2026-08-09
 > 原则：已有文档不移动；新文档链接已有内容；当前事实以代码、配置和可执行验证为准。
 
@@ -15,14 +15,14 @@
 
 ## 当前库存
 
-当前审计范围内共有 49 份项目 Markdown（不含技能包）：
+当前审计范围内共有 51 份项目 Markdown（不含技能包）：
 
 | 区域 | 数量 | 当前角色 |
 |------|------|----------|
 | 根目录及 `.gemini/` | 4 | 项目入口、代理上下文、历史验证记录 |
-| `docs/` 顶层 | 7 | live guides、导航和大型历史契约 |
+| `docs/` 顶层 | 8 | live guides、导航和大型历史契约 |
 | `docs/Perplexity/` | 8 | 2026 年 1 月生成的架构与实现参考，整体按历史材料处理 |
-| `docs/drafts/` | 24 | 规划、调查、集成指南、进度记录，状态差异较大 |
+| `docs/drafts/` | 25 | 规划、调查、集成指南、进度记录，状态差异较大 |
 | `docs/archive/` | 2 | database/legacy SQL 归档索引 |
 | 组件 README/AGENTS | 4 | 前端、Python 与邮件服务参考实现的组件入口 |
 
@@ -76,7 +76,7 @@
 | P0 | 为历史“已完成/生产就绪”声明增加明确状态说明 | 已完成 |
 | P1 | 更新根 README、AGENTS 和组件文档入口 | 已完成 |
 | P1 | 编写不增加新功能的全面加固实施规划 | 已完成首版；持续按实施状态校准 |
-| P1 | 编写下一轮测试优先实施切片 | 已完成；随 batch 状态持续更新 |
+| P1 | 冻结最终加固收尾范围和退出条件 | 已完成；当前入口为 `FINAL_HARDENING_EXIT_PLAN.md` |
 | P1 | 修复新增/修改文档的相对链接 | 已纳入统一门禁 |
 | P1 | 说明邮箱认证对独立邮件服务的依赖、契约和验证边界 | 已完成 |
 | P1 | 纳入独立邮件服务参考实现并记录 Flyway、配置和 E2E | 已完成 |
@@ -175,8 +175,9 @@
   复核与 token transport、domain allowlist 等相邻边界的交互。
 - `blacksheep_dev` 只读 baseline rehearsal 已通过，但 baseline apply 尚未执行。
 
-这些问题的总路线图见 `HARDENING_IMPLEMENTATION_PLAN.md`，下一轮实际顺序见
-`NEXT_HARDENING_IMPLEMENTATION_PLAN.md`。
+这些问题的总路线图见 `HARDENING_IMPLEMENTATION_PLAN.md`，剩余固定范围和退出顺序见
+`FINAL_HARDENING_EXIT_PLAN.md`；`NEXT_HARDENING_IMPLEMENTATION_PLAN.md` 只保留
+历史批次和验证记录。
 
 ## 验证计划
 
@@ -199,7 +200,7 @@ git diff --check
 
 ## 延后事项
 
-- 不批量重写 `docs/drafts/` 中的 24 个文件和 8 份 Perplexity 历史材料。
+- 不批量重写 `docs/drafts/` 中的 25 个文件和 8 份 Perplexity 历史材料。
 - 不在文档整理阶段改变认证架构、数据库 schema 或 token 行为。
 - 不把历史测试记录提升为当前发布证明。
 - 详细 API 文档随下一阶段加固实现和测试补齐后再校准。

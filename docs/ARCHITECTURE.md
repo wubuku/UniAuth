@@ -282,7 +282,8 @@ access token 默认 1 小时，refresh token 默认 7 天。
 ## 相关历史材料
 
 - [前后端契约](FRONTEND_BACKEND_CONTRACT.md)
-- [下一轮加固实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md)
+- [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md)
+- [历史下一轮加固实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md)
 - [多登录方式设计与实施记录](drafts/README.md#多登录方式)
 - [异构资源服务器材料](drafts/README.md#异构资源服务器与微服务)
 - [Perplexity 历史架构](Perplexity/01-Architecture-Design.md)

@@ -1,6 +1,8 @@
 # UniAuth 下一轮加固实施计划
 
-> 状态：Batch A、Batch B1、Batch B2a、Batch B2b、邮件服务边界、邮箱 challenge
+> 状态：Historical；后续范围由
+> [加固阶段最终收尾计划](FINAL_HARDENING_EXIT_PLAN.md) 冻结，不再按本文开启新批次
+> 历史状态：Batch A、Batch B1、Batch B2a、Batch B2b、邮件服务边界、邮箱 challenge
 > 投递接受/原子消费、邮件 API 敏感响应、API key 单值鉴权、邮件 Flyway
 > schema-owner 覆盖保护、Flyway migration discovery/naming fail-closed、邮件队列
 > 生命周期行形状、Batch C
@@ -1363,7 +1365,11 @@ while counter < 3:
 - 连续三轮无修改检查通过。
 - 提交中不含 `.env`、`.local/`、数据库导出、私钥、`target/`、静态构建产物或测试报告。
 
-## 8. 持续加固循环
+## 8. 历史收敛循环
+
+> 本节记录 2026-08-08 至 2026-08-09 使用过的收敛方式。它已被
+> [加固阶段最终收尾计划](FINAL_HARDENING_EXIT_PLAN.md) 取代，后续 agent 不得执行
+> “完成一批后自动继续重新探索”的开放循环。
 
 ### 8.1 五轮收敛预算
 
@@ -1385,7 +1391,7 @@ while counter < 3:
 
 ### 8.2 每轮固定流程
 
-单个 batch 的完成不是停止条件。每轮固定执行：
+历史上单个 batch 完成后执行：
 
 1. 重新充分探索，形成范围固定、无新功能的下一轮计划。
 2. 扩充 PostgreSQL 后端集成测试与必要夹具。
@@ -1393,15 +1399,15 @@ while counter < 3:
 4. 扩充 Playwright、Python 契约测试、ESLint 和统一验证入口。
 5. 通过完整编译、测试、构建和 E2E 硬门槛。
 6. 连续完成三轮无修改检查，更新文档并提交推送。
-7. 立即回到第 1 步。
+7. 回到第 1 步。
 
-只有用户明确要求暂停，或经过全面代码、配置、文档和测试复查后确认已不存在任何
-有意义的加固工作，才允许结束循环。发现需要新增用户功能的事项只能记录到计划，
-不能借持续加固之名实施。
+该循环已经终止。当前剩余工作固定为 F1-F5，完成后退出加固阶段；非退出阻断项进入
+普通 backlog，不再新增 hardening batch。
 
 ## 相关文档
 
 - [全面加固实施规划](HARDENING_IMPLEMENTATION_PLAN.md)
+- [加固阶段最终收尾计划](FINAL_HARDENING_EXIT_PLAN.md)
 - [验证指南](../VERIFICATION.md)
 - [配置基线](../CONFIGURATION.md)
 - [当前架构](../ARCHITECTURE.md)

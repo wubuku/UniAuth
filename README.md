@@ -9,6 +9,8 @@
 > [配置基线](docs/CONFIGURATION.md)、[开发指南](docs/DEVELOPMENT.md) 和
 > [验证指南](docs/VERIFICATION.md)。真实邮箱注册、登录、资源回跳和跨域 Bearer
 > 验证见[邮箱登录浏览器 E2E](docs/EMAIL_LOGIN_BROWSER_E2E.md)。
+> 剩余加固范围以[加固阶段最终收尾计划](docs/drafts/FINAL_HARDENING_EXIT_PLAN.md)
+> 冻结的 F1-F5 为准，完成后退出加固阶段，不再创建第六批。
 > 下文保留了较多设计目标、部署示例和历史说明，包括已经退役的 SQLite 路径。
 > 当前操作只使用上述 live guides；不要执行下文的 SQLite、手工 schema init 或旧域名示例。
 
@@ -112,7 +114,7 @@ HttpOnly Cookie；该演示 transport 的生产安全边界见
 
 ### 设计目标
 
-本项目的设计目标包括多种 OAuth2 登录方式的统一接入、JWT 令牌管理、会话持久化和跨语言资源服务器验证。当前代码同时包含 Spring Authorization Server 配置与自定义 JWT 签发流程，两者尚未形成经完整测试证明的统一授权服务器实现；安全性、可扩展性和多实例行为仍需按 [加固实施规划](docs/drafts/HARDENING_IMPLEMENTATION_PLAN.md) 验证。
+本项目的设计目标包括多种 OAuth2 登录方式的统一接入、JWT 令牌管理、会话持久化和跨语言资源服务器验证。当前代码同时包含 Spring Authorization Server 配置与自定义 JWT 签发流程，两者尚未形成经完整测试证明的统一授权服务器实现；剩余加固范围按[加固阶段最终收尾计划](docs/drafts/FINAL_HARDENING_EXIT_PLAN.md)执行，完整风险背景保留在[加固实施规划](docs/drafts/HARDENING_IMPLEMENTATION_PLAN.md)中。
 
 ### 适用场景
 
