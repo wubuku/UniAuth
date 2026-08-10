@@ -7,6 +7,7 @@ import io.jsonwebtoken.SignatureAlgorithm;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2Error;
@@ -120,12 +121,20 @@ public class JwtTokenService {
         }
     }
 
-    public JwtTokenService(@Value("${jwt.rsa.key-file}") String rsaKeyFilePath) {
+    public JwtTokenService(String rsaKeyFilePath) {
+        this(rsaKeyFilePath, true);
+    }
+
+    @Autowired
+    public JwtTokenService(
+            @Value("${jwt.rsa.key-file}") String rsaKeyFilePath,
+            @Value("${jwt.rsa.generate-if-missing:true}")
+            boolean generateIfMissing) {
         if (rsaKeyFilePath == null || rsaKeyFilePath.isBlank()) {
             throw new IllegalArgumentException("jwt.rsa.key-file must be configured");
         }
         this.rsaKeyFile = Path.of(rsaKeyFilePath).toAbsolutePath().normalize();
-        KeyPair keyPair = loadOrGenerateKeyPair(rsaKeyFile);
+        KeyPair keyPair = loadOrGenerateKeyPair(rsaKeyFile, generateIfMissing);
         this.privateKey = keyPair.getPrivate();
         this.publicKey = keyPair.getPublic();
     }
@@ -171,7 +180,9 @@ public class JwtTokenService {
     /**
      * 加载或生成 RSA 密钥对
      */
-    private KeyPair loadOrGenerateKeyPair(Path keyFile) {
+    private KeyPair loadOrGenerateKeyPair(
+            Path keyFile,
+            boolean generateIfMissing) {
         if (Files.exists(keyFile)) {
             try {
                 requirePrivateKeyPermissions(keyFile);
@@ -179,6 +190,11 @@ public class JwtTokenService {
             } catch (Exception e) {
                 throw new IllegalStateException("Configured RSA key file could not be loaded", e);
             }
+        }
+        if (!generateIfMissing) {
+            throw new IllegalStateException(
+                    "Configured RSA key file does not exist and generation is disabled"
+            );
         }
 
         try {

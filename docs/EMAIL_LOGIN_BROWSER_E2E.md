@@ -115,14 +115,15 @@ Playwright 调用。
 - Java 17+、Maven。
 - Node.js/npm，且 `frontend/node_modules` 已安装。
 - Chrome，与现有 Playwright 配置一致。
-- 安装了 `python-resource-server/requirements.txt` 的 Python。
+- 从 `python-resource-server/requirements.lock` 严格安装的隔离 Python。
 
 推荐在仓库外创建隔离虚拟环境：
 
 ```bash
 python3 -m venv /tmp/uniauth-resource-venv
 /tmp/uniauth-resource-venv/bin/pip install \
-  -r python-resource-server/requirements.txt
+  --require-hashes \
+  -r python-resource-server/requirements.lock
 PYTHON_BIN=/tmp/uniauth-resource-venv/bin/python \
   scripts/test-email-login-browser-e2e.sh
 ```

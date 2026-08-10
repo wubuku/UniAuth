@@ -14,8 +14,9 @@
 | [配置基线](CONFIGURATION.md) | Live | 端口、profile、数据库、外部服务和密钥 |
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
+| [运维基线](OPERATIONS.md) | Live | 生产 guard、readiness、备份恢复、紧急密钥轮换和供应链门禁 |
 | [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md) | Live | 真实 PostgreSQL/UniAuth/Vite/Python/邮件 stub 的注册、登录、回跳与跨域 Bearer 复现 |
-| [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；F1-F3 已完成，F4 正在执行，F5 待执行 |
+| [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；F1-F5 已完成，阶段末三轮检查待执行 |
 | [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 保存完整风险背景；当前执行边界由最终收尾计划控制 |
 | [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Historical | 已完成批次与证据记录；不再驱动开放循环 |
 
@@ -24,7 +25,8 @@
 - 默认不激活 Spring profile，后端端口是 `8081`。
 - 演示数据默认关闭且不再全表清理；显式启用仍只允许 test/demo 命名的 disposable 数据库。
 - Vite 使用 `5173`，Python 资源服务器代码实际使用 `5002`。
-- `dev`、`test`、`prod` 只支持显式 PostgreSQL 16；SQLite runtime 已退役。
+- `dev`、`test`、`prod` 只支持显式 PostgreSQL 16；自动化固定
+  `postgres:16.13`，SQLite runtime 已退役。
 - Flyway 已接管 schema：V1 来自实际 dev PostgreSQL 的 8 表结构，V2 加固登录方式
   行形状/primary 不变量，V3 增加登录方式集合 revision CAS，V4 对齐其余既有实体
   约束并补齐 email repository 索引，V5 将 Web3 nonce 绑定到服务端完整 SIWE message
@@ -47,8 +49,12 @@
   队列仍保留实际 HTML。
 - 已建立 PostgreSQL Java 集成测试、真实 HTTP Shell E2E、Mock Playwright 和
   Python 离线 JWT/JWKS/邮件 stub 契约测试；另有真实五服务邮箱登录 Playwright
-  套件，验证资源域无认证 Cookie 且跨 origin 请求使用 Bearer header。ESLint 与
-  统一验证入口已纳入门禁。
+  套件，验证资源域无认证 Cookie 且跨 origin 请求使用 Bearer header。ESLint、
+  Maven/npm/Python 供应链审计、候选构建敏感扫描和 15 阶段统一验证入口已纳入门禁；
+  2026-08-09 的 F5 完整门禁已 15/15 通过。
+- 生产配置要求外部 owner-only RSA key、非 placeholder HTTPS/secret/provider
+  配置，公开 readiness 不泄露组件细节；伪造 forwarded header 不改变 redirect、
+  Secure Cookie 或限流来源。紧急单 key rotation 会立即使旧 token 失效并要求重认证。
 - `blacksheep_dev` 已通过只读 baseline rehearsal，但尚未执行 baseline apply。
 
 详细证据和操作限制见 [配置基线](CONFIGURATION.md) 与

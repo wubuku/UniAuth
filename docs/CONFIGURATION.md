@@ -1,7 +1,7 @@
 # UniAuth 配置基线
 
 > 状态：Live
-> 核验日期：2026-08-09
+> 核验日期：2026-08-10
 > 重要：不要在未确认数据库目标和数据可丢弃前启动 Spring 应用。
 
 ## 当前默认拓扑
@@ -11,11 +11,27 @@
 | Spring Boot | `http://localhost:8081` | `application.yml` |
 | Vite | `http://localhost:5173` | `frontend/vite.config.ts` |
 | Python 资源服务器 | `http://localhost:5002` | `python-resource-server/app.py` |
-| PostgreSQL | `localhost:5432` | `POSTGRES_*` 环境变量 |
+| PostgreSQL | `localhost:5432` | `POSTGRES_*` 环境变量；自动化固定 16.13 |
 | 邮件服务 | `http://localhost:8095` | `application.yml` |
 
 `8080`、`8082`、`5001` 和历史隧道域名仍散落在旧文档、脚本或部署示例中。
 除非文件明确覆盖端口，否则它们不是当前默认值。
+
+## OAuth provider HTTP 边界
+
+OAuth authorization-code token 交换、Spring 标准 provider user-info 请求以及
+GitHub/X 的补充 profile 请求都使用 `app.oauth2.http` 下的显式超时：
+
+| 属性 | 环境变量 | 默认值 | 有效范围 |
+|------|----------|--------|----------|
+| `connect-timeout-ms` | `OAUTH2_HTTP_CONNECT_TIMEOUT_MS` | `5000` | `100..60000` |
+| `read-timeout-ms` | `OAUTH2_HTTP_READ_TIMEOUT_MS` | `10000` | `100..60000` |
+
+token endpoint 使用 OAuth2 form/JSON 专用转换器和错误处理器，但与 user-info client
+共享上述 timeout 边界。超时配置不合法时 ApplicationContext 启动失败；客户端不对
+authorization code、provider token 或 user-info 请求执行盲重试。生产部署仍必须
+使用 provider 的 HTTPS endpoint 和 JVM 信任链校验，测试只通过 loopback 慢响应及
+合成成功响应验证连接、读取和解析契约。
 
 ## 邮件服务依赖
 
@@ -378,8 +394,9 @@ origin 必须是无 path/query/fragment 的精确 origin。OAuth2 成功处理�
 错误 scheme、空/越界 port 或控制字符形式的 `state.redirect_uri` 会回退到上述登录页。
 授权请求不再把 `Referer` 保存为 Session 中的前端来源。
 
-`app.web3.domain`、JWT issuer 和 `AuthorizationServerConfig` 中的内存 client
-redirect 仍包含部署假设，不应与上述 provider callback 配置混为一谈。
+`app.web3.domain`、JWT issuer/audience/kid 与 provider callback 是独立部署配置，
+prod 必须全部显式提供。仓库不再注册 Spring Authorization Server 内存 client；
+未支持的 authorize/token/revoke endpoint deny all。
 
 ## CORS
 
@@ -406,9 +423,9 @@ Python 资源服务器是独立 bearer-only 服务，在 `python-resource-server
 | 算法 | RS256 |
 | key file 配置 | `${JWT_RSA_KEY_FILE:.local/uniauth/rsa-keys.ser}` |
 | 实际构造加载 | 构造阶段读取 `jwt.rsa.key-file` |
-| issuer | `https://auth.example.com` |
-| audience | `resource-server` |
-| key id | `key-1` |
+| issuer | `${JWT_ISSUER:https://auth.example.com}` |
+| audience | `${JWT_AUDIENCE:resource-server}` |
+| key id | `${JWT_KID:key-1}` |
 
 敏感文件和变量：
 
@@ -419,7 +436,33 @@ Python 资源服务器是独立 bearer-only 服务，在 `python-resource-server
 - PostgreSQL password
 
 `.env`、数据库、`jwt-secret.key` 和本地 RSA key 被忽略。历史提交中的根目录
-`rsa-keys.ser` 已暴露，不能继续用于真实环境；生产部署必须显式配置外部 key 路径并轮换。
+`rsa-keys.ser` 已暴露，不能继续用于真实环境；生产部署必须显式配置仓库外绝对 key
+路径、关闭自动生成并轮换。当前只支持一个 active key/kid，紧急切换会立即拒绝旧
+token 并要求重新认证；不支持双 key 无感 rollover。
+
+## 生产配置与 HTTP 边界
+
+`prod` profile 的启动 guard 要求：
+
+- frontend、CORS、邮件服务、JWT issuer 和 provider callback 使用非本地 HTTPS；
+  Web3 使用非保留 host。
+- JWT audience/kid、introspection client、验证码 HMAC key id 和 provider client
+  使用非 placeholder 标识。
+- 数据库、限流、introspection、邮件服务和验证码 HMAC secret 至少 32 字符且互不相同；
+  provider client secret 至少 12 字符。
+- `JWT_RSA_KEY_FILE` 是工作目录外的绝对路径，文件已存在且为 owner-only；
+  `jwt.rsa.generate-if-missing=false`。
+- diagnostics/access-token JSON 暴露、Swagger/OpenAPI 均关闭。
+- `server.forward-headers-strategy=none`、header 上限 `16KB`、form/swallow 上限
+  `1MB`。
+
+应用不信任客户端提交的 `Forwarded`、`X-Forwarded-*` 或 `X-Real-IP`。反向代理必须
+清除外部同名 header，并通过受控网络连接后端；canonical redirect 和 Secure Cookie
+由显式生产配置决定。相关部署/恢复流程见[运维基线](OPERATIONS.md)。
+
+公开健康探针是 `/actuator/health/liveness` 和
+`/actuator/health/readiness`。readiness 包含数据库、Flyway 和 signing key/kid，
+但响应不公开组件、JDBC URL、异常或 key 信息。
 
 ## 前端构建
 

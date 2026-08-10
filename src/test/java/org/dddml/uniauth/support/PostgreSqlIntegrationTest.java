@@ -21,10 +21,12 @@ public abstract class PostgreSqlIntegrationTest {
 
     @Container
     protected static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>("postgres:16")
+            new PostgreSQLContainer<>("postgres:16.13")
                     .withDatabaseName("uniauth_test")
                     .withUsername("uniauth")
-                    .withPassword("uniauth-test-password");
+                    .withPassword(
+                            "uniauth-test-password-32-bytes-minimum"
+                    );
 
     @DynamicPropertySource
     static void integrationProperties(DynamicPropertyRegistry registry) {
@@ -76,5 +78,9 @@ public abstract class PostgreSqlIntegrationTest {
         } catch (IOException e) {
             throw new ExceptionInInitializerError(e);
         }
+    }
+
+    protected static Path integrationTestDirectory() {
+        return TEST_DIRECTORY;
     }
 }

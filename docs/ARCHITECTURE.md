@@ -183,7 +183,7 @@ Python API 的验证步骤：
 | Order | 配置 | Matcher | 当前行为 |
 |-------|------|---------|----------|
 | 0 | `AuthApiConfig` | `/api/auth/**` | method/path 公开 allowlist；其余 `denyAll`；CSRF 禁用 |
-| 1 | `AuthorizationServerConfig` | 指定 `/oauth2/*` 端点 | 全部 `permitAll`，CSRF 禁用 |
+| 1 | `AuthorizationServerConfig` | JWKS、strict introspection、未支持 AS endpoint | JWKS/introspection 进入自定义边界；authorize/token/revoke deny all |
 | 2 | `ResourceServerConfig` | `/api/**` | JWT Resource Server；除认证 API 外默认需要认证 |
 | 3 | `SecurityConfig` | 其余请求 | OAuth2 登录、SPA/Web、CSRF 和授权规则 |
 
@@ -240,9 +240,9 @@ access token 使用 RS256，当前默认：
 | `generation` | 当前 refresh generation |
 | `ver` | 用户 token security version |
 | `auth_time` | 初始真实认证时间；refresh 不推进 |
-| issuer | `https://auth.example.com` |
-| audience | `resource-server`（access token） |
-| `kid` | `key-1` |
+| issuer | `${JWT_ISSUER:https://auth.example.com}` |
+| audience | `${JWT_AUDIENCE:resource-server}`（access token） |
+| `kid` | `${JWT_KID:key-1}` |
 
 access token 默认 1 小时，refresh token 默认 7 天。
 同一 pair 从一个 `TokenSessionSnapshot` 签发并共享 `sid`、generation、`ver` 和
@@ -254,6 +254,8 @@ introspection 会查询持久 session 状态；纯 JWKS 的 Python 示例只能�
 `JwtTokenService` 构造阶段读取 `jwt.rsa.key-file`。默认路径是 ignored 的
 `.local/uniauth/rsa-keys.ser`，新生成文件在 POSIX 文件系统上限制为 owner read/write。
 该格式仍是本地二进制文件而非生产密钥库；历史提交中的根目录私钥必须视为已暴露。
+prod 禁止自动生成或使用工作目录内 key；当前只发布一个 active key/kid，紧急切换
+立即使旧 token 失效，不提供双 key 兼容窗口。
 
 ## 数据持久化
 

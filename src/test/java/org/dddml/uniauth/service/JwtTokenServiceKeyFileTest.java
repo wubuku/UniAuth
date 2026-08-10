@@ -66,4 +66,17 @@ class JwtTokenServiceKeyFileTest {
                 .hasMessageContaining("could not be loaded");
         assertThat(Files.readAllBytes(keyFile)).containsExactly(invalidKey);
     }
+
+    @Test
+    void missingKeyFileIsRejectedWhenGenerationIsDisabled() {
+        Path keyFile = tempDirectory.resolve("missing-key.ser");
+
+        assertThatThrownBy(() -> new JwtTokenService(
+                keyFile.toString(),
+                false
+        ))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("generation is disabled");
+        assertThat(keyFile).doesNotExist();
+    }
 }

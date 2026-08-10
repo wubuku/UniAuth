@@ -1,8 +1,8 @@
 # UniAuth 加固阶段最终收尾计划
 
-> 状态：F1-F3 completed；F4 in progress；F5 scope frozen
+> 状态：F1-F5 completed；阶段退出检查 pending
 > 冻结日期：2026-08-09
-> 当前总体进度：约 95%
+> 当前总体进度：约 99.9%
 > 目标：只加固、修复和验证现有功能；完成本文五个批次后退出加固阶段
 > 上位路线图：[全面加固实施规划](HARDENING_IMPLEMENTATION_PLAN.md)
 > 历史执行记录：[下一轮加固实施计划](NEXT_HARDENING_IMPLEMENTATION_PLAN.md)
@@ -32,23 +32,24 @@ redirect 等多批修复；邮件参考服务已推进到独立 Flyway V5。
 | 领域 | 当前状态 | 权重内进度 |
 |------|----------|------------|
 | 数据库、Flyway、测试隔离和恢复基座 | 已建立并反复验证 | 100% |
-| Java/Shell/Playwright/Python/CI 基础门禁 | 已建立，供应链覆盖仍缺 Maven/Python | 92% |
+| Java/Shell/Playwright/Python/CI 基础门禁 | F5 完整 15 阶段组合门禁已通过 | 100% |
 | 登录方式、Web3 challenge、token family/replay/logout、CORS/redirect | F3 固定范围已完成 | 100% |
 | 邮箱 challenge、canonical identity、可靠投递和枚举防护 | F1 固定范围已完成 | 100% |
 | token family、浏览器 transport、CSRF 和身份来源消歧 | F2 固定范围已完成 | 100% |
-| OAuth2 显式绑定、provider trust、生产配置和密钥运维 | OAuth2/provider 已完成；F4 运维项待执行 | 75% |
+| OAuth2 显式绑定、provider trust、生产配置和密钥运维 | F5 组合门禁已通过；退出检查待执行 | 100% |
 
 F1 启动前综合进度约 82%。F1、F2、F3 已于 2026-08-09 分别通过完整统一门禁；
-当前综合进度约 95%。后续只按 F4-F5 固定退出项推进，不能通过增加零碎测试或文档
-条目虚增。
+F4 已于 2026-08-09 通过定向验收；F5 也已于 2026-08-09 通过完整统一门禁。
+当前综合进度约 99.9%，后续只执行阶段退出检查，不能通过增加零碎测试或文档条目虚增。
 
 | 批次 | 状态 | 进度口径 |
 |------|------|----------|
 | F1 邮箱与身份状态完整性 | 已完成并通过统一门禁 | 82% -> 86% |
 | F2 Token family、浏览器 transport 与 CSRF | 已完成并通过统一门禁 | 86% -> 91% |
 | F3 OAuth2、Web3 与 canonical API 契约 | 已完成并通过统一门禁 | 91% -> 95% |
-| F4 依赖、生产配置、密钥和运维门禁 | 执行中 | 95% -> 98% |
-| F5 最终证据、阶段末三轮检查和退出 | 待执行 | 98% -> 100% |
+| F4 依赖、生产配置、密钥和运维门禁 | 已完成定向验收 | 95% -> 98% |
+| F5 最终证据与统一阶段门禁 | 已完成并通过统一门禁 | 98% -> 99% |
+| F 阶段退出检查 | 待执行 | 99% -> 100% |
 
 ## 3. F1 开始前冻结事实
 
@@ -273,7 +274,7 @@ F1-F5 全部完成后的阶段末检查发生实质修改时，才将该统一�
 - Playwright 覆盖同页/跨标签并发、迟到 refresh、prod 禁止长期凭据存储和诊断路由。
 - Python 覆盖新 claims、旧 token 兼容边界和实时撤销限制。
 
-实施结果（2026-08-09）：
+实施结果（2026-08-10 当前候选）：
 
 - Flyway V7、token family/security version、session claims、rotation/replay/logout、
   Cookie/CSRF、strict introspection、限流和生产诊断路由隔离已完成。
@@ -428,6 +429,24 @@ F1-F5 全部完成后的阶段末检查发生实质修改时，才将该统一�
 5. 提交工作区全部非忽略、非敏感、非生成修改并推送。
 6. F5 验收完成后不在本批执行三轮检查；进入下面独立的阶段退出检查。
 
+实施结果（2026-08-09）：
+
+- 完整 `PYTHON_BIN=python3 scripts/verify.sh` 15/15 通过，以
+  `PASS: complete repository verification gate` 结束，并保存仓库外成功证据。
+- 根 Maven 246/246、邮件 Maven 154/154；shared-schema 4/4、主 HTTP
+  E2E 17/17、主 Flyway guard 16/16、认证备份恢复 6/6、邮件 runtime 44/44、
+  邮件 HTTP 11/11、邮件 Flyway guard 15/15、邮件备份恢复 10/10 全部通过。
+- 前端 lint/typecheck/build、Mock Playwright 29/29、生产 Playwright 2/2、
+  真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 20/20 和邮件 stub 12/12 通过。
+- 根/邮件 OWASP 报告分别包含 94/54 项 dependency evidence；npm audit 为
+  0 vulnerabilities。Python audit 仅保留 3 个精确、到期日为 2026-10-01 UTC 的
+  `cryptography 48.0.1` 例外，门禁验证其 advisory、版本、owner、理由和不可达证据。
+- 敏感扫描覆盖 670 个源码与候选构建文件，0 findings、0 sensitive-scan exceptions；
+  57 个 Markdown 文件相对链接和 `git diff --check` 通过。
+- OAuth authorization-code token endpoint 与 provider user-info/profile 请求共用
+  有界 connect/read timeout；定向测试覆盖有效 token 响应解析和慢响应超时。
+- F5 不执行单批三轮检查；当前进入唯一一次 F 阶段退出检查。
+
 ### F 阶段退出检查（99% -> 100%）
 
 1. 仅在 F1-F5 全部完成并分别通过验收后开始。
@@ -495,8 +514,8 @@ while counter < 3:
 
 ## 7. 原计划退出条件
 
-以下是原 F1-F5 整体计划的退出条件，现作为未来按需启动批次时的参考，不再阻止当前
-邮箱参考服务收尾后退出：
+以下是原 F1-F5 整体计划的退出条件，现作为阶段完成状态核对参考；它不扩展冻结范围，
+也不阻止统一阶段退出检查通过后结束加固：
 
 1. F1-F5 全部完成，没有新增第六批。
 2. 现有功能的关键成功、失败、并发、重放、持久化和恢复路径有自动化证据。

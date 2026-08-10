@@ -20,7 +20,7 @@ class EmailSharedSchemaFlywayBootstrapIntegrationTest {
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES =
-        new PostgreSQLContainer<>("postgres:16")
+        new PostgreSQLContainer<>("postgres:16.13")
             .withDatabaseName("email_shared_guard_test")
             .withUsername("email_shared_guard")
             .withPassword("email_shared_guard");

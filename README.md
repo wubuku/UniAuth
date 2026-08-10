@@ -9,9 +9,8 @@
 > [配置基线](docs/CONFIGURATION.md)、[开发指南](docs/DEVELOPMENT.md) 和
 > [验证指南](docs/VERIFICATION.md)。真实邮箱注册、登录、资源回跳和跨域 Bearer
 > 验证见[邮箱登录浏览器 E2E](docs/EMAIL_LOGIN_BROWSER_E2E.md)。
-> [加固阶段最终收尾计划](docs/drafts/FINAL_HARDENING_EXIT_PLAN.md)中的 F1-F3
-> 已经完成，F4 正在执行，F5 范围已冻结。F1-F5 每批只做自动化验收，
-> 五批全部完成后再统一执行一次连续三轮无修改检查。
+> [加固阶段最终收尾计划](docs/drafts/FINAL_HARDENING_EXIT_PLAN.md)中的 F1-F5
+> 已经完成并通过完整统一门禁；当前只剩阶段末连续三轮无修改检查。
 > 下文保留了较多设计目标、部署示例和历史说明，包括已经退役的 SQLite 路径。
 > 当前操作只使用上述 live guides；不要执行下文的 SQLite、手工 schema init 或旧域名示例。
 
@@ -19,21 +18,21 @@
 
 | 项目 | 当前状态 |
 |------|----------|
-| 后端 | Spring Boot 3.3.4 / Java 17，默认端口 `8081` |
+| 后端 | Spring Boot 3.5.16 / Java 17，默认端口 `8081` |
 | 前端 | React 18 / Vite，开发端口 `5173` |
 | 资源服务器 | Flask，默认端口 `5002` |
 | 邮件发送 | 外部 HTTP 服务，默认端口 `8095`；`reference/email-service/` 提供独立参考实现 |
-| 数据库 | PostgreSQL 16-only |
+| 数据库 | PostgreSQL 16-only；自动化固定 `postgres:16.13` |
 | Migration | Flyway V1 baseline + V2 + V3 + V4 + V5 + V6 + V7 + V8，history `uniauth_flyway_schema_history` |
 | 邮件数据库布局 | 默认独立数据库；显式 `shared-uniauth` 可与 UniAuth 共用 `public` schema，两侧 relation 名无冲突并使用独立 Flyway history |
-| Java 验证 | 222 tests，0 failures/errors/skips |
-| 邮件参考服务 | 154 tests；另有 Shell runtime 44/44、HTTP 11/11、Flyway guard 15/15、backup/restore 10/10 |
+| Java 验证 | F5 完整基线 246 tests，0 failures/errors/skips |
+| 邮件参考服务 | F5 完整基线 154 tests，0 failures/errors/skips |
 | Shared-schema E2E | 4/4；UniAuth/邮件服务两种启动顺序、独立 history 和 baseline V0 |
-| HTTP E2E | 16/16；含四条安全链 CORS 矩阵，正常邮箱流程使用真实参考服务，失败映射矩阵使用受控 stub |
+| HTTP E2E | 17/17；含四条安全链 CORS、邮件真实/失败路径和紧急签名 key rotation/revoke |
 | Flyway baseline guard | 16/16 |
 | Playwright | 29 个 Mock 浏览器测试 + 2 个生产构建测试 + 1 个真实邮箱登录跨服务 E2E |
 | Python | 20 个资源服务器测试 + 12 个邮件 REST stub 契约测试 |
-| 前端 lint/type/build | 通过 |
+| 统一门禁 | 15/15 通过；Maven/npm/Python 供应链、敏感扫描和完整跨服务验收 |
 
 安全启动、测试和 baseline 操作见 [开发指南](docs/DEVELOPMENT.md) 与
 [验证指南](docs/VERIFICATION.md)。`blacksheep_dev` 只完成了只读 rehearsal，
@@ -61,7 +60,7 @@
 
 UniAuth 是一个正在加固的统一身份认证项目，包含本地认证、Google/GitHub/X
 OAuth2、多登录方式、自定义 JWT、邮箱验证、Web3 和异构资源服务器示例。
-系统采用 Spring Boot 3.3.4 + React 18，`dev`、`test`、`prod` 均使用 PostgreSQL 16。
+系统采用 Spring Boot 3.5.16 + React 18，`dev`、`test`、`prod` 均使用 PostgreSQL 16。
 schema 由 Flyway 管理，SQLite runtime 已退役。
 
 邮箱地址注册验证和密码重置依赖一个独立邮件发送服务。UniAuth 主应用只包含该服务的
@@ -108,7 +107,7 @@ challenge，错误尝试和并发消费均走 PostgreSQL 条件更新与共享�
 | **项目名称** | UniAuth |
 | **版本号** | 1.0.0 |
 | **Java 版本** | 17+ |
-| **Spring Boot** | 3.3.4 |
+| **Spring Boot** | 3.5.16 |
 | **前端框架** | React 18 + TypeScript |
 | **数据库** | PostgreSQL |
 | **构建工具** | Maven |
@@ -116,7 +115,7 @@ challenge，错误尝试和并发消费均走 PostgreSQL 条件更新与共享�
 
 ### 设计目标
 
-本项目的设计目标包括多种 OAuth2 登录方式的统一接入、JWT 令牌管理、会话持久化和跨语言资源服务器验证。当前代码同时包含 Spring Authorization Server 配置与自定义 JWT 签发流程，两者尚未形成经完整测试证明的统一授权服务器实现；剩余加固范围按[加固阶段最终收尾计划](docs/drafts/FINAL_HARDENING_EXIT_PLAN.md)执行，完整风险背景保留在[加固实施规划](docs/drafts/HARDENING_IMPLEMENTATION_PLAN.md)中。
+本项目的设计目标包括多种 OAuth2 登录方式的统一接入、JWT 令牌管理、会话持久化和跨语言资源服务器验证。当前业务 token 由自定义 JWT 流程签发；仓库不注册 Spring Authorization Server 内存 client，未支持的 `/oauth2/authorize`、`/oauth2/token` 和 `/oauth2/revoke` 失败关闭。剩余加固范围按[加固阶段最终收尾计划](docs/drafts/FINAL_HARDENING_EXIT_PLAN.md)执行，完整风险背景保留在[加固实施规划](docs/drafts/HARDENING_IMPLEMENTATION_PLAN.md)中。
 
 ### 适用场景
 
@@ -253,17 +252,14 @@ enabled 状态；refresh rotation 通过 PostgreSQL generation CAS 推进，repl
 
 | 组件 | 版本 | 用途说明 |
 |------|------|----------|
-| Spring Boot | 3.3.4 | 应用框架核心 |
-| Spring Security | 6.1.13 | 安全认证与授权 |
-| Spring Authorization Server | 1.3.0 | OAuth2 认证服务器 |
-| Spring OAuth2 Client | 6.1.13 | OAuth2 客户端支持 |
-| Spring OAuth2 Resource Server | 6.1.13 | JWT 资源服务器 |
-| Hibernate | 6.5.3 | ORM 框架 |
-| JJWT | 0.12.x | JWT 令牌处理 |
-| Lombok | 1.18.30 | 代码简化 |
-| SQLite | 3.45.0.0 | 开发环境数据库 |
-| PostgreSQL | 42.7.4 | 生产环境数据库 |
-| H2 | 2.23.224 | 测试环境数据库 |
+| Spring Boot | 3.5.16 | 应用框架核心和依赖管理 |
+| Spring Security/OAuth2 | Boot 3.5.16 managed | OAuth2 Client、Resource Server 和安全过滤链 |
+| Hibernate | Boot 3.5.16 managed | PostgreSQL ORM 与 `validate` |
+| JJWT | 0.11.5 | 自定义 RS256 token 签发与解析 |
+| Web3j crypto | 4.11.0 | SIWE/Ethereum 签名恢复；不引入 RPC/HTTP stack |
+| PostgreSQL JDBC | 42.7.13 | 唯一受支持数据库驱动 |
+| Flyway | Boot 3.5.16 managed | PostgreSQL V1-V8 schema owner |
+| Testcontainers | 1.21.4 | disposable PostgreSQL 集成测试 |
 
 #### 前端技术栈
 
@@ -1303,7 +1299,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.13-alpine
     environment:
       - POSTGRES_DB=uni_auth
       - POSTGRES_USER=${POSTGRES_USER}
@@ -1576,24 +1572,23 @@ public class TokenBlacklistService {
 
 #### 依赖扫描
 
-定期使用 OWASP Dependency-Check 扫描依赖漏洞：
+统一门禁固定 OWASP Dependency-Check 12.2.2，并对根项目和邮件项目分别生成
+JSON/HTML 报告：
 
 ```bash
-# Maven 插件
-mvn org.owasp:dependency-check-maven:check
-
-# 或使用 CLI 工具
-dependency-check.sh --project "uni-auth" --scan . --format HTML
+mvn -DskipTests dependency-check:check
+python3 scripts/check-dependency-audit-report.py \
+  target/dependency-check-report.json
 ```
 
 #### 已知安全依赖版本
 
 | 依赖 | 最低安全版本 | 说明 |
 |------|--------------|------|
-| Spring Boot | 3.3.4 | 包含安全修复 |
-| Spring Security | 6.1.13 | 包含安全修复 |
-| PostgreSQL JDBC | 42.7.4 | 修复 JDBC 注入漏洞 |
-| JJWT | 0.12.x | 修复密钥混淆漏洞 |
+| Spring Boot | 3.5.16 | Java 17 兼容维护线 |
+| PostgreSQL JDBC | 42.7.13 | 根项目显式固定 |
+| Bouncy Castle | 1.85 | Web3 cryptography |
+| Swagger UI WebJar | 5.32.11 | prod 关闭；保留 medium DOMPurify 风险可见性 |
 
 ---
 
@@ -1601,23 +1596,25 @@ dependency-check.sh --project "uni-auth" --scan . --format HTML
 
 ### 健康检查端点
 
-集成 Spring Boot Actuator 提供监控端点：
+Spring Boot Actuator 只公开聚合健康探针；详细运维约束见
+[运维基线](docs/OPERATIONS.md)：
 
 ```yaml
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health
   endpoint:
     health:
-      show-details: when_authorized
+      show-components: never
+      show-details: never
 ```
 
 | 端点 | 说明 |
 |------|------|
-| `GET /actuator/health` | 应用健康状态 |
-| `GET /actuator/info` | 应用信息 |
+| `GET /actuator/health/liveness` | Spring 进程状态 |
+| `GET /actuator/health/readiness` | 数据库、Flyway 和 signing key 聚合状态 |
 | `GET /actuator/metrics` | 性能指标 |
 | `GET /actuator/metrics/http.server.requests` | HTTP 请求指标 |
 

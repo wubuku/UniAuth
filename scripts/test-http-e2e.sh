@@ -33,6 +33,8 @@ EMAIL_STUB_PORT=""
 COOKIE_JAR="$TEMP_DIR/cookies.txt"
 INTROSPECTION_CLIENT_ID="resource-server-e2e"
 INTROSPECTION_CLIENT_SECRET="introspection-e2e-${RUN_ID}-change-me-now"
+JWT_RSA_KEY_FILE_VALUE="$TEMP_DIR/signing-key.ser"
+JWT_KID_VALUE="key-1"
 CSRF_HEADER_NAME=""
 CSRF_TOKEN=""
 LOGIN_RESPONSE=""
@@ -435,7 +437,7 @@ start_email_service() {
         -e "POSTGRES_USER=$EMAIL_SERVICE_DATABASE_USER" \
         -e "POSTGRES_PASSWORD=$EMAIL_SERVICE_DATABASE_PASSWORD" \
         -p 127.0.0.1::5432 \
-        postgres:16 >/dev/null
+        postgres:16.13 >/dev/null
     EMAIL_SERVICE_DATABASE_PORT="$(
         docker port "$EMAIL_SERVICE_CONTAINER_NAME" 5432/tcp \
             | awk -F: 'NR == 1 {print $NF}'
@@ -531,7 +533,8 @@ start_application() {
         export POSTGRES_USER="$DATABASE_USER"
         export POSTGRES_PASSWORD="$DATABASE_PASSWORD"
         export SERVER_PORT
-        export JWT_RSA_KEY_FILE="$TEMP_DIR/signing-key.ser"
+        export JWT_RSA_KEY_FILE="$JWT_RSA_KEY_FILE_VALUE"
+        export JWT_KID="$JWT_KID_VALUE"
         export GOOGLE_CLIENT_ID=e2e-google
         export GOOGLE_CLIENT_SECRET=e2e-google-secret
         export GITHUB_CLIENT_ID=e2e-github
@@ -682,7 +685,7 @@ docker run -d --rm \
     -e "POSTGRES_USER=$DATABASE_USER" \
     -e "POSTGRES_PASSWORD=$DATABASE_PASSWORD" \
     -p 127.0.0.1::5432 \
-    postgres:16 >/dev/null
+    postgres:16.13 >/dev/null
 
 DATABASE_PORT="$(
     docker port "$CONTAINER_NAME" 5432/tcp \
@@ -714,7 +717,7 @@ echo "HTTP E2E: starting the real application through start.sh"
 start_application
 wait_for_application
 
-echo "1/16 Verify Flyway-owned PostgreSQL startup"
+echo "1/17 Verify Flyway-owned PostgreSQL startup"
 [ "$(db_value "
     SELECT count(*)
     FROM uniauth_flyway_schema_history
@@ -968,7 +971,7 @@ expect_db_rejection "
     COMMIT;
 " "database accepted an invalid provider login-method shape"
 
-echo "2/16 Verify one CORS policy across every security filter chain"
+echo "2/17 Verify one CORS policy across every security filter chain"
 for cors_case in \
         "/api/auth/login POST" \
         "/oauth2/jwks GET" \
@@ -979,7 +982,7 @@ for cors_case in \
     assert_cors_preflight "$cors_path" "$cors_method" "https://evil.example" "403"
 done
 
-echo "3/16 Verify fail-closed HTTP security boundaries"
+echo "3/17 Verify fail-closed HTTP security boundaries"
 [ "$(request_status GET /api/user)" = "401" ] \
     || fail "anonymous current-user request did not return 401"
 [ "$(request_status GET /api/auth/check-user)" = "403" ] \
@@ -995,7 +998,7 @@ jwks_response="$(curl -sS "${BASE_URL}/oauth2/jwks")"
 [ "$(jq -er '.keys[0].alg' <<<"$jwks_response")" = "RS256" ] \
     || fail "JWKS did not expose RS256"
 
-echo "4/16 Register and authenticate a local account"
+echo "4/17 Register and authenticate a local account"
 local_username="shell-user-${RUN_ID}"
 local_email="${local_username}@example.invalid"
 local_password="initial-password-${RUN_ID}"
@@ -1136,7 +1139,7 @@ db_value "
     WHERE user_id = '$local_user_id';
 " >/dev/null
 
-echo "5/16 Verify protected APIs, persistence, and JWT contracts"
+echo "5/17 Verify protected APIs, persistence, and JWT contracts"
 current_user="$(
     curl -sS \
         -H "Authorization: Bearer $access_token" \
@@ -1216,7 +1219,7 @@ introspection="$(introspect_token "$access_token")"
       AND last_used_at IS NOT NULL;
 ")" = "1" ] || fail "successful login did not persist last_used_at"
 
-echo "6/16 Restart the application without replaying migrations or losing data"
+echo "6/17 Restart the application without replaying migrations or losing data"
 stop_application
 start_application
 wait_for_application
@@ -1238,7 +1241,7 @@ restarted_user="$(
 [ "$(jq -er '.userId' <<<"$restarted_user")" = "$local_user_id" ] \
     || fail "the pre-restart access token did not work after restart"
 
-echo "7/16 Refresh tokens and reject token type confusion"
+echo "7/17 Refresh tokens and reject token type confusion"
 refresh_headers="$TEMP_DIR/refresh-headers.txt"
 refresh_response="$(
     curl -sS -D "$refresh_headers" -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
@@ -1306,7 +1309,7 @@ access_as_refresh_status="$(
 [ "$access_as_refresh_status" = "401" ] \
     || fail "access token was accepted as a refresh token"
 
-echo "8/16 Authenticate a new Web3 account and reject message tampering"
+echo "8/17 Authenticate a new Web3 account and reject message tampering"
 web3_wallet="$(create_wallet)"
 web3_address="$(jq -er '.address' <<<"$web3_wallet")"
 web3_challenge="$(signed_challenge "$web3_wallet")"
@@ -1413,7 +1416,7 @@ repeat_web3_login="$(post_json /api/auth/web3/verify "$repeat_web3_challenge")"
 [ "$(jq -er '.isNewUser' <<<"$repeat_web3_login")" = "false" ] \
     || fail "repeat Web3 login was incorrectly marked as new"
 
-echo "9/16 Verify header/cookie identity precedence"
+echo "9/17 Verify header/cookie identity precedence"
 conflicting_identity_status="$(
     curl -sS -o "$TEMP_DIR/conflicting-identity.json" -w '%{http_code}' \
         -H "Authorization: Bearer $web3_access_token" \
@@ -1445,7 +1448,7 @@ manual_cookie_identity="$(
 [ "$(jq -er '.userId' <<<"$manual_cookie_identity")" = "$local_user_id" ] \
     || fail "cookie-only authentication selected the wrong identity"
 
-echo "10/16 Bind and manage a Web3 login method for the local account"
+echo "10/17 Bind and manage a Web3 login method for the local account"
 binding_wallet="$(create_wallet)"
 binding_challenge="$(signed_challenge "$binding_wallet")"
 missing_binding_token_status="$(
@@ -1690,7 +1693,7 @@ delete_last_status="$(
 [ "$delete_last_status" = "400" ] \
     || fail "the last login method could be deleted"
 
-echo "11/16 Run the email registration and password-reset HTTP flow"
+echo "11/17 Run the email registration and password-reset HTTP flow"
 email_flow_address="shell-email-${RUN_ID}@example.invalid"
 if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     BASE_URL="$BASE_URL" \
@@ -1734,7 +1737,7 @@ fi
       AND status = 'PENDING';
 ")" = "2" ] || fail "reference email service did not persist rendered template content"
 
-echo "12/16 Run registration and password-reset rejection contracts"
+echo "12/17 Run registration and password-reset rejection contracts"
 if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     BASE_URL="$BASE_URL" \
     EMAIL_EXISTS="$email_flow_address" \
@@ -1744,7 +1747,7 @@ if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     fail "registration/password-reset rejection contract subflow failed"
 fi
 
-echo "13/16 Verify durable email delivery recovery and terminal failure"
+echo "13/17 Verify durable email delivery recovery and terminal failure"
 stop_application
 start_email_stub
 ACTIVE_EMAIL_SERVICE_URL="$EMAIL_STUB_URL"
@@ -1874,7 +1877,7 @@ for delivery_case in rejected rate-limited; do
         || fail "$delivery_case delivery did not exhaust the retry budget"
 done
 
-echo "14/16 Exhaust an invalid email verification retry budget"
+echo "14/17 Exhaust an invalid email verification retry budget"
 retry_email="shell-retry-${RUN_ID}@example.invalid"
 retry_send_payload="$(
     jq -cn \
@@ -1933,7 +1936,7 @@ done
 ")" = "INVALIDATED" ] \
     || fail "exhausted email verification challenge remained usable"
 
-echo "15/16 Verify logout cookie clearing"
+echo "15/17 Verify logout cookie clearing"
 logout_headers="$TEMP_DIR/logout-headers.txt"
 logout_response="$(
     curl -sS -D "$logout_headers" \
@@ -1975,11 +1978,48 @@ revoked_introspection="$(introspect_token "$new_access_token")"
       AND revoke_reason = 'LOGOUT';
 ")" -ge "1" ] || fail "logout did not persist token-family revocation"
 
-echo "16/16 Verify final database invariants"
+echo "16/17 Rehearse emergency signing-key rotation and revocation"
+rm -f "$COOKIE_JAR"
+bootstrap_csrf
+login_local_session
+rotation_old_access_token="$access_token"
+[ "$(request_status GET /api/user \
+    -H "Authorization: Bearer $rotation_old_access_token")" = "200" ] \
+    || fail "pre-rotation access token was not active"
+
+stop_application
+retired_key_file="$TEMP_DIR/retired-signing-key.ser"
+mv "$JWT_RSA_KEY_FILE_VALUE" "$retired_key_file"
+JWT_RSA_KEY_FILE_VALUE="$TEMP_DIR/signing-key-rotated.ser"
+JWT_KID_VALUE="key-rotation-b"
+start_application
+wait_for_application
+
+[ "$(request_status GET /api/user \
+    -H "Authorization: Bearer $rotation_old_access_token")" = "401" ] \
+    || fail "old access token remained valid after emergency key rotation"
+rotation_old_introspection="$(introspect_token "$rotation_old_access_token")"
+[ "$(jq -er '.active' <<<"$rotation_old_introspection")" = "false" ] \
+    || fail "introspection reported a retired-key token as active"
+[ "$(curl -fsS "${BASE_URL}/oauth2/jwks" | jq -er '.keys[0].kid')" \
+    = "$JWT_KID_VALUE" ] \
+    || fail "JWKS did not publish the rotated key id"
+
+rm -f "$COOKIE_JAR"
+bootstrap_csrf
+login_local_session
+[ "$(request_status GET /api/user \
+    -H "Authorization: Bearer $access_token")" = "200" ] \
+    || fail "new access token was not valid after signing-key rotation"
+rm -f "$retired_key_file"
+[ ! -e "$retired_key_file" ] \
+    || fail "retired signing key fixture was not destroyed"
+
+echo "17/17 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
     || fail "the E2E harness connected to an unexpected database"
 [ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "8" ] \
-    || fail "Flyway history contained unexpected rows after two application starts"
+    || fail "Flyway history contained unexpected rows after application restarts"
 active_web3_challenges="$(db_value "
     SELECT count(*)
     FROM web3_nonces

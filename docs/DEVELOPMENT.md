@@ -45,9 +45,10 @@ npm run test:e2e
 
 构建会重建 Spring Boot 静态资源目录。
 
-完整仓库门禁使用一次性 PostgreSQL、真实参考邮件服务及其独立 PostgreSQL、真实后端
-HTTP E2E、Flyway guard、Mock Playwright、真实五服务邮箱登录 Playwright 和离线
-Python 测试，并先通过无宽松参数的 `npm ci` 安装前端依赖。根 HTTP E2E 的正常邮箱
+完整仓库门禁使用一次性 PostgreSQL 16.13、真实参考邮件服务及其独立 PostgreSQL、
+真实后端 HTTP E2E、Flyway guard、backup/restore、Mock Playwright、真实五服务邮箱
+登录 Playwright、离线 Python 测试和供应链/敏感扫描，并先通过无宽松参数的
+`npm ci` 安装前端依赖。根 HTTP E2E 的正常邮箱
 流程直接调用
 `reference/email-service/`；参考实现无法自然产生的拒绝/限流映射另在同一脚本中
 显式切换到受控 loopback stub：
@@ -56,9 +57,11 @@ Python 测试，并先通过无宽松参数的 `npm ci` 安装前端依赖。根
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-`PYTHON_BIN` 可指向已安装 `python-resource-server/requirements.txt` 依赖的解释器。
-该入口只复制 Git 已跟踪和非忽略的未跟踪源码到进程专属临时 Git 快照，在快照中
-执行 Maven、npm、Shell E2E、Playwright 和 Python 阶段；不会复制或读取 `.env`，
+`PYTHON_BIN` 只用于创建隔离供应链环境；运行时和 audit 都从带 hash 的
+`python-resource-server/requirements.lock`/`requirements-tools.lock` 安装，不能依赖
+全局 site-packages。该入口只复制 Git 已跟踪和非忽略的未跟踪源码到进程专属临时
+Git 快照，在快照中执行 15 个 Maven、npm、Shell E2E、Playwright、Python、审计和
+敏感扫描阶段；不会复制或读取 `.env`，
 不会写共享开发库，也不会执行 Flyway baseline apply。原工作区源码若在验证期间
 变化，入口会失败并要求基于稳定工作树重跑；并行验证不共享 `target/`、
 `node_modules/` 或前端静态生成物。
@@ -170,7 +173,7 @@ entity 或 schema 变更至少核对：
 - Flyway fresh/baseline 集成测试
 - schema fingerprint
 
-Flyway 是唯一 schema owner。已发布 migration 不得改写；新增结构修复必须使用 V6+。
+Flyway 是唯一 schema owner。已发布 migration 不得改写；新增结构修复必须使用 V9+。
 
 ## 外部集成
 
@@ -263,6 +266,7 @@ live 测试脚本默认使用当前端口和一次性数据库；历史脚本/�
 
 - [当前架构](ARCHITECTURE.md)
 - [配置基线](CONFIGURATION.md)
+- [运维基线](OPERATIONS.md)
 - [验证指南](VERIFICATION.md)
 - [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md)
 - [前后端契约历史材料](FRONTEND_BACKEND_CONTRACT.md)

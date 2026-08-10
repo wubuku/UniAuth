@@ -43,7 +43,7 @@ class EmailLogRepositoryTest {
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES =
-        new PostgreSQLContainer<>("postgres:16")
+        new PostgreSQLContainer<>("postgres:16.13")
             .withDatabaseName("email_service_log_repository_test")
             .withUsername("email_log_test")
             .withPassword("email_log_test");

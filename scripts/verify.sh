@@ -10,6 +10,8 @@ TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uniauth-verification.XXXXXX")"
 PROJECT_DIR="$TEMP_DIR/project"
 SOURCE_FILE_LIST="$TEMP_DIR/source-files"
 ROOT_SUREFIRE_REPORTS_SNAPSHOT="$TEMP_DIR/root-surefire-reports"
+ROOT_DEPENDENCY_REPORTS_SNAPSHOT="$TEMP_DIR/root-dependency-reports"
+FRONTEND_BUILD_DIR="src/main/resources/static"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 VERIFICATION_ARTIFACTS_DIR="${VERIFICATION_ARTIFACTS_DIR:-}"
 VERIFICATION_ARTIFACTS_ENABLED=false
@@ -69,7 +71,22 @@ preserve_verification_artifacts() {
         rsync -a "$PROJECT_DIR/target/surefire-reports/" "$destination_dir/" \
             || return 1
     fi
+    if [ -d "$ROOT_DEPENDENCY_REPORTS_SNAPSHOT" ]; then
+        destination_dir="$artifacts_run_dir/target"
+        mkdir -p "$destination_dir" || return 1
+        rsync -a "$ROOT_DEPENDENCY_REPORTS_SNAPSHOT/" "$destination_dir/" \
+            || return 1
+        for report_name in \
+                dependency-check-report.html \
+                dependency-check-report.json; do
+            [ -s "$destination_dir/$report_name" ] || return 1
+        done
+    elif [ "$exit_code" -eq 0 ]; then
+        echo "ERROR: root dependency audit snapshot is missing" >&2
+        return 1
+    fi
     for relative_path in \
+            target/sensitive-scan-report.json \
             frontend/test-results \
             frontend/playwright-report \
             frontend/blob-report; do
@@ -81,6 +98,14 @@ preserve_verification_artifacts() {
         mkdir -p "$destination_dir" || return 1
         rsync -a "$source_path" "$destination_dir/" || return 1
     done
+    if [ -f "$TEMP_DIR/python-supply-chain/pip-audit-report.json" ]; then
+        destination_dir="$artifacts_run_dir/python-resource-server"
+        mkdir -p "$destination_dir" || return 1
+        rsync -a \
+            "$TEMP_DIR/python-supply-chain/pip-audit-report.json" \
+            "$destination_dir/" \
+            || return 1
+    fi
     {
         printf 'exit_code=%s\n' "$exit_code"
         printf 'source_head=%s\n' \
@@ -109,6 +134,26 @@ capture_root_surefire_reports() {
     rsync -a \
         "$PROJECT_DIR/target/surefire-reports/" \
         "$ROOT_SUREFIRE_REPORTS_SNAPSHOT/"
+}
+
+capture_root_dependency_reports() {
+    local report_name
+
+    rm -rf "$ROOT_DEPENDENCY_REPORTS_SNAPSHOT"
+    mkdir -p "$ROOT_DEPENDENCY_REPORTS_SNAPSHOT"
+    for report_name in \
+            dependency-check-report.html \
+            dependency-check-report.json; do
+        [ -s "$PROJECT_DIR/target/$report_name" ] \
+            || {
+                echo "ERROR: root dependency audit report is missing: $report_name" >&2
+                return 1
+            }
+        rsync -a \
+            "$PROJECT_DIR/target/$report_name" \
+            "$ROOT_DEPENDENCY_REPORTS_SNAPSHOT/" \
+            || return 1
+    done
 }
 
 cleanup() {
@@ -189,7 +234,7 @@ fi
 
 cd "$PROJECT_DIR"
 
-echo "Verification 1/12: shell syntax"
+echo "Verification 1/15: shell syntax and security guard self-tests"
 bash -n \
     build-frontend.sh \
     start.sh \
@@ -199,27 +244,48 @@ bash -n \
     reference/email-service/start.sh \
     reference/email-service/scripts/*.sh
 bash scripts/test-verification-artifacts-guard.sh
+bash scripts/test-supply-chain-guards.sh
+bash scripts/test-sensitive-artifact-scan.sh
 
-echo "Verification 2/12: frontend clean dependency install"
+echo "Verification 2/15: frontend clean dependency install"
 (
     cd frontend
     npm ci --registry="$NPM_REGISTRY"
 )
 
-echo "Verification 3/12: frontend dependency audit"
+echo "Verification 3/15: frontend dependency audit"
 (
     cd frontend
-    npm audit --registry="$NPM_REGISTRY" --audit-level=high
+    npm audit --registry="$NPM_REGISTRY" --audit-level=moderate
 )
 
-echo "Verification 4/12: Java compilation and test compilation"
+echo "Verification 4/15: Python hash locks, dependency audit, and contracts"
+PYTHON_SUPPLY_CHAIN_TEMP_DIR="$TEMP_DIR/python-supply-chain" \
+    scripts/verify-python-supply-chain.sh
+VERIFIED_PYTHON_BIN="$(
+    cat "$TEMP_DIR/python-supply-chain/runtime-python-path"
+)"
+[ -x "$VERIFIED_PYTHON_BIN" ] \
+    || { echo "ERROR: verified Python runtime is unavailable" >&2; exit 1; }
+
+echo "Verification 5/15: Java compilation and test compilation"
 mvn clean compile test-compile
 
-echo "Verification 5/12: Java integration tests"
+echo "Verification 6/15: root Maven dependency audit"
+"$VERIFIED_PYTHON_BIN" scripts/check-dependency-suppressions.py \
+    config/dependency-check-suppressions.xml
+mvn -DskipTests dependency-check:check
+"$VERIFIED_PYTHON_BIN" scripts/check-dependency-audit-report.py \
+    target/dependency-check-report.json
+[ -s target/dependency-check-report.html ] \
+    || { echo "ERROR: root dependency audit HTML report is missing" >&2; exit 1; }
+capture_root_dependency_reports
+
+echo "Verification 7/15: Java integration tests"
 mvn test
 capture_root_surefire_reports
 
-echo "Verification 6/12: reference email-service compilation and integration tests"
+echo "Verification 8/15: reference email-service verification"
 EMAIL_SERVICE_ARTIFACTS_DIR=""
 if [ "$VERIFICATION_ARTIFACTS_ENABLED" = "true" ]; then
     EMAIL_SERVICE_ARTIFACTS_DIR="$VERIFICATION_ARTIFACTS_DIR/$RUN_ID/email-service"
@@ -247,26 +313,38 @@ if [ "$VERIFICATION_ARTIFACTS_ENABLED" = "true" ]; then
     )"
     [ -n "$email_report_file" ] \
         || { echo "ERROR: email Surefire report artifact is missing" >&2; exit 1; }
+    email_dependency_report="$(
+        find "$EMAIL_SERVICE_ARTIFACTS_DIR" \
+            -name dependency-check-report.json \
+            -type f \
+            -print \
+            -quit
+    )"
+    [ -n "$email_dependency_report" ] \
+        || { echo "ERROR: email dependency audit artifact is missing" >&2; exit 1; }
 fi
 
-echo "Verification 7/12: HTTP and Flyway shell E2E"
+echo "Verification 9/15: HTTP and Flyway shell E2E"
 scripts/test-email-shared-schema-e2e.sh
 scripts/test-http-e2e.sh
 scripts/test-flyway-baseline-guard.sh
+scripts/test-auth-backup-restore-rehearsal.sh
 
-echo "Verification 8/12: frontend lint, typecheck, and production build"
+echo "Verification 10/15: frontend lint, typecheck, and production build"
 (
     cd frontend
     npm run lint
     npx tsc --noEmit
     npm run build
 )
+[ -f "$FRONTEND_BUILD_DIR/index.html" ] \
+    || { echo "ERROR: frontend build output is missing: $FRONTEND_BUILD_DIR/index.html" >&2; exit 1; }
 
-echo "Verification 9/12: Mock Playwright"
+echo "Verification 11/15: Mock Playwright"
 (
     cd frontend
     PLAYWRIGHT_PORT="$(
-        "$PYTHON_BIN" - <<'PY'
+        "$VERIFIED_PYTHON_BIN" - <<'PY'
 import socket
 
 with socket.socket() as sock:
@@ -277,7 +355,7 @@ PY
     export PLAYWRIGHT_PORT
     npm run test:e2e
     PLAYWRIGHT_PORT="$(
-        "$PYTHON_BIN" - <<'PY'
+        "$VERIFIED_PYTHON_BIN" - <<'PY'
 import socket
 
 with socket.socket() as sock:
@@ -289,18 +367,25 @@ PY
     npm run test:e2e:production
 )
 
-echo "Verification 10/12: real email-login browser E2E"
-PYTHON_BIN="$PYTHON_BIN" scripts/test-email-login-browser-e2e.sh
+echo "Verification 12/15: real email-login browser E2E"
+PYTHON_BIN="$VERIFIED_PYTHON_BIN" scripts/test-email-login-browser-e2e.sh
 
-echo "Verification 11/12: Python contracts"
-"$PYTHON_BIN" scripts/test_email_service_stub.py
-(
-    cd python-resource-server
-    "$PYTHON_BIN" -m unittest -v
-)
+echo "Verification 13/15: Python email-service stub contract"
+"$VERIFIED_PYTHON_BIN" scripts/test_email_service_stub.py
 
-echo "Verification 12/12: documentation links and patch hygiene"
-"$PYTHON_BIN" .agents/skills/project-docs/scripts/check_relative_links.py \
+echo "Verification 14/15: source and candidate-build sensitive artifact scan"
+"$VERIFIED_PYTHON_BIN" scripts/scan-sensitive-artifacts.py \
+    --repository . \
+    --path target/classes \
+    --path reference/email-service/target/classes \
+    --path "$FRONTEND_BUILD_DIR" \
+    --exceptions config/sensitive-scan-exceptions.json \
+    --report target/sensitive-scan-report.json
+"$VERIFIED_PYTHON_BIN" scripts/check-sensitive-scan-report.py \
+    target/sensitive-scan-report.json
+
+echo "Verification 15/15: documentation links and patch hygiene"
+"$VERIFIED_PYTHON_BIN" .agents/skills/project-docs/scripts/check_relative_links.py \
     README.md \
     AGENTS.md \
     docs \

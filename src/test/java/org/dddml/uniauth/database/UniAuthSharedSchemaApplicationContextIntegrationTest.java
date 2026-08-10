@@ -31,7 +31,7 @@ class UniAuthSharedSchemaApplicationContextIntegrationTest {
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES =
-        new PostgreSQLContainer<>("postgres:16")
+        new PostgreSQLContainer<>("postgres:16.13")
             .withDatabaseName("shared_email_uniauth_test")
             .withUsername("shared_schema_test")
             .withPassword("shared_schema_test");

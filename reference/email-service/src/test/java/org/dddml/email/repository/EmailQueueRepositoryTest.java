@@ -46,7 +46,7 @@ class EmailQueueRepositoryTest {
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES =
-        new PostgreSQLContainer<>("postgres:16")
+        new PostgreSQLContainer<>("postgres:16.13")
             .withDatabaseName("email_service_queue_repository_test")
             .withUsername("email_queue_test")
             .withPassword("email_queue_test");

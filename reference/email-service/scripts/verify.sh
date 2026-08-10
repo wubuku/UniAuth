@@ -21,6 +21,8 @@ source_fingerprint() {
         cd "$REPOSITORY_ROOT"
         git ls-files -co --exclude-standard -z -- \
             reference/email-service \
+            scripts/check-dependency-audit-report.py \
+            scripts/check-dependency-suppressions.py \
             src/main/resources/db/migration/postgresql \
             | sort -z \
             | xargs -0 shasum -a 256 \
@@ -43,6 +45,12 @@ preserve_verification_artifacts() {
         rsync -a "$PROJECT_DIR/target/surefire-reports" "$artifacts_run_dir/" \
             || return 1
     fi
+    for report_name in dependency-check-report.html dependency-check-report.json; do
+        if [ -f "$PROJECT_DIR/target/$report_name" ]; then
+            rsync -a "$PROJECT_DIR/target/$report_name" "$artifacts_run_dir/" \
+                || return 1
+        fi
+    done
     {
         printf 'exit_code=%s\n' "$exit_code"
         printf 'source_head=%s\n' \
@@ -109,15 +117,20 @@ mkdir -p "$UNIAUTH_MIGRATIONS_DIR"
 rsync -a \
     "$REPOSITORY_ROOT/src/main/resources/db/migration/postgresql/" \
     "$UNIAUTH_MIGRATIONS_DIR/"
+mkdir -p "$TEMP_DIR/verification-tools"
+rsync -a \
+    "$REPOSITORY_ROOT/scripts/check-dependency-audit-report.py" \
+    "$REPOSITORY_ROOT/scripts/check-dependency-suppressions.py" \
+    "$TEMP_DIR/verification-tools/"
 if [ "$(source_fingerprint)" != "$SOURCE_FINGERPRINT" ]; then
     echo "ERROR: email service sources changed while creating the verification snapshot; rerun the gate" >&2
     exit 1
 fi
 
-echo "Email verification 1/6: shell syntax"
+echo "Email verification 1/7: shell syntax"
 bash -n "$PROJECT_DIR/start.sh" "$PROJECT_DIR"/scripts/*.sh
 
-echo "Email verification 2/6: compilation and ApplicationContext tests"
+echo "Email verification 2/7: compilation and ApplicationContext tests"
 (
     cd "$PROJECT_DIR"
     mvn clean compile test-compile
@@ -126,20 +139,32 @@ echo "Email verification 2/6: compilation and ApplicationContext tests"
 )
 cp "$PROJECT_DIR/target/email-service-1.0.0.jar" "$APPLICATION_JAR"
 
-echo "Email verification 3/6: runtime guard matrix"
+echo "Email verification 3/7: Maven dependency audit"
+python3 "$TEMP_DIR/verification-tools/check-dependency-suppressions.py" \
+    "$PROJECT_DIR/config/dependency-check-suppressions.xml"
+(
+    cd "$PROJECT_DIR"
+    mvn -DskipTests dependency-check:check
+)
+python3 "$TEMP_DIR/verification-tools/check-dependency-audit-report.py" \
+    "$PROJECT_DIR/target/dependency-check-report.json"
+[ -s "$PROJECT_DIR/target/dependency-check-report.html" ] \
+    || { echo "ERROR: email dependency audit HTML report is missing" >&2; exit 1; }
+
+echo "Email verification 4/7: runtime guard matrix"
 "$PROJECT_DIR/scripts/test-runtime-guard.sh"
 
-echo "Email verification 4/6: real HTTP/PostgreSQL process E2E"
+echo "Email verification 5/7: real HTTP/PostgreSQL process E2E"
 EMAIL_SERVICE_SKIP_BUILD=true \
     EMAIL_SERVICE_JAR_PATH="$APPLICATION_JAR" \
     "$PROJECT_DIR/scripts/test-http-e2e.sh"
 
-echo "Email verification 5/6: Flyway fail-closed guard"
+echo "Email verification 6/7: Flyway fail-closed guard"
 EMAIL_SERVICE_SKIP_BUILD=true \
     EMAIL_SERVICE_JAR_PATH="$APPLICATION_JAR" \
     "$PROJECT_DIR/scripts/test-flyway-baseline-guard.sh"
 
-echo "Email verification 6/6: PostgreSQL backup/restore rehearsal"
+echo "Email verification 7/7: PostgreSQL backup/restore rehearsal"
 EMAIL_SERVICE_SKIP_BUILD=true \
     EMAIL_SERVICE_JAR_PATH="$APPLICATION_JAR" \
     "$PROJECT_DIR/scripts/test-backup-restore-rehearsal.sh"

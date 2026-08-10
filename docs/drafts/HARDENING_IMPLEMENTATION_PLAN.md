@@ -22,7 +22,7 @@
 | H1.4 Batch B1 | Verified | Flyway V2、登录方式时区/nullability、provider/shape/primary 约束与 bind/set-primary 并发 |
 | H1.4 Batch B2a | Verified | Flyway V3、用户级 revision CAS、delete/delete 与 delete/set-primary 组合并发 |
 | H1.4 Batch B2b | Verified | Flyway V4、其余目标实体约束/default、email 查询索引、重复索引清理与只读 preflight |
-| H1.5-H8 剩余工作 | Partially implemented | 多个安全切片已验证；剩余退出范围固定为最终计划 F1-F4 |
+| H1.5-H8 长期路线图 | Partially implemented | 最终计划 F1-F5 已完成；当前只待统一阶段退出检查，未纳入的生产级目标转入普通 backlog |
 
 当前自动化和隔离 HTTP 证据见 [验证指南](../VERIFICATION.md)。本文保存完整风险背景，
 但不再要求逐项实现所有生产级长期目标；加固退出所需的剩余范围、顺序和门禁见

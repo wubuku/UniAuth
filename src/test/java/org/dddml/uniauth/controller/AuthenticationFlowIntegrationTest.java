@@ -219,6 +219,25 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
+    void unsupportedAuthorizationServerEndpointsAreDenied() throws Exception {
+        mockMvc.perform(get("/oauth2/authorize"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/oauth2/token"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/oauth2/revoke"))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/oauth2/authorization/google"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(header().string(
+                        HttpHeaders.LOCATION,
+                        org.hamcrest.Matchers.containsString(
+                                "accounts.google.com"
+                        )
+                ));
+    }
+
+    @Test
     void loginMethodManagementPreservesOwnershipAndLastMethodRules() throws Exception {
         String username = "integration-multi";
         String password = "integration-password";

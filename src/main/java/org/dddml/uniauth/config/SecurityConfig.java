@@ -8,6 +8,7 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,6 +19,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
+import org.springframework.security.oauth2.client.endpoint.OAuth2AccessTokenResponseClient;
+import org.springframework.security.oauth2.client.endpoint.OAuth2AuthorizationCodeGrantRequest;
 import org.springframework.security.oauth2.client.userinfo.OAuth2UserRequest;
 import org.springframework.security.oauth2.client.userinfo.OAuth2UserService;
 import org.springframework.security.oauth2.client.userinfo.DefaultOAuth2UserService;
@@ -71,10 +74,9 @@ public class SecurityConfig {
     @Autowired
     private UserService userService;
 
-    @Bean
-    public RestTemplate restTemplate() {
-        return new RestTemplate();
-    }
+    @Autowired
+    @Qualifier("oauth2RestTemplate")
+    private RestTemplate oauth2RestTemplate;
 
     @Autowired
     private OAuth2AuthorizedClientService authorizedClientService;
@@ -216,7 +218,10 @@ public class SecurityConfig {
     @Bean
     @Order(3)
     public SecurityFilterChain webSecurityFilterChain(HttpSecurity http,
-                                                     ClientRegistrationRepository clientRegistrationRepository) throws Exception {
+            ClientRegistrationRepository clientRegistrationRepository,
+            OAuth2AccessTokenResponseClient<OAuth2AuthorizationCodeGrantRequest>
+                    oauth2AuthorizationCodeTokenResponseClient)
+            throws Exception {
         http
             // CORS配置 - 必须在其他配置之前启用
             .cors(cors -> {})
@@ -230,6 +235,8 @@ public class SecurityConfig {
                 .requestMatchers("/", "/login/**", "/oauth2/**", "/css/**", "/js/**",
                                "/images/**", "/static/**", "/index.html", "/assets/**",
                                "/favicon.ico", "/error",
+                               "/actuator/health/liveness",
+                               "/actuator/health/readiness",
                                "/swagger-ui/**", "/swagger-ui.html",
                                "/v3/api-docs/**", "/swagger-resources/**", "/webjars/**").permitAll()
                 .requestMatchers("/api/auth/**").permitAll()  // 认证API公开
@@ -245,6 +252,11 @@ public class SecurityConfig {
                 .failureHandler(oauth2FailureHandler())
                 .authorizationEndpoint(authz -> authz
                     .authorizationRequestResolver(authorizationRequestResolver(clientRegistrationRepository))
+                )
+                .tokenEndpoint(token -> token
+                    .accessTokenResponseClient(
+                        oauth2AuthorizationCodeTokenResponseClient
+                    )
                 )
                 .userInfoEndpoint(userInfo -> userInfo
                     .userService(oauth2UserService())
@@ -288,6 +300,7 @@ public class SecurityConfig {
             } else {
                 // 对于其他提供商使用默认服务
                 DefaultOAuth2UserService delegate = new DefaultOAuth2UserService();
+                delegate.setRestOperations(oauth2RestTemplate);
                 OAuth2User oauth2User = delegate.loadUser(userRequest);
 
                 if ("github".equals(registrationId)) {
@@ -311,7 +324,7 @@ public class SecurityConfig {
         HttpEntity<?> entity = new HttpEntity<>(headers);
 
         // 调用Twitter API v2
-        ResponseEntity<Map<String, Object>> response = restTemplate().exchange(
+        ResponseEntity<Map<String, Object>> response = oauth2RestTemplate.exchange(
             "https://api.x.com/2/users/me?user.fields=created_at,description,entities,id,location,name,pinned_tweet_id,profile_image_url,protected,public_metrics,url,username,verified,verified_type,withheld",
             HttpMethod.GET,
             entity,
@@ -380,7 +393,7 @@ public class SecurityConfig {
 
         HttpEntity<?> entity = new HttpEntity<>(headers);
 
-        ResponseEntity<List<Map<String, Object>>> response = restTemplate().exchange(
+        ResponseEntity<List<Map<String, Object>>> response = oauth2RestTemplate.exchange(
             "https://api.github.com/user/emails",
             HttpMethod.GET,
             entity,

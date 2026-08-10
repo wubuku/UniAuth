@@ -10,6 +10,7 @@
 - `docs/CONFIGURATION.md`: 端口、profile、数据库、回调、CORS 和密钥基线。
 - `docs/DEVELOPMENT.md`: 安全构建、启动前检查和日常工作流。
 - `docs/VERIFICATION.md`: 权威交付门槛、验证层级、2026-08-09 基线和测试缺口。
+- `docs/OPERATIONS.md`: 生产 guard、readiness、备份恢复、紧急密钥轮换和供应链门禁。
 - `docs/EMAIL_LOGIN_BROWSER_E2E.md`: 真实邮箱注册/登录、前端回跳、跨 origin
   Python API Bearer 访问和独立服务脚本。
 - `docs/drafts/README.md`: 既有计划、调查和历史记录索引。
@@ -21,6 +22,8 @@
   token family、浏览器 transport、CSRF、严格 introspection 实施和验收记录。
 - `docs/drafts/F3_OAUTH_WEB3_CONTRACT_HARDENING_IMPLEMENTATION.md`: 已完成的
   F3 OAuth2 bind intent、Web3 challenge、recent-auth 和 canonical API 实施与验收记录。
+- `docs/drafts/F4_SUPPLY_CHAIN_PRODUCTION_OPERATIONS_HARDENING_IMPLEMENTATION.md`:
+  已完成 F4 的供应链、生产配置、密钥、readiness 和运维门禁证据。
 - `docs/drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md`: 历史批次执行记录；不再驱动开放循环。
 - `docs/archive/database/README.md`: 旧 SQL 的历史归档和当前替代路径。
 - `reference/email-service/README.md`: 外部邮件 REST 服务的独立参考实现、Flyway 和 E2E。
@@ -31,7 +34,7 @@
 
 UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个独立参考组件：
 
-- `src/main/java/org/dddml/uniauth/`: Spring Boot 3.3.4 / Java 17 后端。
+- `src/main/java/org/dddml/uniauth/`: Spring Boot 3.5.16 / Java 17 后端。
 - `frontend/`: React 18 + TypeScript + Vite SPA。
 - `python-resource-server/`: Flask 异构资源服务器示例，通过 JWKS 验证 UniAuth JWT。
 - `reference/email-service/`: 外部邮件 REST 服务参考实现；独立 Maven 工程，不纳入根构建。
@@ -42,7 +45,9 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 - Google、GitHub、X 的 OAuth2 Client。
 - 自定义 RS256 JWT 的签发方和资源服务器。
 - 暴露 JWKS 与 token introspection 接口。
-- 包含部分 Spring Authorization Server 配置，但主要业务 token 由自定义 controller/service 签发；不要假设标准 Authorization Server 流程已完整接通。
+- 不注册 Spring Authorization Server 内存 client。主要业务 token 由自定义
+  controller/service 签发；`AuthorizationServerConfig` 只隔离 JWKS/introspection
+  和明确不支持的 AS endpoint。
 - 构建后的 React 静态资源由 Spring Boot 提供。
 
 ## Canonical Runtime Facts
@@ -57,8 +62,8 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
   不能替代该跨 host header。生产构建排除诊断路由/bundle，也不持久化 access token。
   独立资源前端域需要 OAuth/OIDC Code+PKCE 或 BFF。
 - 默认不激活任何 Spring profile；启动者必须显式选择 `dev`、`test` 或 `prod`。
-- `dev`、`test`、`prod` 只支持 PostgreSQL 16；当前不维护 PostgreSQL 15 或
-  SQLite 兼容路径。
+- `dev`、`test`、`prod` 只支持 PostgreSQL 16；自动化固定
+  `postgres:16.13`，当前不维护 PostgreSQL 15 或 SQLite 兼容路径。
 - 三个 profile 的 host、port、database、user 和 password 都必须显式提供。
 - Flyway 是唯一 schema owner；当前 runtime migration 链是 PostgreSQL V1 baseline +
   V2 登录方式约束 + V3 登录方式 revision CAS + V4 实体约束与索引对齐 + V5
@@ -66,6 +71,10 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
   V7 token family/security version/session claim 加固 + V8 OAuth2 bind intent、
   Web3 challenge handle/capacity 和 canonical API 契约加固。
 - Hibernate 使用 `validate`；SQL init 和 Spring Session 自动建表均关闭。
+- OAuth authorization-code token 交换、标准 provider user-info 和 GitHub/X
+  补充 profile 请求都使用显式 bounded HTTP client。默认 connect/read timeout
+  分别为 5 秒和 10 秒，可通过 `OAUTH2_HTTP_CONNECT_TIMEOUT_MS`、
+  `OAUTH2_HTTP_READ_TIMEOUT_MS` 调整，有效范围均为 `100..60000ms`。
 - 外部邮件服务默认地址：`http://localhost:8095`。
 - UniAuth 主应用只实现邮件服务 HTTP 适配器；真实邮箱注册验证和密码重置需要独立
   邮件服务满足当前 HTTP、模板和响应契约。`reference/email-service/` 提供可运行参考，
@@ -134,7 +143,9 @@ rehearsal 的 fresh 最新迁移结果一致。
 
 1. `AuthApiConfig`, `@Order(0)`: `/api/auth/**`，按 HTTP method/path 公开 allowlist，
    其余请求 `denyAll`，CSRF 禁用。
-2. `AuthorizationServerConfig`, `@Order(1)`: 指定的 `/oauth2/*` Authorization Server 端点。
+2. `AuthorizationServerConfig`, `@Order(1)`: `GET /oauth2/jwks`、严格
+   `POST /oauth2/introspect`，以及 deny-all 的未支持 AS endpoint；不能匹配整个
+   `/oauth2/**`，否则会误伤 OAuth Client 的 `/oauth2/authorization/{provider}`。
 3. `ResourceServerConfig`, `@Order(2)`: `/api/**`，Bearer JWT 来自 `Authorization` header 或 `accessToken` cookie。
 4. `SecurityConfig`, `@Order(3)`: OAuth2 登录、SPA/Web 路由、其余授权规则。
 
@@ -171,6 +182,8 @@ JWT 由 `JwtTokenService` 使用 RS256 签发：
 - issuer 默认 `https://auth.example.com`。
 - audience 默认 `resource-server`。
 - `kid` 默认 `key-1`。
+- issuer、audience 和 kid 可分别由 `JWT_ISSUER`、`JWT_AUDIENCE`、`JWT_KID`
+  覆盖；prod 必须显式提供非 placeholder 值。
 - 读取用户名时先读 `username` claim，再回退 `sub` 兼容旧 token。
 
 所有签发入口通过 `AuthCookieService` 统一写入 access/refresh HttpOnly Cookie；
@@ -379,24 +392,28 @@ python3 -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") fo
 PYTHON_BIN=python3 scripts/test-email-login-browser-e2e.sh
 ```
 
-完整仓库门禁会启动 disposable PostgreSQL、真实 Spring 应用和 Mock 浏览器，不读取
+完整仓库门禁会启动 disposable PostgreSQL 16.13、真实 Spring 应用和 Mock 浏览器，不读取
 `.env`，也不接触共享开发库；前端依赖先通过无宽松参数的 `npm ci` 干净安装：
 
 ```bash
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-当前候选基线（2026-08-09 F3 与邮件 V5 合并树；完整门禁已重跑）：
+当前候选基线（2026-08-10；F1-F5 完成并通过完整统一门禁，阶段末检查待执行）：
 
-- 当前根统一门禁：Maven 222 tests、shared-schema process E2E 4/4、
-  HTTP 16/16、Flyway baseline guard 16/16、Mock Playwright 29/29、
+- 当前根统一门禁：Maven 246 tests、shared-schema process E2E 4/4、
+  HTTP 17/17、Flyway baseline guard 16/16、Mock Playwright 29/29、
   生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 20/20、邮件 REST stub
   contract 12/12；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
-  patch hygiene 均通过；完整 `scripts/verify.sh` 12/12 以
+  patch hygiene 均通过；完整 `scripts/verify.sh` 15/15 以
   `PASS: complete repository verification gate` 结束。
 - 当前邮件参考服务：154 tests，0 failures/errors/skips；Shell runtime 44/44、
   HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；组件门禁以
   `PASS: email service verification gate` 结束。
+- 根/邮件 OWASP Dependency-Check 分别扫描 94/54 项 dependency evidence。
+  Python `cryptography 48.0.1` 的 `PYSEC-2026-3552`、`PYSEC-2026-3553` 和
+  `PYSEC-2026-3554` 是唯一已批准漏洞例外，均于 2026-10-01 UTC 到期；门禁要求
+  advisory、包版本、owner、理由、不可达证据和到期日精确匹配。
 - 以下 2026-08-08 条目保留为加固增量历史，不替代上述当前基线。
 - 邮件参考服务初始纳入基线：94 tests，0 failures/errors/skips；另有 runtime guard 15/15、
   Shell HTTP 8/8 和 Flyway guard 8/8。
@@ -492,7 +509,8 @@ PYTHON_BIN=python3 scripts/verify.sh
   完整根 Maven 222/222、邮件 Maven 154/154、shared-schema 4/4、HTTP/Flyway
   16/16、Mock Playwright 29/29、生产 Playwright 2/2、真实浏览器 1/1、Python
   12/12 + 20/20，统一门禁 `12/12` 通过。
-- Shell HTTP E2E：16/16；正常邮箱流程使用真实参考服务，失败映射场景使用受控 stub。
+- Shell HTTP E2E：17/17；正常邮箱流程使用真实参考服务，失败映射场景使用受控
+  stub，并覆盖紧急 signing-key rotation/revoke。
 - Flyway baseline guard：16/16。
 - Mock Playwright：29/29；生产 Playwright：2/2；真实邮箱登录浏览器 E2E：1/1。
 - Python 资源服务器：20/20；邮件 REST stub contract：12/12。
@@ -501,12 +519,8 @@ PYTHON_BIN=python3 scripts/verify.sh
   F1-F5 全部实现并通过各自验收后，再独立执行一次阶段末连续三轮检查。无问题轮次只
   记录在当次工作报告，不为留痕修改仓库文件。
 - 前端 lockfile 已通过严格 `npm ci`；已显式升级受影响的 Axios、Ethers、
-  React Router、Vite 和相关传递依赖，`npm audit --audit-level=high` 通过。
-- npm audit 仍报告 2 个 React Router moderate advisories。当前 SPA 只使用
-  `BrowserRouter/Routes`，导航 pathname 均为固定同源值；OAuth 错误仅作为
-  `encodeURIComponent` 编码后的 `/login` query 参数，不成为导航目标。不使用 RSC、
-  SSR data router 或 `deserializeErrors`；继续禁止让外部输入决定 `Link`、
-  `Navigate` 或 `useNavigate` 的目标 URL，并在可用的无重叠修复版本出现后升级。
+  React Router、Vite 和相关传递依赖；`npm audit --audit-level=moderate`
+  当前报告 0 vulnerabilities。
 - Flyway：fresh migration、existing-schema baseline integration、checksum/failure recovery、
   guard failure matrix 和 `blacksheep_dev` 只读 rehearsal 已通过。
 - `flyway-baseline-existing.sh` 的临时 Flyway 配置必须使用以 `XXXXXX` 结尾的
@@ -515,7 +529,8 @@ PYTHON_BIN=python3 scripts/verify.sh
   `12/12` guard 验证。
 - `scripts/verify.sh` 是本地统一验证入口；`.github/workflows/verification.yml` 在 CI
   中执行同一入口。根入口会复制当前全部非忽略源码到进程专属临时 Git 快照后执行
-  11 个阶段，避免并行 `mvn clean`、`npm ci` 或前端构建共享 `target/`、
+  15 个阶段，覆盖 Maven/npm/Python 供应链、敏感扫描和完整 E2E，避免并行
+  `mvn clean`、`npm ci` 或前端构建共享 `target/`、
   `node_modules/` 和静态生成物；原工作区源码在验证期间变化时失败关闭。需要保留
   Surefire 报告和 Playwright trace 时，将绝对且位于仓库外的
   `VERIFICATION_ARTIFACTS_DIR` 传给入口；CI 已固定上传该目录，不能改回原工作区
@@ -599,9 +614,7 @@ PYTHON_BIN=python3 scripts/verify.sh
 - OAuth2 redirect 已由 `OAuth2RedirectPolicy` 统一约束，恶意/跨 origin
   `state.redirect_uri` 回退到配置的前端 base path 下的登录页，成功和失败回跳都
   保留该 context path；授权 resolver 不再保存未消费的 `Referer` origin。更大的
-  OAuth2 显式绑定意图、provider identity/email trust、scope 与 authorized-client
-  生命周期仍未完成。
-- `ApiAuthController` 对 JWT 用户把 provider 默认标成 `local`，不能反映真实主登录方式。
+  provider scope、authorized-client 生命周期和真实 provider 发布验收属于加固后工作。
 - F1 已收敛邮箱身份和 challenge 基线：canonical contact 与 synthetic identity 分离，
   数据库只保存带 key id 的 HMAC digest，不再保存明文 code/credential metadata；
   opaque handle、唯一 active challenge、outbox/idempotency、delivery 恢复、统一密码
@@ -614,16 +627,20 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 登录方式并发 bind、set-primary、delete/delete 和 delete/set-primary 已由数据库
   约束、用户级 revision CAS 和稳定 `409` 冲突映射加固；PostgreSQL 集成测试与
   Shell HTTP E2E 持续断言最终至少一个登录方式且恰好一个 primary。
-- live 端口已统一到后端 `8081`、Python `5002`；OAuth2 callback、主前端 URL 和
-  UniAuth CORS allowlist 已外部化，Web3 domain/URI、JWT issuer 与内存
-  Authorization Server client redirect 等剩余部署配置仍需收敛。
-- Spring Authorization Server 当前仍注册固定 `auth-client`、`{noop}auth-secret`、
-  localhost redirect、password grant 和无 PKCE 客户端。自定义 JWT 才是当前主要
-  业务签发路径；F4 必须默认关闭未明确启用的 Authorization Server 客户端能力，或将
-  其完整配置、grant 和凭据失败关闭，不能把当前固定值带入生产。
+- live 端口已统一到后端 `8081`、Python `5002`；OAuth2 callback、主前端 URL、
+  UniAuth CORS、Web3 domain、JWT issuer/audience/kid 和 provider 凭据均已外部化，
+  prod placeholder/local 配置会在启动阶段失败。
+- Spring Authorization Server 内存 client/password grant 已移除；未支持的 AS
+  authorize/token/revoke endpoint deny all。不要把自定义 JWKS/introspection
+  边界描述成完整 OIDC/OAuth Authorization Server。
 - 自定义 introspection 只保留受 Basic client 鉴权的 `POST /oauth2/introspect`
   form endpoint；query/raw body、浏览器认证 Cookie、重复 header/参数和额外字段失败
-  关闭。真实部署仍必须在 F4 提供非 placeholder client secret 和外部化运维策略。
+  关闭。prod guard 要求非 placeholder、独立的 client secret。
+- 当前 RSA 运维只实现单 active key 的紧急 cutover：更换 key/kid 后旧 token 立即
+  失效并要求重认证；双 key 无感 rollover 是加固后需求，不能恢复 retired key 模拟。
+- 当前 Maven 阻断 CVSS 7+；唯一 Tomcat examples-only suppression 于
+  2026-09-01 到期。Swagger UI WebJar 的 DOMPurify medium 公告仍可见但 prod
+  Swagger 已关闭，兼容修复版本发布后应升级。
 
 这些条目是工作提示，不代替针对当前任务的代码阅读和测试。
 
@@ -633,8 +650,8 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 每次状态汇报都给出诚实的粗略完成百分比；发现遗漏或风险时允许回退，但必须说明
   当前固定范围和下一步如何继续收敛。
 - 加固阶段不再开放循环。当前范围以
-  `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md` 冻结的 F1-F5 为准；F1-F3 已完成，
-  F4 正在执行，完成五批及统一阶段末检查后必须退出，不得自动创建第六批。
+  `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md` 冻结的 F1-F5 为准；F1-F5 已完成
+  并通过统一门禁，完成唯一一次阶段末连续三轮检查后必须退出，不得自动创建第六批。
 - 只有数据丢失、认证/授权绕过、凭据泄露、门禁伪成功或当前批直接引入的实质回归
   可以并入正在执行的固定批次。其他发现进入加固后的普通 backlog，不能借“继续探索”
   延长阶段。

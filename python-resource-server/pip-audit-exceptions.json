@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "exceptions": [
+    {
+      "id": "PYSEC-2026-3552",
+      "package": "cryptography",
+      "version": "48.0.1",
+      "fixedVersion": "50.0.0",
+      "owner": "UniAuth maintainers",
+      "expiresAt": "2026-10-01T00:00:00Z",
+      "reason": "The fixed release has no Intel macOS wheel. UniAuth does not decrypt PKCS#7 or S/MIME payloads.",
+      "evidence": [
+        "python-resource-server/app.py only uses PyJWT RSA verification and requests-based JWKS retrieval.",
+        "python-resource-server/test_app.py and test_token.py exercise JWT/JWKS paths and do not import cryptography PKCS#7 APIs."
+      ]
+    },
+    {
+      "id": "PYSEC-2026-3553",
+      "package": "cryptography",
+      "version": "48.0.1",
+      "fixedVersion": "49.0.0",
+      "owner": "UniAuth maintainers",
+      "expiresAt": "2026-10-01T00:00:00Z",
+      "reason": "The fixed release has no Intel macOS wheel. UniAuth does not construct or validate attacker-supplied X.509 chains.",
+      "evidence": [
+        "python-resource-server/app.py obtains an RSA JWK and delegates JWT signature verification to PyJWT.",
+        "Repository search has no use of cryptography.x509.verification."
+      ]
+    },
+    {
+      "id": "PYSEC-2026-3554",
+      "package": "cryptography",
+      "version": "48.0.1",
+      "fixedVersion": "49.0.0",
+      "owner": "UniAuth maintainers",
+      "expiresAt": "2026-10-01T00:00:00Z",
+      "reason": "The fixed release has no Intel macOS wheel. UniAuth does not evaluate X.509 name constraints or wildcard SANs.",
+      "evidence": [
+        "python-resource-server/app.py validates JWT issuer, audience, kid and RS256 signature only.",
+        "Repository search has no use of PolicyBuilder, Store or cryptography.x509.verification."
+      ]
+    }
+  ]
+}

@@ -57,6 +57,9 @@ app:
   oauth2:
     binding:
       expiration-seconds: ${OAUTH2_BINDING_EXPIRATION_SECONDS:300}
+    http:
+      connect-timeout-ms: ${OAUTH2_HTTP_CONNECT_TIMEOUT_MS:5000}
+      read-timeout-ms: ${OAUTH2_HTTP_READ_TIMEOUT_MS:10000}
   email:
     service:
       url: ${EMAIL_SERVICE_URL:http://localhost:8095}
@@ -130,15 +133,16 @@ jwt:
   # RSA密钥配置
   rsa:
     key-file: ${JWT_RSA_KEY_FILE:.local/uniauth/rsa-keys.ser}
+    generate-if-missing: true
   # Token过期时间配置（毫秒）
   expires:
     access-token: 3600000  # 1小时
     refresh-token: 604800000  # 7天
   # 令牌配置
   token:
-    issuer: https://auth.example.com
-    audience: resource-server
-    kid: key-1
+    issuer: ${JWT_ISSUER:https://auth.example.com}
+    audience: ${JWT_AUDIENCE:resource-server}
+    kid: ${JWT_KID:key-1}
 
 spring:
   application:
@@ -244,3 +248,25 @@ logging:
     org.springframework.security.oauth2: INFO
     org.springframework.session: INFO
     org.springframework.session.jdbc.JdbcOperationsSessionRepository: INFO
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-components: never
+      show-details: never
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db,flywayMigration,signingKey
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true

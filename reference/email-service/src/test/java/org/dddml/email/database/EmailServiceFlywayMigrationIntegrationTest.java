@@ -22,7 +22,7 @@ class EmailServiceFlywayMigrationIntegrationTest {
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES =
-        new PostgreSQLContainer<>("postgres:16")
+        new PostgreSQLContainer<>("postgres:16.13")
             .withDatabaseName("email_service_migration_test")
             .withUsername("email_migration_test")
             .withPassword("email_migration_test");

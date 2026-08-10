@@ -2,6 +2,11 @@
 # 使用PostgreSQL数据库用于生产环境
 
 server:
+  forward-headers-strategy: none
+  max-http-request-header-size: 16KB
+  tomcat:
+    max-http-form-post-size: 1MB
+    max-swallow-size: 1MB
   servlet:
     session:
       cookie:
@@ -17,10 +22,40 @@ app:
     transport:
       expose-access-token: false
       diagnostics-enabled: false
+    rate-limit:
+      enabled: true
+      key-secret: ${AUTH_RATE_LIMIT_KEY_SECRET}
+    introspection:
+      client-id: ${INTROSPECTION_CLIENT_ID}
+      client-secret: ${INTROSPECTION_CLIENT_SECRET}
   frontend:
     url: ${APP_FRONTEND_URL}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS}
+  email:
+    service:
+      url: ${EMAIL_SERVICE_URL}
+      api-key: ${EMAIL_SERVICE_API_KEY}
+    verification:
+      hmac-key: ${EMAIL_VERIFICATION_HMAC_KEY}
+      hmac-key-id: ${EMAIL_VERIFICATION_HMAC_KEY_ID}
+  web3:
+    domain: ${WEB3_DOMAIN}
+
+jwt:
+  rsa:
+    key-file: ${JWT_RSA_KEY_FILE}
+    generate-if-missing: false
+  token:
+    issuer: ${JWT_ISSUER}
+    audience: ${JWT_AUDIENCE}
+    kid: ${JWT_KID}
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
 
 spring:
   datasource:

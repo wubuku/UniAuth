@@ -205,7 +205,7 @@ docker run -d --rm \
     -e "POSTGRES_USER=$DATABASE_USER" \
     -e "POSTGRES_PASSWORD=$DATABASE_PASSWORD" \
     -p 127.0.0.1::5432 \
-    postgres:16 >/dev/null
+    postgres:16.13 >/dev/null
 DATABASE_PORT="$(
     docker port "$CONTAINER_NAME" 5432/tcp \
         | awk -F: 'NR == 1 {print $NF}'

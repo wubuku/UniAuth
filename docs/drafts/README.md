@@ -21,10 +21,11 @@
 | 文档 | 状态 | 用途 |
 |------|------|------|
 | [DOCUMENTATION_PLAN.md](DOCUMENTATION_PLAN.md) | Live | 文档体系范围、维护规则和当前校准状态 |
-| [FINAL_HARDENING_EXIT_PLAN.md](FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；五个最终收尾批次、范围控制和加固退出条件 |
+| [FINAL_HARDENING_EXIT_PLAN.md](FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；F1-F5 已完成，阶段退出检查正在收敛 |
 | [F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md](F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md) | Draft | F1 邮箱与身份完整性的不可变基线、固定切片、迁移规则和验收矩阵 |
 | [F2_TOKEN_SESSION_HARDENING_IMPLEMENTATION.md](F2_TOKEN_SESSION_HARDENING_IMPLEMENTATION.md) | Draft | 已完成的 F2 token family、浏览器 transport、CSRF、strict introspection 实施与验收记录 |
 | [F3_OAUTH_WEB3_CONTRACT_HARDENING_IMPLEMENTATION.md](F3_OAUTH_WEB3_CONTRACT_HARDENING_IMPLEMENTATION.md) | Draft | 已完成的 F3 OAuth bind intent、Web3 challenge、recent-auth 和 canonical API 实施与验收记录 |
+| [F4_SUPPLY_CHAIN_PRODUCTION_OPERATIONS_HARDENING_IMPLEMENTATION.md](F4_SUPPLY_CHAIN_PRODUCTION_OPERATIONS_HARDENING_IMPLEMENTATION.md) | Reference | 已完成 F4 的供应链、生产配置、密钥、readiness 和运维门禁实施证据 |
 | [HARDENING_IMPLEMENTATION_PLAN.md](HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 完整风险路线图；当前实施范围由最终收尾计划控制 |
 | [NEXT_HARDENING_IMPLEMENTATION_PLAN.md](NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Historical | 既有测试优先批次和验收记录；不再驱动开放循环 |
 
@@ -32,8 +33,8 @@
 
 | 文档 | 状态 | 说明 |
 |------|------|------|
-| [EMAIL-AUTH-PLAN.md](EMAIL-AUTH-PLAN.md) | Needs verification | 邮箱注册/验证历史规划；当前发送值已与持久化值一致，失败/并发语义仍待加固 |
-| [PASSWORD-RESET-PLAN.md](PASSWORD-RESET-PLAN.md) | Needs verification | 密码重置历史规划；硬编码模板验证码已移除，失败/枚举/并发语义仍待加固 |
+| [EMAIL-AUTH-PLAN.md](EMAIL-AUTH-PLAN.md) | Historical | 邮箱注册/验证早期规划；当前 challenge、投递、消费和并发边界见 [F1 实施记录](F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md) |
+| [PASSWORD-RESET-PLAN.md](PASSWORD-RESET-PLAN.md) | Historical | 密码重置早期规划；当前枚举防护、challenge 和 token 撤销边界见 [F1](F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md)、[F2](F2_TOKEN_SESSION_HARDENING_IMPLEMENTATION.md) 与 [验证指南](../VERIFICATION.md) |
 
 ## 多登录方式
 
@@ -56,14 +57,14 @@
 | 文档 | 状态 | 说明 |
 |------|------|------|
 | [Spring_Boot_OAuth2_重定向问题.md](Spring_Boot_OAuth2_重定向问题.md) | Reference | 候选方案集合，不是当前实现说明 |
-| [oauth2-redirect-issue-analysis.md](oauth2-redirect-issue-analysis.md) | Needs verification | 记录当前硬编码前端地址问题，改动前需重新核对安全边界 |
+| [oauth2-redirect-issue-analysis.md](oauth2-redirect-issue-analysis.md) | Historical | 记录已修复的硬编码前端地址问题；当前 redirect 与绑定边界见 [F3 实施记录](F3_OAUTH_WEB3_CONTRACT_HARDENING_IMPLEMENTATION.md) |
 
 ## 异构资源服务器与微服务
 
 | 文档 | 状态 | 说明 |
 |------|------|------|
 | [HETEROGENEOUS-RESOURCE-SERVER-INTEGRATION.md](HETEROGENEOUS-RESOURCE-SERVER-INTEGRATION.md) | Historical | Python 资源服务器集成规划 |
-| [HETEROGENEOUS_INTEGRATION_COMPLETE.md](HETEROGENEOUS_INTEGRATION_COMPLETE.md) | Historical | 过去的完成记录；当前 Python 配置和 claim 映射仍有缺口 |
+| [HETEROGENEOUS_INTEGRATION_COMPLETE.md](HETEROGENEOUS_INTEGRATION_COMPLETE.md) | Historical | 过去的完成记录；当前 Python claim 契约和离线撤销限制见 [验证指南](../VERIFICATION.md) |
 | [SpringBoot资源服务器JWT保护实现指引.md](SpringBoot资源服务器JWT保护实现指引.md) | Reference | Java 资源服务器通用实现参考 |
 | [MICROSERVICE-INTEGRATION-GUIDE.md](MICROSERVICE-INTEGRATION-GUIDE.md) | Needs verification | 微服务整合指南，域名、端口和部署假设需按环境复核 |
 | [INTEGRATION-GUIDE.md](INTEGRATION-GUIDE.md) | Needs verification | 将认证模块复制到其他项目的通用指南，不代表当前仓库运行手册 |

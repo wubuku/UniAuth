@@ -220,6 +220,50 @@ class ConfigurationSafetyTest {
     void rsaKeyUsesAnIgnoredConfigurablePath() throws IOException {
         assertThat(property("application.yml", "jwt.rsa.key-file"))
                 .isEqualTo("${JWT_RSA_KEY_FILE:.local/uniauth/rsa-keys.ser}");
+        assertThat(property("application.yml", "jwt.rsa.generate-if-missing"))
+                .isEqualTo(true);
+        assertThat(property("application-prod.yml", "jwt.rsa.key-file"))
+                .isEqualTo("${JWT_RSA_KEY_FILE}");
+        assertThat(property("application-prod.yml", "jwt.rsa.generate-if-missing"))
+                .isEqualTo(false);
+    }
+
+    @Test
+    void productionConfigurationRequiresExplicitSecurityBoundaries()
+            throws IOException {
+        assertThat(property("application-prod.yml", "jwt.token.issuer"))
+                .isEqualTo("${JWT_ISSUER}");
+        assertThat(property("application-prod.yml", "jwt.token.audience"))
+                .isEqualTo("${JWT_AUDIENCE}");
+        assertThat(property("application-prod.yml", "jwt.token.kid"))
+                .isEqualTo("${JWT_KID}");
+        assertThat(property("application-prod.yml", "app.web3.domain"))
+                .isEqualTo("${WEB3_DOMAIN}");
+        assertThat(property("application-prod.yml",
+                "app.auth.rate-limit.key-secret"))
+                .isEqualTo("${AUTH_RATE_LIMIT_KEY_SECRET}");
+        assertThat(property("application-prod.yml",
+                "app.auth.introspection.client-secret"))
+                .isEqualTo("${INTROSPECTION_CLIENT_SECRET}");
+        assertThat(property("application-prod.yml",
+                "app.email.verification.hmac-key"))
+                .isEqualTo("${EMAIL_VERIFICATION_HMAC_KEY}");
+        assertThat(property("application-prod.yml",
+                "server.forward-headers-strategy"))
+                .isEqualTo("none");
+        assertThat(property("application-prod.yml",
+                "server.max-http-request-header-size"))
+                .isEqualTo("16KB");
+        assertThat(property("application-prod.yml",
+                "server.tomcat.max-http-form-post-size"))
+                .isEqualTo("1MB");
+        assertThat(property("application-prod.yml",
+                "server.tomcat.max-swallow-size"))
+                .isEqualTo("1MB");
+        assertThat(property("application-prod.yml", "springdoc.api-docs.enabled"))
+                .isEqualTo(false);
+        assertThat(property("application-prod.yml", "springdoc.swagger-ui.enabled"))
+                .isEqualTo(false);
     }
 
     @Test

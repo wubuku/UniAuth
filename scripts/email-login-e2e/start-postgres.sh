@@ -43,7 +43,7 @@ docker run -d --rm \
     -e "POSTGRES_USER=$POSTGRES_USER" \
     -e "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" \
     -p "127.0.0.1:${POSTGRES_PORT}:5432" \
-    postgres:16 >/dev/null
+    postgres:16.13 >/dev/null
 
 for _ in $(seq 1 60); do
     if PGPASSWORD="$POSTGRES_PASSWORD" pg_isready \

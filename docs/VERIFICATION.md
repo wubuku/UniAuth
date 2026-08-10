@@ -166,21 +166,23 @@ while counter < 3:
 
 L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 
-## 2026-08-09 当前加固门禁
+## 2026-08-10 当前加固门禁
 
-> 状态：Verified。覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1、Batch B2a、
+> 状态：F1-F5 已完成，2026-08-10 的完整 15 阶段组合门禁已通过；阶段末三轮检查待执行。
+> 覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1、Batch B2a、
 > Batch B2b、邮件服务边界、邮箱 challenge 投递接受/原子消费、敏感响应、API key
 > 单值鉴权、认证 Cookie/浏览器 refresh 存储预备切片，以及当前格式 refresh
 > replay/logout 持久撤销、CORS 单一来源、OAuth2 redirect/Referer 信任边界和
 > F1 邮箱身份完整性、F2 token family/浏览器 transport/CSRF/strict introspection、
-> F3 OAuth2/Web3/canonical API 契约；
-> 不代表 H1.4-H8、完整认证正确性或生产就绪。
+> F3 OAuth2/Web3/canonical API 契约，以及 F4 供应链/生产配置/运维定向验收；
+> 不代表 H1.5-H8 的全部生产级长期目标、完整认证正确性或生产就绪。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 222/222；0 failures/errors/skips |
-| `scripts/test-http-e2e.sh` | 通过 | 16/16；真实应用、独立 PostgreSQL、四条安全链 CORS allow/deny、refresh replay、logout 后 access/refresh/introspection 拒绝与 blacklist 行形状，以及既有邮件、Web3、JWT、登录方式和重启路径 |
+| `mvn test` | 通过 | 246/246；0 failures/errors/skips |
+| 根 Maven dependency audit | 通过 | OWASP Dependency-Check 报告包含 94 项 dependency evidence；CVSS 7 阻断 |
+| `scripts/test-http-e2e.sh` | 通过 | 17/17；真实应用、独立 PostgreSQL 16.13、四条安全链 CORS、refresh/logout、邮件/Web3/JWT/登录方式，以及紧急 signing-key rotation/revoke |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 16/16；覆盖 exact schema、V2/V4/V6 初始及 apply 前只读预检、PostgreSQL major、确认 token、V2-V6 grouped rollback 与临时凭据清理 |
 | Flyway integration | 通过 | fresh V1→V8、existing baseline V1→V8、V7→V8、Hibernate validate、Session、checksum/failure recovery |
 | Shared-schema process E2E | 通过 | 4/4；UniAuth-first 与 email-first 两种启动顺序、独立 history、受控 baseline V0、重启与业务表共存 |
@@ -188,21 +190,22 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `blacksheep_dev` rehearsal | 通过 | 只读；fingerprint `12c67edaba1ca20833c0db634226b2cd3d9c07549cc8c9a390a5ff2df5eadebe` |
 | `npm run lint` | 通过 | ESLint 0 warnings/errors |
 | `npm ci` | 通过 | 无宽松参数；lockfile 和统一门禁显式使用官方 npm registry |
-| `npm audit --audit-level=high` | 通过 | 0 high/critical；2 个 React Router moderate advisories 见下文 |
+| `npm audit --audit-level=moderate` | 通过 | 0 vulnerabilities |
 | `npx tsc --noEmit` | 通过 | 无 TypeScript 错误 |
 | `npm run build` | 通过 | Vite 生产构建成功，保留 chunk warning |
 | `npm run test:e2e` | 通过 | 29/29 Chrome-channel Mock Playwright tests；OAuth 登录/显式绑定入口分离，同页面与同源双标签页只消费一次 refresh，logout 保留无关存储，跨标签页 logout 不会被迟到 refresh continuation 恢复 |
 | `npm run test:e2e:production` | 通过 | 2/2；生产静态构建不包含诊断路由/bundle，普通登录不持久化 bearer credential |
 | 邮箱登录浏览器 E2E | 通过 | 1/1；真实 PostgreSQL/UniAuth/Vite/Python/stub，注册、验证码、同源回跳、跨 hostname Bearer、`credentials: omit`、资源域哨兵 Cookie 不随请求发送、邮箱密码再次登录 |
-| Python | 通过 | 20/20 离线 RSA/JWKS/Flask tests；refresh、legacy session token、缺失/畸形 `sid`/generation/`ver`/`auth_time`、`type`/`jti` 和非法 Bearer 格式失败关闭 |
+| Python | 通过 | 20/20 离线 RSA/JWKS/Flask tests；hash lock 与 audit 通过；仅有 3 个精确、2026-10-01 UTC 到期的 `cryptography 48.0.1` 例外 |
 | 邮件 REST stub contract | 通过 | 12/12；API key/health/接受/拒绝/限流/坏请求、idempotent retry/conflict、delivery status、response-lost recovery 和安全临时捕获文件 |
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 | Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
+| `scripts/verify.sh` | 通过 | 15/15；670 个源码/候选构建文件敏感扫描 0 findings，57 个 Markdown 文件链接通过 |
 
-Shell HTTP E2E 使用 `test` profile、UniAuth disposable PostgreSQL、参考邮件服务
+Shell HTTP E2E 使用 `test` profile、UniAuth disposable PostgreSQL 16.13、参考邮件服务
 disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列开始前启动真实
-参考邮件服务 JAR；第 11/16、12/16 步骤通过真实 HTTP 调用模板端点并直接检查
-参考服务的 `email_queue`；第 13/16、14/16 步骤为获得稳定的 `503/429` 失败夹具
+参考邮件服务 JAR；第 11/17、12/17 步骤通过真实 HTTP 调用模板端点并直接检查
+参考服务的 `email_queue`；第 13/17、14/17 步骤为获得稳定的 `503/429` 失败夹具
 而重启应用并切换到受控 loopback 邮件 REST stub。它验证：
 
 - Flyway V1/V2/V3/V4/V5/V6/V7/V8 和自定义 history table。
@@ -220,6 +223,33 @@ disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列�
   challenge、transactional outbox、真实参考服务 idempotent 接受/status 恢复、
   同步拒绝/限流失败关闭、不支持 purpose 拒绝、重试耗尽和密码重置。
 - logout cookie 清理、Flyway history 和最终数据库不变量。
+- 第 16/17 步执行单 active key 的紧急 cutover：更换 key path/kid，旧 token 与
+  introspection 失效，JWKS 发布新 kid，新登录 token 可用，retired 演练 key 被销毁。
+
+### F4 定向验收证据
+
+- 根项目和邮件项目均使用 Spring Boot 3.5.16、Maven Enforcer 和 OWASP
+  Dependency-Check 12.2.2；CVSS 7 阻断，报告缺失、扫描失败、suppression 到期
+  fail closed。唯一 Tomcat examples-only suppression 于 2026-09-01 到期。
+- Python runtime/tools 使用带 hash lock 的隔离安装和 `pip-audit`；React Router
+  固定 7.18.2，前端 audit/lint/type/build/Playwright 纳入统一门禁。
+- Python audit 的唯一例外为 `cryptography 48.0.1` 的 `PYSEC-2026-3552`、
+  `PYSEC-2026-3553` 和 `PYSEC-2026-3554`；当前 JWT/JWKS 示例不使用对应
+  PKCS#7/S/MIME 或 X.509 chain/name-constraint 路径，例外于 2026-10-01 UTC 到期。
+- 生产配置、readiness、RSA key 权限/缺失、OAuth timeout、伪造 forwarded header、
+  header/cookie/form 上限和 prod Swagger/diagnostics 关闭的定向 Java 测试通过；
+  OAuth timeout 同时覆盖 authorization-code token 交换、标准 user-info 和 GitHub/X
+  补充 profile 请求，并验证 token 成功解析及慢响应读取超时。
+- Authorization Server 内存 client/password grant 已移除；自定义
+  JWKS/introspection 保留，未支持 AS endpoint deny all，OAuth Client
+  `/oauth2/authorization/{provider}` 路径回归测试通过。
+- 敏感扫描 fail-closed 自测 8/8；当前例外清单为空。
+- `scripts/test-auth-backup-restore-rehearsal.sh` 6/6 通过，覆盖 Flyway V1-V8、
+  owner-only archive/checksum、损坏 archive 拒绝、隔离恢复和恢复后 Session/token
+  失效。
+- `scripts/test-http-e2e.sh` 17/17 通过。
+- 当前 Maven WebJar 的 DOMPurify medium 公告低于 CVSS 7 阻断线；prod
+  Swagger/OpenAPI 已关闭，该残余风险保持可见并等待兼容修复版本。
 
 认证 Cookie/浏览器 refresh 存储预备切片还验证：
 
@@ -518,7 +548,7 @@ migration：
 > 状态：Implemented。最终提交门槛固定使用下述仓库外 artifact 目录并保存完整日志。
 
 根 `scripts/verify.sh` 现在先固定当前 HEAD、tracked diff 和非忽略 untracked 文件
-指纹，再把全部非忽略源码复制到进程专属临时 Git 快照中执行 11 个阶段。这样并行
+指纹，再把全部非忽略源码复制到进程专属临时 Git 快照中执行 15 个阶段。这样并行
 门禁不会共享根 `target/`、前端 `node_modules/` 或静态构建输出，也不会因另一进程
 执行 `mvn clean` 导致测试运行中 `.class` 消失。门禁结束前会在原工作区执行
 `git diff --check` 并重新核对源码指纹；`rsync` 完成后也会在编译前立即复核一次，
@@ -550,12 +580,8 @@ VERIFICATION_ARTIFACTS_DIR=/tmp/uniauth-verification-artifacts-20260808 \
 存在 Surefire XML，才能继承本轮完整门槛结果。路径与信号守卫由
 `scripts/test-verification-artifacts-guard.sh` 的 `8/8` 测试固定。
 
-前端依赖已把 Axios、Ethers、Vite、Rollup、PostCSS 及相关传递依赖升级到修复版本。
-审计仍报告 2 个 React Router moderate advisories；当前代码只使用客户端
-`BrowserRouter/Routes`，导航 pathname 均为固定同源值；OAuth provider 错误仅进入
-`encodeURIComponent` 编码后的 `/login` query 参数，不成为目标 URL。不使用 RSC、
-SSR data router 或 `deserializeErrors`。门禁阻止 high/critical；若外部输入开始决定
-导航目标 URL，必须先重新评估并升级/替换路由依赖。
+前端依赖已把 Axios、Ethers、React Router、Vite、Rollup、PostCSS 及相关传递依赖
+升级到修复版本；当前 moderate 级 npm audit 报告 0 vulnerabilities。
 
 ## 2026-08-07 实施前基线
 
@@ -631,9 +657,11 @@ git diff --check
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-该命令串行执行 Shell syntax、严格 `npm ci`、high/critical 依赖审计、Java compile/tests、
-HTTP E2E、Flyway baseline guard、frontend lint/type/build/Mock Playwright、真实邮箱
-登录浏览器 E2E、Python tests、文档链接和 patch hygiene。统一入口通过
+该命令串行执行 Shell/supply-chain/sensitive-scan 自测、严格 `npm ci`、moderate
+依赖审计、Python hash lock/audit/contracts、Java compile/tests、两个 Maven 漏洞
+审计、邮件组件门禁、HTTP/shared-schema/Flyway/backup-restore E2E、frontend
+lint/type/build/Mock 与 production Playwright、真实邮箱登录浏览器 E2E、候选构建
+敏感扫描、文档链接和 patch hygiene。统一入口通过
 `NPM_REGISTRY` 固定 npm registry，
 默认使用 `https://registry.npmjs.org/`，避免继承用户级镜像后因缺少 audit API 而误失败。
 网络受限时可同时设置本机代理；脚本会把本地回环地址加入 `NO_PROXY`。
@@ -700,6 +728,7 @@ HTTP E2E、Flyway baseline guard、frontend lint/type/build/Mock Playwright、�
 
 - [开发指南](DEVELOPMENT.md)
 - [配置基线](CONFIGURATION.md)
+- [运维基线](OPERATIONS.md)
 - [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md)
 - [历史异构资源服务器验证记录](../VERIFICATION_CHECKLIST.md)
 - [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md)

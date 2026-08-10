@@ -138,7 +138,7 @@ docker run -d --rm \
     -e "POSTGRES_USER=$SOURCE_USER" \
     -e "POSTGRES_PASSWORD=$SOURCE_PASSWORD" \
     -p 127.0.0.1::5432 \
-    postgres:16 >/dev/null
+    postgres:16.13 >/dev/null
 SOURCE_PORT="$(container_port "$SOURCE_CONTAINER")"
 wait_for_postgres "$SOURCE_PORT"
 

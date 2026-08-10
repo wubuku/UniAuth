@@ -117,23 +117,22 @@
 ## 已知事实与待修复项
 
 - `dev`、`test`、`prod` 已统一为显式 PostgreSQL 16，SQLite runtime 已退役。
-- Flyway V1 baseline + V2 + V3 + V4 + V5 + V6 + V7 已接管 schema，并加固登录方式行形状、
+- Flyway V1 baseline + V2 + V3 + V4 + V5 + V6 + V7 + V8 已接管 schema，并加固登录方式行形状、
   primary、集合变更 CAS、其余目标实体约束、Web3/SIWE challenge、canonical email、
   HMAC challenge、transactional outbox、认证限流、安全事件、token family、用户
   security version 和 session claim/rotation/revoke 契约；旧 SQL 已归档到 runtime
   classpath 外。
 - Java 已有 PostgreSQL/Testcontainers 集成测试；当前完整 Maven 为
-  219/219，0 failures/errors/skips。
-- HTTP Shell E2E 当前 16/16、Flyway baseline guard 16/16、Mock Playwright
-  28/28、生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器
+  246/246，0 failures/errors/skips。
+- HTTP Shell E2E 当前 17/17、Flyway baseline guard 16/16、Mock Playwright
+  29/29、生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器
   20/20、邮件 REST stub contract 12/12；同页面和同源双标签页 refresh 协调、
   跨标签页 refresh/logout 迟到写回拒绝、logout 存储边界、完整 session claims、
   生产 diagnostics 排除与跨 hostname Bearer/Cookie 隔离均已进入统一门禁。
-- 前端严格 `npm ci`、high/critical 依赖审计、lint、typecheck 和生产构建通过；
-  `scripts/verify.sh` 与 GitHub Actions 使用统一验证入口。
-- npm audit 仍有 2 个 React Router moderate advisories；当前客户端路由 pathname
-  固定为同源值，OAuth 错误仅进入编码后的 query，不触达公告中的
-  RSC/SSR data-router/外部输入决定目标 URL 路径；后续版本升级继续跟踪。
+- 前端严格 `npm ci`、moderate 依赖审计、lint、typecheck 和生产构建通过；
+  `scripts/verify.sh` 与 GitHub Actions 使用统一验证入口，F5 完整门禁 15/15 已通过。
+- npm audit 当前为 0 vulnerabilities。Python audit 仅保留 3 个精确、限时的
+  `cryptography 48.0.1` 例外，统一门禁验证 owner、理由、证据和到期日。
 - UniAuth 主应用只包含外部邮件服务 HTTP 适配器；仓库已纳入独立参考实现。
   live guides 已明确邮箱注册/重置的运行依赖、端点和模板契约、普通密码登录边界，
   API key/超时、参考组件自己的 Flyway V1-V5、默认 `dedicated` 与显式
