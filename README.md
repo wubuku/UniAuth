@@ -1,16 +1,17 @@
 # UniAuth - 统一身份认证系统
 
-> 状态：Needs verification。H0.1-H0.3、PostgreSQL/Flyway H1.1-H1.3、测试基础
-> Batch A、登录方式约束 Batch B1、删除/primary 并发保护 Batch B2a 与实体约束/索引
-> 对齐 Batch B2b、邮件服务边界与参考实现已完成加固验证，但项目尚无生产就绪证明。
+> 状态：顶部当前可执行基线与 live guides 已于 2026-08-10 校准；下文长篇历史说明
+> 仍需按其状态标记核验。UniAuth 已完成仓库级工程加固基线：F1-F5、完整 15 阶段门禁
+> 和阶段末连续三轮无修改检查均已完成。
+> 该声明不等同于生产发布、容量、真实 provider、灾备或合规认证完成。
 > 仓库不默认激活 Spring profile，所有 profile 只支持显式 PostgreSQL 16，Flyway 是唯一
 > schema owner，演示数据默认关闭且不执行全表清理。
 > 开始开发或启动前，请先阅读 [文档导航](docs/README.md)、
 > [配置基线](docs/CONFIGURATION.md)、[开发指南](docs/DEVELOPMENT.md) 和
 > [验证指南](docs/VERIFICATION.md)。真实邮箱注册、登录、资源回跳和跨域 Bearer
 > 验证见[邮箱登录浏览器 E2E](docs/EMAIL_LOGIN_BROWSER_E2E.md)。
-> [加固阶段最终收尾计划](docs/drafts/FINAL_HARDENING_EXIT_PLAN.md)中的 F1-F5
-> 已经完成并通过完整统一门禁；当前只剩阶段末连续三轮无修改检查。
+> [加固阶段最终收尾计划](docs/drafts/FINAL_HARDENING_EXIT_PLAN.md)现作为已完成记录；
+> 后续需求进入普通 feature、fix 或 maintenance 规划，不再自动创建新的加固批次。
 > 下文保留了较多设计目标、部署示例和历史说明，包括已经退役的 SQLite 路径。
 > 当前操作只使用上述 live guides；不要执行下文的 SQLite、手工 schema init 或旧域名示例。
 
@@ -25,7 +26,7 @@
 | 数据库 | PostgreSQL 16-only；自动化固定 `postgres:16.13` |
 | Migration | Flyway V1 baseline + V2 + V3 + V4 + V5 + V6 + V7 + V8，history `uniauth_flyway_schema_history` |
 | 邮件数据库布局 | 默认独立数据库；显式 `shared-uniauth` 可与 UniAuth 共用 `public` schema，两侧 relation 名无冲突并使用独立 Flyway history |
-| Java 验证 | F5 完整基线 246 tests，0 failures/errors/skips |
+| Java 验证 | 当前完整基线 247 tests，0 failures/errors/skips |
 | 邮件参考服务 | F5 完整基线 154 tests，0 failures/errors/skips |
 | Shared-schema E2E | 4/4；UniAuth/邮件服务两种启动顺序、独立 history 和 baseline V0 |
 | HTTP E2E | 17/17；含四条安全链 CORS、邮件真实/失败路径和紧急签名 key rotation/revoke |
@@ -389,11 +390,11 @@ git branch -a
 项目使用 `.env` 文件管理敏感配置。在项目根目录创建或修改 `.env` 文件，填入各 OAuth2 提供商的凭据信息。
 
 ```bash
-# 复制示例配置文件
-cp .env.example .env
+# 创建仅当前用户可读写的本地配置文件
+touch .env
+chmod 600 .env
 
-# 编辑配置文件
-vim .env
+# 使用任意编辑器按 docs/CONFIGURATION.md 填写所需变量
 ```
 
 以下为必需的环境变量配置说明：
@@ -402,7 +403,7 @@ vim .env
 # PostgreSQL 数据库连接配置
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
-POSTGRES_DATABASE=uni_auth
+POSTGRES_DATABASE=uniauth_dev
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=your_secure_password
 
@@ -425,8 +426,11 @@ CORS_ALLOWED_ORIGINS=http://localhost:5173
 # 可选：逗号分隔的额外受信 OAuth2 错误回跳 origin
 # APP_FRONTEND_ALLOWED_REDIRECT_ORIGINS=https://console.example.com
 
-# JWT 密钥配置（生产环境必须修改）
-JWT_SECRET=your-base64-encoded-secret-key
+# 生产环境使用仓库外的 owner-only RSA key，并显式配置 token identity
+# JWT_RSA_KEY_FILE=/absolute/path/outside/the/repository/rsa-keys.ser
+# JWT_ISSUER=https://identity.example.org
+# JWT_AUDIENCE=your-resource-audience
+# JWT_KID=your-active-key-id
 ```
 
 `APP_FRONTEND_URL` 可以包含部署 context path；OAuth2 成功和错误回跳都会保留该

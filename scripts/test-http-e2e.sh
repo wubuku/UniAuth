@@ -1378,8 +1378,8 @@ wallet_status="$(
     curl -sS -o /dev/null -w '%{http_code}' \
         "${BASE_URL}/api/auth/web3/status/${web3_address}"
 )"
-[ "$wallet_status" = "404" ] \
-    || fail "removed Web3 wallet status oracle did not return 404"
+[ "$wallet_status" = "403" ] \
+    || fail "removed Web3 wallet status oracle was not denied by default"
 
 concurrent_web3_challenge="$(signed_challenge "$web3_wallet")"
 concurrent_status_one="$TEMP_DIR/web3-concurrent-one.status"

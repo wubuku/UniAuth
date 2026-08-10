@@ -1,7 +1,7 @@
 # 草稿、计划与历史材料索引
 
 > 状态：Live。本目录中的文件全部保留原路径。
-> 分类基于 2026-08-09 的当前代码和配置，
+> 分类基于 2026-08-10 的当前代码和配置，
 > 不代表文件名中的 `COMPLETE`、勾选项或正文中的“已完成”仍然成立。
 > 当前运行事实请先阅读 [配置基线](../CONFIGURATION.md) 和
 > [验证指南](../VERIFICATION.md)。
@@ -21,12 +21,12 @@
 | 文档 | 状态 | 用途 |
 |------|------|------|
 | [DOCUMENTATION_PLAN.md](DOCUMENTATION_PLAN.md) | Live | 文档体系范围、维护规则和当前校准状态 |
-| [FINAL_HARDENING_EXIT_PLAN.md](FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；F1-F5 已完成，阶段退出检查正在收敛 |
-| [F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md](F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md) | Draft | F1 邮箱与身份完整性的不可变基线、固定切片、迁移规则和验收矩阵 |
-| [F2_TOKEN_SESSION_HARDENING_IMPLEMENTATION.md](F2_TOKEN_SESSION_HARDENING_IMPLEMENTATION.md) | Draft | 已完成的 F2 token family、浏览器 transport、CSRF、strict introspection 实施与验收记录 |
-| [F3_OAUTH_WEB3_CONTRACT_HARDENING_IMPLEMENTATION.md](F3_OAUTH_WEB3_CONTRACT_HARDENING_IMPLEMENTATION.md) | Draft | 已完成的 F3 OAuth bind intent、Web3 challenge、recent-auth 和 canonical API 实施与验收记录 |
+| [FINAL_HARDENING_EXIT_PLAN.md](FINAL_HARDENING_EXIT_PLAN.md) | Reference | Completed；F1-F5、统一门禁和阶段退出 3/3 检查记录 |
+| [F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md](F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md) | Reference | 已完成 F1 的不可变基线、固定切片、迁移规则和验收记录 |
+| [F2_TOKEN_SESSION_HARDENING_IMPLEMENTATION.md](F2_TOKEN_SESSION_HARDENING_IMPLEMENTATION.md) | Reference | 已完成 F2 的 token family、浏览器 transport、CSRF、strict introspection 实施与验收记录 |
+| [F3_OAUTH_WEB3_CONTRACT_HARDENING_IMPLEMENTATION.md](F3_OAUTH_WEB3_CONTRACT_HARDENING_IMPLEMENTATION.md) | Reference | 已完成 F3 的 OAuth bind intent、Web3 challenge、recent-auth 和 canonical API 实施与验收记录 |
 | [F4_SUPPLY_CHAIN_PRODUCTION_OPERATIONS_HARDENING_IMPLEMENTATION.md](F4_SUPPLY_CHAIN_PRODUCTION_OPERATIONS_HARDENING_IMPLEMENTATION.md) | Reference | 已完成 F4 的供应链、生产配置、密钥、readiness 和运维门禁实施证据 |
-| [HARDENING_IMPLEMENTATION_PLAN.md](HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 完整风险路线图；当前实施范围由最终收尾计划控制 |
+| [HARDENING_IMPLEMENTATION_PLAN.md](HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 历史风险路线图；加固阶段已结束，不再驱动活动批次 |
 | [NEXT_HARDENING_IMPLEMENTATION_PLAN.md](NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Historical | 既有测试优先批次和验收记录；不再驱动开放循环 |
 
 ## 邮箱与密码

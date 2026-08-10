@@ -186,7 +186,7 @@ class F1IdentityBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
                         "/api/auth/email/status/{email}",
                         "f1-oracle@example.invalid"
                 ))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isForbidden());
 
         mockMvc.perform(post("/api/auth/check-verification-code")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -197,7 +197,7 @@ class F1IdentityBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
                                   "purpose": "REGISTRATION"
                                 }
                                 """))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isForbidden());
     }
 
     @Test

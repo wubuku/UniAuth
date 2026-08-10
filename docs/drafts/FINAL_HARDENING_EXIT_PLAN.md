@@ -1,8 +1,9 @@
 # UniAuth 加固阶段最终收尾计划
 
-> 状态：F1-F5 completed；阶段退出检查 pending
+> 状态：Completed
 > 冻结日期：2026-08-09
-> 当前总体进度：约 99.9%
+> 完成日期：2026-08-10
+> 当前总体进度：100%
 > 目标：只加固、修复和验证现有功能；完成本文五个批次后退出加固阶段
 > 上位路线图：[全面加固实施规划](HARDENING_IMPLEMENTATION_PLAN.md)
 > 历史执行记录：[下一轮加固实施计划](NEXT_HARDENING_IMPLEMENTATION_PLAN.md)
@@ -36,11 +37,12 @@ redirect 等多批修复；邮件参考服务已推进到独立 Flyway V5。
 | 登录方式、Web3 challenge、token family/replay/logout、CORS/redirect | F3 固定范围已完成 | 100% |
 | 邮箱 challenge、canonical identity、可靠投递和枚举防护 | F1 固定范围已完成 | 100% |
 | token family、浏览器 transport、CSRF 和身份来源消歧 | F2 固定范围已完成 | 100% |
-| OAuth2 显式绑定、provider trust、生产配置和密钥运维 | F5 组合门禁已通过；退出检查待执行 | 100% |
+| OAuth2 显式绑定、provider trust、生产配置和密钥运维 | F5 组合门禁与退出检查均已通过 | 100% |
 
 F1 启动前综合进度约 82%。F1、F2、F3 已于 2026-08-09 分别通过完整统一门禁；
 F4 已于 2026-08-09 通过定向验收；F5 也已于 2026-08-09 通过完整统一门禁。
-当前综合进度约 99.9%，后续只执行阶段退出检查，不能通过增加零碎测试或文档条目虚增。
+当前综合进度为 100%。加固阶段已经退出；后续工作进入普通 feature、fix 或
+maintenance 规划，不能自动创建第六个加固批次。
 
 | 批次 | 状态 | 进度口径 |
 |------|------|----------|
@@ -49,7 +51,7 @@ F4 已于 2026-08-09 通过定向验收；F5 也已于 2026-08-09 通过完整�
 | F3 OAuth2、Web3 与 canonical API 契约 | 已完成并通过统一门禁 | 91% -> 95% |
 | F4 依赖、生产配置、密钥和运维门禁 | 已完成定向验收 | 95% -> 98% |
 | F5 最终证据与统一阶段门禁 | 已完成并通过统一门禁 | 98% -> 99% |
-| F 阶段退出检查 | 待执行 | 99% -> 100% |
+| F 阶段退出检查 | 已完成；连续无修改 3/3 | 99% -> 100% |
 
 ## 3. F1 开始前冻结事实
 
@@ -433,7 +435,7 @@ F1-F5 全部完成后的阶段末检查发生实质修改时，才将该统一�
 
 - 完整 `PYTHON_BIN=python3 scripts/verify.sh` 15/15 通过，以
   `PASS: complete repository verification gate` 结束，并保存仓库外成功证据。
-- 根 Maven 246/246、邮件 Maven 154/154；shared-schema 4/4、主 HTTP
+- 根 Maven 247/247、邮件 Maven 154/154；shared-schema 4/4、主 HTTP
   E2E 17/17、主 Flyway guard 16/16、认证备份恢复 6/6、邮件 runtime 44/44、
   邮件 HTTP 11/11、邮件 Flyway guard 15/15、邮件备份恢复 10/10 全部通过。
 - 前端 lint/typecheck/build、Mock Playwright 29/29、生产 Playwright 2/2、
@@ -441,11 +443,11 @@ F1-F5 全部完成后的阶段末检查发生实质修改时，才将该统一�
 - 根/邮件 OWASP 报告分别包含 94/54 项 dependency evidence；npm audit 为
   0 vulnerabilities。Python audit 仅保留 3 个精确、到期日为 2026-10-01 UTC 的
   `cryptography 48.0.1` 例外，门禁验证其 advisory、版本、owner、理由和不可达证据。
-- 敏感扫描覆盖 670 个源码与候选构建文件，0 findings、0 sensitive-scan exceptions；
+- 敏感扫描覆盖 671 个源码与候选构建文件，0 findings、0 sensitive-scan exceptions；
   57 个 Markdown 文件相对链接和 `git diff --check` 通过。
 - OAuth authorization-code token endpoint 与 provider user-info/profile 请求共用
   有界 connect/read timeout；定向测试覆盖有效 token 响应解析和慢响应超时。
-- F5 不执行单批三轮检查；当前进入唯一一次 F 阶段退出检查。
+- F5 未执行单批三轮检查；唯一一次 F 阶段退出检查已于 2026-08-10 完成。
 
 ### F 阶段退出检查（99% -> 100%）
 
@@ -455,6 +457,13 @@ F1-F5 全部完成后的阶段末检查发生实质修改时，才将该统一�
 3. 检查通过后将本计划标记 Completed，将旧执行计划标记 Historical，并提交推送。
 4. 宣布“加固阶段结束”，后续需求使用普通 feature/fix/maintenance 计划；不得自动
    创建新的 hardening batch。
+
+完成结果（2026-08-10）：
+
+- 完整 15 阶段统一门禁通过后，固定范围的实现/配置/迁移/测试、验证机制/供应链/
+  验收产物，以及文档/工作区卫生/退出条件审查连续三轮无修改通过。
+- 审查中发现的文档库存事实错误先行修复并将计数归零，修复后重新达到 3/3。
+- F1-F5 和阶段退出条件全部满足，加固阶段正式结束，不创建第六批。
 
 最终声明必须写成：
 

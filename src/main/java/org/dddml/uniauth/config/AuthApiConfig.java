@@ -32,7 +32,6 @@ public class AuthApiConfig {
                     "/api/auth/login",
                     "/api/auth/logout",
                     "/api/auth/refresh",
-                    "/api/auth/check-verification-code",
                     "/api/auth/send-verification-code",
                     "/api/auth/verify-email",
                     "/api/auth/forgot-password",
@@ -42,9 +41,7 @@ public class AuthApiConfig {
                 ).permitAll()
                 .requestMatchers(HttpMethod.GET,
                     "/api/auth/csrf",
-                    "/api/auth/email/status/*",
-                    "/api/auth/web3/nonce/*",
-                    "/api/auth/web3/status/*"
+                    "/api/auth/web3/nonce/*"
                 ).permitAll()
                 .anyRequest().denyAll()
             )

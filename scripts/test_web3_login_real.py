@@ -418,13 +418,13 @@ class RealWeb3LoginTester:
                 timeout=10
             )
 
-            if status1_response.status_code != 404:
+            if status1_response.status_code != 403:
                 return TestResult(
                     name="Status Oracle Removal",
                     status=TestStatus.FAIL,
                     message=f"Wallet 1 status endpoint returned {status1_response.status_code}"
                 )
-            if status2_response.status_code != 404:
+            if status2_response.status_code != 403:
                 return TestResult(
                     name="Status Oracle Removal",
                     status=TestStatus.FAIL,

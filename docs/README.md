@@ -1,6 +1,6 @@
 # UniAuth 文档导航
 
-> 当前文档基线：2026-08-09
+> 当前文档基线：2026-08-10
 > 本页是项目文档的主入口。代码、配置与本文冲突时，以当前代码和配置为准。
 > `docs/Perplexity/` 和 `docs/drafts/` 中包含大量历史方案，不应直接当作运行手册。
 
@@ -16,12 +16,14 @@
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
 | [运维基线](OPERATIONS.md) | Live | 生产 guard、readiness、备份恢复、紧急密钥轮换和供应链门禁 |
 | [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md) | Live | 真实 PostgreSQL/UniAuth/Vite/Python/邮件 stub 的注册、登录、回跳与跨域 Bearer 复现 |
-| [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md) | Draft | Scope frozen；F1-F5 已完成，阶段末三轮检查待执行 |
-| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 保存完整风险背景；当前执行边界由最终收尾计划控制 |
+| [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md) | Reference | Completed；保存 F1-F5、统一门禁和阶段末 3/3 检查的退出记录 |
+| [加固实施规划](drafts/HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 历史风险路线图；加固阶段已结束，不再作为活动执行计划 |
 | [下一轮实施计划](drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Historical | 已完成批次与证据记录；不再驱动开放循环 |
 
 ## 当前关键结论
 
+- UniAuth 已完成仓库级工程加固基线；该声明不等同于生产发布、容量、真实 provider、
+  灾备或合规认证完成。
 - 默认不激活 Spring profile，后端端口是 `8081`。
 - 演示数据默认关闭且不再全表清理；显式启用仍只允许 test/demo 命名的 disposable 数据库。
 - Vite 使用 `5173`，Python 资源服务器代码实际使用 `5002`。
@@ -75,7 +77,7 @@
 |------|------|------|
 | [前后端契约](FRONTEND_BACKEND_CONTRACT.md) | Needs verification | 大型设计/契约材料，代码示例和端口存在漂移 |
 | [GitHub OAuth2 集成规划](GitHub-OAuth2-Integration-Planning.md) | Historical | GitHub 集成前的规划，功能现已部分落地 |
-| [草稿与历史索引](drafts/README.md) | Live | 24 份计划、调查、实施记录的逐项分类 |
+| [草稿与历史索引](drafts/README.md) | Live | 28 份计划、调查、实施记录的逐项分类 |
 | [文档体系计划](drafts/DOCUMENTATION_PLAN.md) | Live | 文档体系范围、维护规则和持续校准状态 |
 
 ## Perplexity 历史资料

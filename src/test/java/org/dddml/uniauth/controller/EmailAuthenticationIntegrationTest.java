@@ -288,7 +288,7 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
         DeliveredChallenge challenge = sendRegistrationChallenge(email);
 
         mockMvc.perform(get("/api/auth/email/status/{email}", email))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isForbidden());
         mockMvc.perform(post("/api/auth/check-verification-code")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
@@ -297,7 +297,7 @@ class EmailAuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                                 "verificationCode", differentCode(challenge.code()),
                                 "purpose", "REGISTRATION"
                         ))))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isForbidden());
 
         assertThat(verificationCodeRepository.findById(challenge.handle()))
                 .get()

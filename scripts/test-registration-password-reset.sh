@@ -114,7 +114,7 @@ done
 echo "4/6 Removed email status oracle remains inaccessible"
 status_oracle_status=$(curl -sS -o /dev/null -w '%{http_code}' \
   "${BASE_URL}/api/auth/email/status/${EMAIL_NOT_REGISTERED}")
-[ "${status_oracle_status}" = "404" ] \
+[ "${status_oracle_status}" = "403" ] \
   || fail "removed email status oracle returned ${status_oracle_status}"
 
 echo "5/6 Removed read-only verification oracle remains inaccessible"
@@ -131,7 +131,7 @@ check_oracle_status=$(curl -sS -o /dev/null -w '%{http_code}' \
         purpose: "REGISTRATION"
       }'
   )")
-[ "${check_oracle_status}" = "404" ] \
+[ "${check_oracle_status}" = "403" ] \
   || fail "removed verification oracle returned ${check_oracle_status}"
 
 echo "6/6 Invalid input and repeat-request paths return structured results"

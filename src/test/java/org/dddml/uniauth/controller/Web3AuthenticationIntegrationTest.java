@@ -102,7 +102,7 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(jsonPath("$.errorCode").value("INVALID_SIGNATURE"));
 
         mockMvc.perform(get("/api/auth/web3/status/{wallet}", walletAddress))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isForbidden());
 
         SignedChallenge secondChallenge = requestSignedChallenge(walletAddress, keyPair);
         mockMvc.perform(post("/api/auth/web3/verify")

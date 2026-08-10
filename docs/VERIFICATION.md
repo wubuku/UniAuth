@@ -166,21 +166,23 @@ while counter < 3:
 
 L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 
-## 2026-08-10 当前加固门禁
+## 2026-08-10 已完成的工程加固基线
 
-> 状态：F1-F5 已完成，2026-08-10 的完整 15 阶段组合门禁已通过；阶段末三轮检查待执行。
+> 状态：Completed。F1-F5、2026-08-10 的完整 15 阶段组合门禁，以及阶段末连续
+> 三轮无修改检查均已完成。
 > 覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1、Batch B2a、
 > Batch B2b、邮件服务边界、邮箱 challenge 投递接受/原子消费、敏感响应、API key
 > 单值鉴权、认证 Cookie/浏览器 refresh 存储预备切片，以及当前格式 refresh
 > replay/logout 持久撤销、CORS 单一来源、OAuth2 redirect/Referer 信任边界和
 > F1 邮箱身份完整性、F2 token family/浏览器 transport/CSRF/strict introspection、
 > F3 OAuth2/Web3/canonical API 契约，以及 F4 供应链/生产配置/运维定向验收；
-> 不代表 H1.5-H8 的全部生产级长期目标、完整认证正确性或生产就绪。
+> UniAuth 已完成仓库级工程加固基线；该声明不等同于生产发布、容量、真实 provider、
+> 灾备或合规认证完成，也不代表 H1.5-H8 的全部生产级长期目标均已实现。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 246/246；0 failures/errors/skips |
+| `mvn test` | 通过 | 247/247；0 failures/errors/skips |
 | 根 Maven dependency audit | 通过 | OWASP Dependency-Check 报告包含 94 项 dependency evidence；CVSS 7 阻断 |
 | `scripts/test-http-e2e.sh` | 通过 | 17/17；真实应用、独立 PostgreSQL 16.13、四条安全链 CORS、refresh/logout、邮件/Web3/JWT/登录方式，以及紧急 signing-key rotation/revoke |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 16/16；覆盖 exact schema、V2/V4/V6 初始及 apply 前只读预检、PostgreSQL major、确认 token、V2-V6 grouped rollback 与临时凭据清理 |
@@ -200,7 +202,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | 邮件 REST stub contract | 通过 | 12/12；API key/health/接受/拒绝/限流/坏请求、idempotent retry/conflict、delivery status、response-lost recovery 和安全临时捕获文件 |
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 | Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
-| `scripts/verify.sh` | 通过 | 15/15；670 个源码/候选构建文件敏感扫描 0 findings，57 个 Markdown 文件链接通过 |
+| `scripts/verify.sh` | 通过 | 15/15；671 个源码/候选构建文件敏感扫描 0 findings，57 个 Markdown 文件链接通过 |
 
 Shell HTTP E2E 使用 `test` profile、UniAuth disposable PostgreSQL 16.13、参考邮件服务
 disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列开始前启动真实

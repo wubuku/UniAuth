@@ -399,9 +399,9 @@ PYTHON_BIN=python3 scripts/test-email-login-browser-e2e.sh
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-当前候选基线（2026-08-10；F1-F5 完成并通过完整统一门禁，阶段末检查待执行）：
+当前加固完成基线（2026-08-10；F1-F5、完整统一门禁和阶段末连续三轮检查均已完成）：
 
-- 当前根统一门禁：Maven 246 tests、shared-schema process E2E 4/4、
+- 当前根统一门禁：Maven 247 tests、shared-schema process E2E 4/4、
   HTTP 17/17、Flyway baseline guard 16/16、Mock Playwright 29/29、
   生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 20/20、邮件 REST stub
   contract 12/12；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
@@ -649,20 +649,24 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 多步骤任务持续使用 plan 工具；关键提醒必须写入本文件或任务实施文档。
 - 每次状态汇报都给出诚实的粗略完成百分比；发现遗漏或风险时允许回退，但必须说明
   当前固定范围和下一步如何继续收敛。
-- 加固阶段不再开放循环。当前范围以
-  `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md` 冻结的 F1-F5 为准；F1-F5 已完成
-  并通过统一门禁，完成唯一一次阶段末连续三轮检查后必须退出，不得自动创建第六批。
+- 启动 Maven、Shell、Docker、Vite、Playwright、Python 或其他长时间后台任务后，
+  必须持续轮询 session、阶段输出和相关子进程，确认任务仍在推进；出现长时间无输出、
+  非零退出、资源阻塞或子进程异常时立即诊断并介入，所需任务结束前不得遗忘仍在运行
+  的后台进程。
+- 加固阶段已于 2026-08-10 完成并退出。
+  `docs/drafts/FINAL_HARDENING_EXIT_PLAN.md` 现作为 F1-F5、统一门禁和阶段末
+  3/3 检查的完成记录；不得自动创建第六批。
 - 只有数据丢失、认证/授权绕过、凭据泄露、门禁伪成功或当前批直接引入的实质回归
   可以并入正在执行的固定批次。其他发现进入加固后的普通 backlog，不能借“继续探索”
   延长阶段。
-- F1-F5 每批执行：固定范围 -> PostgreSQL 集成测试与夹具 -> Shell/Flyway E2E ->
-  Playwright/Python/供应链工具 -> 完整硬门槛 -> 文档更新与提交推送。各批不分别
-  执行连续三轮无修改检查；F1-F5 全部完成并通过统一阶段门禁后，再对整个 F 阶段
-  独立执行唯一一次连续三轮检查。百分比按最终退出范围诚实评估，不通过零碎条目虚增。
-- 当前总原则是先全面加固已有功能，不增加新功能。
+- F1-F5 的历史执行流程是：固定范围 -> PostgreSQL 集成测试与夹具 ->
+  Shell/Flyway E2E -> Playwright/Python/供应链工具 -> 完整硬门槛 -> 文档更新与
+  提交推送；唯一一次阶段末连续三轮检查已经完成。
+- 后续需求使用普通 feature、fix 或 maintenance 计划；新的安全问题按风险单独处理，
+  不恢复无终点的“加固阶段”循环。
 - 实施前先建立集成测试、Shell E2E 和 Playwright 保护；测试必须覆盖本次修改。
-- F1-F5 的单批基础门禁通过后按冻结计划进入下一步骤；只在五批全部完成后的阶段末检查中
-  使用连续三轮计数器，任何实质修改都将该阶段末计数归零。
+- 一般交付是否需要连续三轮检查，以 `docs/VERIFICATION.md` 和任务计划为准；已经完成
+  的 F1-F5 阶段规则不再作为活动任务循环。
 - 并发修复优先数据库约束、条件更新和 CAS，不默认使用悲观锁，也不机械引入 `@Version`。
 - 未经用户允许，不运行真实高成本外部调用；真实 OAuth/mail 也不是默认门禁。
 - 外部依赖下载遇到网络阻断时，可使用用户提供的本机 `http_proxy`、`https_proxy`

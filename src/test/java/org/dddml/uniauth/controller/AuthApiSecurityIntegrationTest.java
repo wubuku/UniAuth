@@ -43,13 +43,13 @@ class AuthApiSecurityIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
-    void removedEmailOracleRoutesAreNotMapped() throws Exception {
+    void removedEmailOracleRoutesAreDeniedByDefault() throws Exception {
         mockMvc.perform(post("/api/auth/check-verification-code")
                         .contentType(APPLICATION_JSON)
                         .content("{}"))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isForbidden());
         mockMvc.perform(get("/api/auth/email/status/user@example.invalid"))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isForbidden());
     }
 
     @Test

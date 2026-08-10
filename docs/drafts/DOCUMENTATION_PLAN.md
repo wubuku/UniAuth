@@ -1,7 +1,7 @@
 # UniAuth 文档体系建设计划
 
-> 状态：Live；首版体系已建立，随加固 batch 持续校准
-> 首版基线：2026-08-07；最近校准：2026-08-09
+> 状态：Live；首版体系已建立，随项目演进持续校准
+> 首版基线：2026-08-07；最近校准：2026-08-10
 > 原则：已有文档不移动；新文档链接已有内容；当前事实以代码、配置和可执行验证为准。
 
 ## 目标
@@ -15,14 +15,14 @@
 
 ## 当前库存
 
-当前审计范围内共有 51 份项目 Markdown（不含技能包）：
+当前审计范围内共有 56 份项目 Markdown（不含技能包）：
 
 | 区域 | 数量 | 当前角色 |
 |------|------|----------|
 | 根目录及 `.gemini/` | 4 | 项目入口、代理上下文、历史验证记录 |
-| `docs/` 顶层 | 8 | live guides、导航和大型历史契约 |
+| `docs/` 顶层 | 9 | live guides、导航和大型历史契约 |
 | `docs/Perplexity/` | 8 | 2026 年 1 月生成的架构与实现参考，整体按历史材料处理 |
-| `docs/drafts/` | 25 | 规划、调查、集成指南、进度记录，状态差异较大 |
+| `docs/drafts/` | 29 | 规划、调查、集成指南、进度记录，状态差异较大 |
 | `docs/archive/` | 2 | database/legacy SQL 归档索引 |
 | 组件 README/AGENTS | 4 | 前端、Python 与邮件服务参考实现的组件入口 |
 
@@ -39,7 +39,7 @@
 | API 行为 | controller、service、repository 和 entity |
 | 前端端口、代理、构建输出 | `frontend/vite.config.ts`、`frontend/package.json` |
 | Python 示例行为 | `python-resource-server/app.py` |
-| 可执行验证状态 | `scripts/verify.sh` 与 `docs/VERIFICATION.md` 记录的 2026-08-09 完整门禁 |
+| 可执行验证状态 | `scripts/verify.sh` 与 `docs/VERIFICATION.md` 记录的 2026-08-10 完整门禁 |
 
 现有 prose 与这些来源冲突时，不把 prose 视为当前事实。
 
@@ -75,8 +75,8 @@
 | P0 | 修复 live 文档、脚本和组件 README 的端口漂移 | 已完成 |
 | P0 | 为历史“已完成/生产就绪”声明增加明确状态说明 | 已完成 |
 | P1 | 更新根 README、AGENTS 和组件文档入口 | 已完成 |
-| P1 | 编写不增加新功能的全面加固实施规划 | 已完成首版；持续按实施状态校准 |
-| P1 | 冻结最终加固收尾范围和退出条件 | 已完成；当前入口为 `FINAL_HARDENING_EXIT_PLAN.md` |
+| P1 | 编写不增加新功能的全面加固实施规划 | 已完成；现作为历史风险路线图 |
+| P1 | 冻结最终加固收尾范围和退出条件 | 已完成；`FINAL_HARDENING_EXIT_PLAN.md` 保存退出记录 |
 | P1 | 修复新增/修改文档的相对链接 | 已纳入统一门禁 |
 | P1 | 说明邮箱认证对独立邮件服务的依赖、契约和验证边界 | 已完成 |
 | P1 | 纳入独立邮件服务参考实现并记录 Flyway、配置和 E2E | 已完成 |
@@ -123,7 +123,7 @@
   security version 和 session claim/rotation/revoke 契约；旧 SQL 已归档到 runtime
   classpath 外。
 - Java 已有 PostgreSQL/Testcontainers 集成测试；当前完整 Maven 为
-  246/246，0 failures/errors/skips。
+  247/247，0 failures/errors/skips。
 - HTTP Shell E2E 当前 17/17、Flyway baseline guard 16/16、Mock Playwright
   29/29、生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器
   20/20、邮件 REST stub contract 12/12；同页面和同源双标签页 refresh 协调、
