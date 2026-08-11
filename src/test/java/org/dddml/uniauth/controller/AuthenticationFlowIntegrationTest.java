@@ -302,6 +302,68 @@ class AuthenticationFlowIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
+    void circleEmailRecoveryRemainsAvailableAfterSocialMethodRemoval()
+            throws Exception {
+        String email = "circle-recovery@example.invalid";
+        String password = "integration-password";
+        String userId = registerLocalUser(email, email, password);
+        UserLoginMethod githubMethod = loginMethodService
+                .bindOAuth2LoginMethod(
+                        userId,
+                        UserLoginMethod.AuthProvider.GITHUB,
+                        "github-circle-recovery",
+                        email,
+                        "Circle Recovery"
+                );
+        String accessToken = login(email, password)
+                .path("accessToken")
+                .asText();
+
+        mockMvc.perform(get("/api/user/login-methods")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(2))
+                .andExpect(jsonPath("$.loginMethods[*].authProvider")
+                        .value(org.hamcrest.Matchers.containsInAnyOrder(
+                                "local",
+                                "github"
+                        )));
+
+        mockMvc.perform(delete("/api/user/login-methods/{id}", githubMethod.getId())
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.methodId").value(githubMethod.getId()));
+
+        mockMvc.perform(get("/api/user")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isUnauthorized());
+
+        MvcResult recoveryLogin = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new LoginPayload(
+                                email,
+                                password
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.authenticated").value(true))
+                .andExpect(jsonPath("$.user.id").value(userId))
+                .andReturn();
+
+        String recoveredAccessToken = responseJson(recoveryLogin)
+                .path("accessToken")
+                .asText();
+        mockMvc.perform(get("/api/user/login-methods")
+                        .header(
+                                "Authorization",
+                                "Bearer " + recoveredAccessToken
+                        ))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.count").value(1))
+                .andExpect(jsonPath("$.loginMethods[0].authProvider")
+                        .value("local"));
+    }
+
+    @Test
     void oauthOnlyAccountCanAddOneLocalLoginMethodThroughProtectedHttpApi()
             throws Exception {
         UserDto oauthUser = userService.getOrCreateOAuthUser(

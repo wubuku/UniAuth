@@ -22,6 +22,10 @@ Required environment:
 The default mode is read-only. --apply deletes only non-managed users that have
 exactly one login method and whose sole method belongs to a selected provider.
 Managed testlocal/testsso/testboth fixtures and multi-method users are protected.
+The target database must also contain the exact successful UniAuth Flyway V1-V8
+history and the protected auth schema. --apply invalidates all Spring Sessions
+in the disposable database because serialized sessions cannot be safely mapped
+to deleted users.
 EOF
 }
 
@@ -138,6 +142,148 @@ echo "  database:  ${POSTGRES_DATABASE}"
 echo "  providers: ${provider_label}"
 echo "  mode:      ${MODE}"
 
+schema_guard_sql() {
+    cat <<'SQL'
+DO $$
+DECLARE
+    actual_versions text[];
+    required_table text;
+    required_table_names text[] := ARRAY[
+        'users',
+        'user_login_methods',
+        'user_authorities',
+        'token_blacklist',
+        'spring_session',
+        'spring_session_attributes',
+        'web3_nonces',
+        'email_verification_codes',
+        'token_families',
+        'oauth2_binding_intents',
+        'web3_challenge_counters',
+        'auth_rate_limits'
+    ];
+    required_cascade_fk text;
+    required_cascade_fks text[] := ARRAY[
+        'user_login_methods_user_id_fkey',
+        'user_authorities_user_id_fkey',
+        'spring_session_attributes_session_primary_id_fkey',
+        'fk_token_families_user',
+        'fk_oauth2_binding_intents_user'
+    ];
+    required_constraint text;
+    required_constraints text[] := ARRAY[
+        'users_pkey',
+        'users_username_key',
+        'user_login_methods_pkey',
+        'auth_rate_limits_pkey',
+        'ck_users_token_security_version_nonnegative',
+        'ck_oauth2_binding_intent_provider'
+    ];
+    required_index text;
+    required_indexes text[] := ARRAY[
+        'uk_local_username',
+        'uk_provider_user',
+        'uk_user_login_provider',
+        'uk_web3_nonces_challenge_handle',
+        'uk_oauth2_binding_intents_state_hash'
+    ];
+BEGIN
+    IF to_regclass('public.uniauth_flyway_schema_history') IS NULL THEN
+        RAISE EXCEPTION
+            'refusing reset: public.uniauth_flyway_schema_history is missing';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM public.uniauth_flyway_schema_history
+         WHERE success IS DISTINCT FROM true
+            OR version IS NULL
+    ) THEN
+        RAISE EXCEPTION
+            'refusing reset: Flyway history contains failed or repeatable rows';
+    END IF;
+
+    SELECT array_agg(version::text ORDER BY version::integer)
+      INTO actual_versions
+      FROM public.uniauth_flyway_schema_history;
+    IF actual_versions IS DISTINCT FROM ARRAY[
+        '1', '2', '3', '4', '5', '6', '7', '8'
+    ]::text[] THEN
+        RAISE EXCEPTION
+            'refusing reset: expected exact successful UniAuth Flyway V1-V8 history, got %',
+            coalesce(array_to_string(actual_versions, ','), '<empty>');
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM public.uniauth_flyway_schema_history
+         WHERE (version::text = '1' AND type NOT IN ('SQL', 'BASELINE'))
+            OR (version::text <> '1' AND type <> 'SQL')
+    ) THEN
+        RAISE EXCEPTION
+            'refusing reset: unexpected Flyway migration type';
+    END IF;
+
+    FOREACH required_table IN ARRAY required_table_names LOOP
+        IF to_regclass('public.' || required_table) IS NULL THEN
+            RAISE EXCEPTION
+                'refusing reset: required UniAuth table is missing: %',
+                required_table;
+        END IF;
+    END LOOP;
+
+    FOREACH required_constraint IN ARRAY required_constraints LOOP
+        IF NOT EXISTS (
+            SELECT 1
+              FROM pg_constraint constraint_row
+              JOIN pg_namespace namespace_row
+                ON namespace_row.oid = constraint_row.connamespace
+             WHERE namespace_row.nspname = 'public'
+               AND constraint_row.conname = required_constraint
+        ) THEN
+            RAISE EXCEPTION
+                'refusing reset: required UniAuth constraint is missing: %',
+                required_constraint;
+        END IF;
+    END LOOP;
+
+    FOREACH required_cascade_fk IN ARRAY required_cascade_fks LOOP
+        IF NOT EXISTS (
+            SELECT 1
+              FROM pg_constraint constraint_row
+              JOIN pg_namespace namespace_row
+                ON namespace_row.oid = constraint_row.connamespace
+             WHERE namespace_row.nspname = 'public'
+               AND constraint_row.conname = required_cascade_fk
+               AND constraint_row.contype = 'f'
+               AND constraint_row.confdeltype = 'c'
+        ) THEN
+            RAISE EXCEPTION
+                'refusing reset: required cascading foreign key is missing: %',
+                required_cascade_fk;
+        END IF;
+    END LOOP;
+
+    FOREACH required_index IN ARRAY required_indexes LOOP
+        IF to_regclass('public.' || required_index) IS NULL THEN
+            RAISE EXCEPTION
+                'refusing reset: required UniAuth index is missing: %',
+                required_index;
+        END IF;
+    END LOOP;
+END
+$$;
+SQL
+}
+
+echo "Validating exact UniAuth V1-V8 schema before preview..."
+"${psql_args[@]}" -qAt <<SQL
+BEGIN;
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
+$(schema_guard_sql)
+COMMIT;
+SQL
+
 "${psql_args[@]}" -P pager=off <<SQL
 WITH selected_users AS (
     SELECT DISTINCT u.id
@@ -213,8 +359,12 @@ fi
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
+$(schema_guard_sql)
+
 LOCK TABLE public.users IN SHARE ROW EXCLUSIVE MODE;
 LOCK TABLE public.user_login_methods IN SHARE ROW EXCLUSIVE MODE;
+LOCK TABLE public.spring_session IN SHARE ROW EXCLUSIVE MODE;
+LOCK TABLE public.spring_session_attributes IN SHARE ROW EXCLUSIVE MODE;
 
 DO \$\$
 BEGIN
@@ -271,6 +421,12 @@ SELECT DISTINCT u.id
 DELETE FROM public.token_blacklist blacklist
  USING reset_social_users target
  WHERE blacklist.user_id = target.id;
+
+WITH deleted_sessions AS (
+    DELETE FROM public.spring_session
+    RETURNING primary_id
+)
+SELECT count(*) AS invalidated_spring_sessions FROM deleted_sessions;
 
 WITH deleted AS (
     DELETE FROM public.users users

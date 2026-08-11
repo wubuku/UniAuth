@@ -219,22 +219,29 @@ public class SecurityConfig {
                     "OAuth2 login failed: errorCode={}",
                     oauthErrorCode == null ? "unavailable" : oauthErrorCode
             );
+            boolean binding = isBindingRequest(request)
+                    || isBindingCallback(request);
+            boolean rateLimited = false;
             try {
                 authRateLimiter.requireAllowed(
                         AuthRateLimiter.Policy.OAUTH_AUTHORIZE,
                         request.getRemoteAddr(),
                         "failure"
                 );
-            } catch (AuthRateLimitExceededException rateLimited) {
+            } catch (AuthRateLimitExceededException exceeded) {
                 response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
-                return;
+                rateLimited = true;
             } catch (AuthRateLimiterUnavailableException unavailable) {
                 response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
+                rateLimited = true;
+            } finally {
+                // A rejected authorize attempt must not poison the next
+                // ordinary callback as a binding callback.
+                clearBindingCallbackMarker(request);
+            }
+            if (rateLimited) {
                 return;
             }
-            boolean binding = isBindingRequest(request)
-                    || isBindingCallback(request);
-            clearBindingCallbackMarker(request);
             String redirectError = binding
                     ? "invalid_user_info_response".equals(oauthErrorCode)
                             ? "oauth2_binding_provider_failed"

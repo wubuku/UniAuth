@@ -274,9 +274,48 @@ scripts/reset-disposable-social-identities.sh \
   UI 管理，不能用数据库脚本拆分；
 - `token_blacklist` 显式清理，其余 authorities、token families、binding intents 和
   login methods 依靠 `users` 外键级联删除；
+- 执行 `--apply` 前后都会验证 `uniauth_flyway_schema_history` 恰好是成功的
+  V1-V8，并检查 UniAuth 关键表、级联外键和 provider 唯一索引；schema 不匹配时
+  fail closed；
+- `--apply` 会清空 disposable 数据库中的全部 `spring_session`，因为 Spring
+  Session 的序列化 `SecurityContext` 没有可靠的 users 外键映射；执行后所有 UniAuth
+  浏览器会话都必须重新登录；
 - 默认模式只展示目标用户；只有 `--apply` 写库。
 
 该脚本只适用于可丢弃的本地/测试认证数据，不是生产账号合并、解绑或删除工具。
+
+### Circle 影响评估
+
+这五项加固不会改变 Circle 正常登录、首次使用确认、绑定多个 provider 或邮箱登录
+的业务语义：
+
+- schema guard 只影响 `reset-social` 这一破坏性测试辅助命令；正常 UniAuth/Circle
+  启动和 OAuth 回调不受影响；
+- 并发 provider subject 冲突现在稳定返回 `oauth2_binding_conflict`。Circle 会继续
+  显示“这个社交账号已经绑定到其他 Circle 账号，不能重复绑定”，不再把数据库竞争
+  的失败方误显示为普通 OAuth 处理失败；
+- OAuth 授权失败、429 或限流器 503 都会清除 binding marker，避免下一次普通登录
+  被误判成绑定流程；
+- 直接运行 UniAuth reset 的 `--apply` 会使整个 disposable UniAuth 数据库的浏览器
+  Session 失效。Circle 联调应优先使用 `dev-circle.sh reset-social`，由 Circle 包装
+  流程同步清理对应的 disposable onboarding 数据；清理后重新用邮箱登录再继续绑定
+  测试；
+- X 只申请 `users.read`，Circle 不需要也不会获得推文读取能力。X 控制台需要允许
+  的 scope 与 UniAuth 配置保持一致。
+
+Circle 手动验收最小闭环：
+
+1. 用 Google/GitHub/X 任一 provider 首次登录，完成 Circle 首次使用确认；
+2. 在登录方式页面保留 `LOCAL`，依次绑定其他 provider；
+3. 尝试绑定已属于另一 Circle 用户的 provider，确认显示绑定冲突，而不是通用失败；
+4. 退出并用邮箱登录，逐个解绑社交方式，确认每次解绑后旧会话失效；
+5. 使用 `dev-circle.sh reset-social <providers> --apply` 清理后，重新确认首次登录和
+   多方式绑定流程。
+
+UniAuth 的 PostgreSQL 集成测试还固定验证一个 Circle 关键闭环：用户同时保留
+邮箱/`LOCAL` 与社交登录方式时，删除社交方式会撤销当前旧 access token，但不会删除
+`LOCAL`；用户可以重新用邮箱和密码登录，并重新读取剩余登录方式。这是“有限社交账号
+循环测试”依赖的服务端安全与可恢复性契约。
 
 Circle 外部认证开发环境还提供了一个包装清理入口：
 `seedance-research-circle-app/api-server/dev-circle.sh reset-social <providers> [--apply]`。

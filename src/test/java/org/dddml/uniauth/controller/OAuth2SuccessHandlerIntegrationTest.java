@@ -11,6 +11,9 @@ import org.dddml.uniauth.dto.UserDto;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.service.LoginMethodService;
+import org.dddml.uniauth.service.AuthRateLimitExceededException;
+import org.dddml.uniauth.service.AuthRateLimiter;
+import org.dddml.uniauth.service.AuthRateLimiterUnavailableException;
 import org.dddml.uniauth.service.OAuth2BindingIntentService;
 import org.dddml.uniauth.service.TokenIssuanceFacade;
 import org.dddml.uniauth.service.TokenSessionSnapshot;
@@ -24,6 +27,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -59,6 +63,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.dddml.uniauth.support.AuthIntegrationTestSupport.issueTokens;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -115,6 +123,14 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
     @Autowired
     private MockMvc mockMvc;
 
+    @SpyBean
+    private AuthRateLimiter authRateLimiter;
+
+    @org.junit.jupiter.api.BeforeEach
+    void resetRateLimiterSpy() {
+        reset(authRateLimiter);
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"google", "github", "x"})
     void providerCallbackCreatesStableAccountWithoutExternalProviderCalls(String provider)
@@ -150,7 +166,7 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
                 clientRegistrationRepository.findByRegistrationId("x");
 
         assertThat(registration.getScopes())
-                .containsExactly("tweet.read", "users.read");
+                .containsExactly("users.read");
         assertThat(registration.getProviderDetails()
                 .getUserInfoEndpoint()
                 .getUri())
@@ -567,6 +583,59 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
                         "https://frontend.example.test/console/login"
                                 + "?error=oauth2_binding_provider_failed"
                 );
+        assertThat(request.getSession(false).getAttribute(
+                BINDING_SESSION_ATTRIBUTE)).isNull();
+    }
+
+    @Test
+    void rateLimitedBindingFailureClearsMarkerWithoutRedirecting()
+            throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/oauth2/callback");
+        request.getSession(true).setAttribute(
+                BINDING_SESSION_ATTRIBUTE,
+                "github"
+        );
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        doThrow(new AuthRateLimitExceededException(30))
+                .when(authRateLimiter)
+                .requireAllowed(any(), anyString(), anyString());
+
+        failureHandler.onAuthenticationFailure(
+                request,
+                response,
+                new AuthenticationServiceException("provider rejected binding")
+        );
+
+        assertThat(response.getStatus()).isEqualTo(429);
+        assertThat(response.getRedirectedUrl()).isNull();
+        assertThat(request.getSession(false).getAttribute(
+                BINDING_SESSION_ATTRIBUTE)).isNull();
+    }
+
+    @Test
+    void unavailableRateLimiterClearsMarkerWithoutRedirecting()
+            throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/oauth2/callback");
+        request.getSession(true).setAttribute(
+                BINDING_SESSION_ATTRIBUTE,
+                "x"
+        );
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        doThrow(new AuthRateLimiterUnavailableException(
+                new IllegalStateException("test failure")
+        )).when(authRateLimiter)
+                .requireAllowed(any(), anyString(), anyString());
+
+        failureHandler.onAuthenticationFailure(
+                request,
+                response,
+                new AuthenticationServiceException("provider rejected binding")
+        );
+
+        assertThat(response.getStatus()).isEqualTo(503);
+        assertThat(response.getRedirectedUrl()).isNull();
         assertThat(request.getSession(false).getAttribute(
                 BINDING_SESSION_ATTRIBUTE)).isNull();
     }

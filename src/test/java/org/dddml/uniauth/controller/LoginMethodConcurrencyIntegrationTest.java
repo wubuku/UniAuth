@@ -7,6 +7,7 @@ import org.dddml.uniauth.dto.UserDto;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.service.LoginMethodService;
+import org.dddml.uniauth.service.OAuth2BindingConflictException;
 import org.dddml.uniauth.service.TokenIssuanceFacade;
 import org.dddml.uniauth.service.TokenSessionTransactionService;
 import org.dddml.uniauth.service.UserService;
@@ -86,6 +87,10 @@ class LoginMethodConcurrencyIntegrationTest extends PostgreSqlIntegrationTest {
                     .singleElement()
                     .extracting(BindResult::message)
                     .isEqualTo("该OAuth2账户已被绑定");
+            assertThat(results).filteredOn(result -> !result.success())
+                    .singleElement()
+                    .extracting(BindResult::exceptionType)
+                    .isEqualTo(OAuth2BindingConflictException.class);
             assertThat(loginMethodRepository.findByAuthProviderAndProviderUserId(
                     UserLoginMethod.AuthProvider.GITHUB,
                     providerSubject
@@ -113,6 +118,10 @@ class LoginMethodConcurrencyIntegrationTest extends PostgreSqlIntegrationTest {
                     .singleElement()
                     .extracting(BindResult::message)
                     .isEqualTo("该OAuth2账户已被绑定");
+            assertThat(results).filteredOn(result -> !result.success())
+                    .singleElement()
+                    .extracting(BindResult::exceptionType)
+                    .isEqualTo(OAuth2BindingConflictException.class);
             assertThat(loginMethodRepository.findByUserId(user.getId()))
                     .filteredOn(method ->
                             method.getAuthProvider()
@@ -326,9 +335,13 @@ class LoginMethodConcurrencyIntegrationTest extends PostgreSqlIntegrationTest {
                     providerSubject + "@example.invalid",
                     "Concurrent Binding"
             );
-            return new BindResult(true, null);
+            return new BindResult(true, null, null);
         } catch (RuntimeException exception) {
-            return new BindResult(false, exception.getMessage());
+            return new BindResult(
+                    false,
+                    exception.getMessage(),
+                    exception.getClass()
+            );
         }
     }
 
@@ -476,6 +489,9 @@ class LoginMethodConcurrencyIntegrationTest extends PostgreSqlIntegrationTest {
         }
     }
 
-    private record BindResult(boolean success, String message) {
+    private record BindResult(
+            boolean success,
+            String message,
+            Class<? extends RuntimeException> exceptionType) {
     }
 }

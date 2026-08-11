@@ -50,7 +50,8 @@ public class LoginMethodService {
      * 为用户绑定OAuth2登录方式
      * 
      * @throws IllegalStateException 如果该提供商已被该用户绑定
-     * @throws IllegalArgumentException 如果OAuth2账户已被其他用户绑定
+     * @throws OAuth2BindingConflictException 如果OAuth2账户已被其他用户绑定，
+     *         包括并发唯一约束裁决的失败请求
      */
     public UserLoginMethod bindOAuth2LoginMethod(
             String userId,
@@ -382,7 +383,7 @@ public class LoginMethodService {
             return new IllegalStateException("用户已绑定该登录方式");
         }
         if (PROVIDER_SUBJECT_CONSTRAINT.equals(constraint)) {
-            return new IllegalArgumentException("该OAuth2账户已被绑定");
+            return new OAuth2BindingConflictException("该OAuth2账户已被绑定");
         }
         return exception;
     }
