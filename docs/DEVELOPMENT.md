@@ -240,6 +240,58 @@ ApplicationContext。`prod` 的合法组合及 implicit SSL 切换方式见
 live 测试脚本默认使用当前端口和一次性数据库；历史脚本/文档仍可能包含旧目标，
 运行前先检查生命周期状态。
 
+## Disposable 社交身份重置
+
+真实 Google、GitHub、X 账号在本地 disposable 数据库中已经各自完成过首次登录后，
+后续“一个用户绑定多种登录方式”回归可能被 provider subject 唯一约束阻止。不要修改
+唯一约束，也不要手工删除任意 `user_login_methods` 行。使用受保护脚本：
+
+```bash
+export POSTGRES_HOST=localhost
+export POSTGRES_PORT=5432
+export POSTGRES_DATABASE=uniauth_demo
+export POSTGRES_USER=...
+export POSTGRES_PASSWORD=...
+export APP_DEMO_DATA_DISPOSABLE=true
+
+# 默认只读预览
+scripts/reset-disposable-social-identities.sh \
+  --providers google,github
+
+# 确认预览后显式写入
+scripts/reset-disposable-social-identities.sh \
+  --providers google,github \
+  --apply
+```
+
+安全边界：
+
+- 数据库名必须符合 `test/demo` disposable 命名规则；
+- 必须显式设置 `APP_DEMO_DATA_DISPOSABLE=true`；
+- `testlocal`、`testsso`、`testboth` 三个受管演示账号永远不进入目标集合；
+- 只删除“恰好只有一个登录方式，且该方式属于所选 provider”的非受管用户；
+- 如果所选 provider 已属于一个多登录方式用户，脚本拒绝执行，必须通过已认证产品
+  UI 管理，不能用数据库脚本拆分；
+- `token_blacklist` 显式清理，其余 authorities、token families、binding intents 和
+  login methods 依靠 `users` 外键级联删除；
+- 默认模式只展示目标用户；只有 `--apply` 写库。
+
+该脚本只适用于可丢弃的本地/测试认证数据，不是生产账号合并、解绑或删除工具。
+
+Circle 外部认证开发环境还提供了一个包装清理入口：
+`seedance-research-circle-app/api-server/dev-circle.sh reset-social <providers> [--apply]`。
+它会先调用本脚本的 UniAuth 预览/写入，再由 Circle 侧脚本检查并清理已经完成首次使用
+的、仅含初始化数据的 Circle tenant。若社交用户已经完成 Circle 首次使用，必须使用
+Circle 包装入口，否则只删除 UniAuth 用户会留下孤立的 Circle user/tenant；若流程停在
+`/welcome/external` 尚未确认，Circle 侧没有 tenant，UniAuth 通用脚本即可完成清理。
+
+为了循环使用有限社交账号，优先在目标 UniAuth 用户中保留 `LOCAL` 登录方式。Circle
+账号页只对 Google/GitHub/X 等社交方式显示解绑；只要 `LOCAL` 仍然存在，就可以把
+所有社交方式逐个解绑，最后保留 `LOCAL`，而 UniAuth 仍会拒绝删除最后一种方式。邮箱
+资料字段本身不等于 `LOCAL` 登录方式，测试前应在 login-methods 列表中确认 `LOCAL`
+存在。每次解绑都会撤销旧登录会话，因此 Circle 会清除 provider session 并要求重新用
+邮箱登录后才能继续管理下一种登录方式；这是预期的安全边界，不是解绑失败。
+
 ## 生成物与本地文件
 
 不要提交：

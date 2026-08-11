@@ -12,8 +12,9 @@
   `JSESSIONID`；
 - 绑定一个已经属于其他用户的 provider identity 时，错误被前端看成普通登录失败；
 - recent-auth 过期时，绑定入口可能落入 Spring Security 的 Whitelabel 500；
-- X OAuth 请求申请了当前用户资料读取不需要的 `tweet.read`，并且 user-info 处理
-  依赖硬编码 URL、保留过多 profile 字段。
+- X OAuth 的授权组合需要与 `/2/users/me` 当前 endpoint 契约一致；实现保留
+  `tweet.read + users.read`，但 user-info 只读取用户资料，不读取推文。此前还存在
+  user-info 处理依赖硬编码 URL、保留过多 profile 字段的问题。
 
 本次不改变 UniAuth 的身份数据模型：一个 provider subject 只能绑定一个用户；绑定
 冲突不自动解绑、不合并、不迁移。
@@ -61,14 +62,15 @@ Circle 将其转换为可理解的重新登录提示，并保留回到登录方�
 
 ### 2.4 X OAuth 最小权限和最小 principal
 
-X 当前只配置：
+X 当前配置：
 
 ```text
+tweet.read
 users.read
 ```
 
-删除 `tweet.read` 是有意的：Circle/UniAuth 只读取 `/2/users/me` 的身份资料，
-没有任何读推文行为。X user-info URL 从 `ClientRegistration` 获取，并通过 URI
+`tweet.read` 是 X `/2/users/me` 当前 OAuth 2.0 endpoint 契约要求的授权项；它不表示
+Circle/UniAuth 会调用推文接口。X user-info URL 从 `ClientRegistration` 获取，并通过 URI
 builder 添加最小字段：
 
 ```text
@@ -109,7 +111,7 @@ X 定向测试覆盖：
 - `id`、`username` 缺失；
 - `data` 不是对象；
 - 多余 profile 字段不进入 principal；
-- registration scope 精确为 `users.read`；
+- registration scope 精确为 `tweet.read`、`users.read`；
 - registration user-info URI 和扁平化后的 principal name attribute 与运行实现一致。
 
 OAuth 集成测试覆盖：
@@ -128,6 +130,5 @@ OAuth 集成测试覆盖：
 https://api.u2511175.nyat.app:55139/oauth2/callback
 ```
 
-X 控制台同时必须允许 `users.read`。不需要为 Circle 增加 `tweet.read`；如果 X
-应用已有旧 scope 配置，重新授权时应以当前 UniAuth `application.yml` 的最小 scope
-为准。
+X 控制台同时必须允许 `tweet.read` 和 `users.read`。如果 X 应用已有旧 scope 配置，
+重新授权时应以当前 UniAuth `application.yml` 的 endpoint-compatible scope 为准。

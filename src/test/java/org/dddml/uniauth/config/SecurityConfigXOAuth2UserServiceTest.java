@@ -10,6 +10,9 @@ import java.time.Instant;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -24,6 +27,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
 
+@ExtendWith(OutputCaptureExtension.class)
 class SecurityConfigXOAuth2UserServiceTest {
 
     private RestTemplate restTemplate;
@@ -44,7 +48,8 @@ class SecurityConfigXOAuth2UserServiceTest {
     }
 
     @Test
-    void xUserInfoFailureBecomesOAuthAuthenticationFailure() {
+    void xUserInfoFailureBecomesOAuthAuthenticationFailure(
+            CapturedOutput output) {
         server.expect(requestTo(
                         "https://api.x.com/2/users/me"
                                 + "?user.fields=id,username,profile_image_url"))
@@ -57,9 +62,10 @@ class SecurityConfigXOAuth2UserServiceTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .body("""
                                 {
+                                  "type": "https://api.x.com/2/problems/not-authorized-for-resource",
                                   "title": "Forbidden",
                                   "status": 403,
-                                  "detail": "Forbidden"
+                                  "detail": "Scope is not authorized"
                                 }
                                 """));
 
@@ -70,6 +76,15 @@ class SecurityConfigXOAuth2UserServiceTest {
                                 exception.getError().getErrorCode())
                                 .isEqualTo("invalid_user_info_response")
                 );
+        assertThat(output)
+                .contains("configuredScopes=[tweet.read, users.read]")
+                .contains("grantedScopes=[tweet.read, users.read]")
+                .contains(
+                        "type=https://api.x.com/2/problems/"
+                                + "not-authorized-for-resource")
+                .contains("title=Forbidden")
+                .contains("detail=Scope is not authorized")
+                .doesNotContain("x-access-token");
         server.verify();
     }
 
@@ -157,7 +172,7 @@ class SecurityConfigXOAuth2UserServiceTest {
                                 AuthorizationGrantType.AUTHORIZATION_CODE
                         )
                         .redirectUri("https://circle.example/oauth2/callback")
-                        .scope("users.read")
+                        .scope("tweet.read", "users.read")
                         .authorizationUri(
                                 "https://x.com/i/oauth2/authorize"
                         )
@@ -171,7 +186,7 @@ class SecurityConfigXOAuth2UserServiceTest {
                 "x-access-token",
                 Instant.now(),
                 Instant.now().plusSeconds(300),
-                Set.of("users.read")
+                Set.of("tweet.read", "users.read")
         );
         return new OAuth2UserRequest(registration, accessToken);
     }

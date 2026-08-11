@@ -173,7 +173,7 @@ public class UserService {
             OAuth2BindingIntentService.BindingContext context =
                     bindingContext.orElseThrow();
             if (existingMethod != null) {
-                throw new LoginMethodConflictException(
+                throw new OAuth2BindingConflictException(
                         "OAuth2 credential could not be bound"
                 );
             }

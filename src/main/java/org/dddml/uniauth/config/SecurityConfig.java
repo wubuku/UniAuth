@@ -34,6 +34,7 @@ import org.springframework.security.oauth2.client.web.DefaultOAuth2Authorization
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestRedirectFilter;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestCustomizers;
+import org.springframework.security.oauth2.client.web.OAuth2LoginAuthenticationFilter;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
@@ -71,7 +72,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.web.util.UriComponentsBuilder;
-import org.dddml.uniauth.service.LoginMethodConflictException;
+import org.dddml.uniauth.service.OAuth2BindingConflictException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Configuration
@@ -79,6 +81,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @EnableConfigurationProperties(FrontendProperties.class)
 @Slf4j
 public class SecurityConfig {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final int X_ERROR_FIELD_MAX_LENGTH = 256;
 
     @Autowired
     private UserService userService;
@@ -190,10 +195,9 @@ public class SecurityConfig {
                 writeOAuth2Error(
                         request,
                         response,
-                        isBindingCallback(request)
-                                && hasCause(
-                                        exception,
-                                        LoginMethodConflictException.class)
+                        hasCause(
+                                exception,
+                                OAuth2BindingConflictException.class)
                                 ? "oauth2_binding_conflict"
                                 : "oauth2_processing_failed"
                 );
@@ -210,7 +214,11 @@ public class SecurityConfig {
     @Bean
     public AuthenticationFailureHandler oauth2FailureHandler() {
         return (request, response, exception) -> {
-            log.warn("OAuth2 login failed");
+            String oauthErrorCode = oauthErrorCode(exception);
+            log.warn(
+                    "OAuth2 login failed: errorCode={}",
+                    oauthErrorCode == null ? "unavailable" : oauthErrorCode
+            );
             try {
                 authRateLimiter.requireAllowed(
                         AuthRateLimiter.Policy.OAUTH_AUTHORIZE,
@@ -227,11 +235,16 @@ public class SecurityConfig {
             boolean binding = isBindingRequest(request)
                     || isBindingCallback(request);
             clearBindingCallbackMarker(request);
+            String redirectError = binding
+                    ? "invalid_user_info_response".equals(oauthErrorCode)
+                            ? "oauth2_binding_provider_failed"
+                            : "oauth2_binding_failed"
+                    : "invalid_user_info_response".equals(oauthErrorCode)
+                            ? "oauth2_provider_failed"
+                            : "oauth2_failed";
             response.sendRedirect(
                     oauth2RedirectPolicy.loginErrorRedirect(
-                            binding
-                                    ? "oauth2_binding_failed"
-                                    : "oauth2_failed"
+                            redirectError
                     )
             );
         };
@@ -341,6 +354,12 @@ public class SecurityConfig {
                 .addLogoutHandler((request, response, authentication) ->
                         authCookieService.clearAuthenticationCookies(response))
                 .permitAll()
+            )
+            .addFilterBefore(
+                    new OAuth2BindingSessionRotationFilter(
+                            oauth2BindingIntentService
+                    ),
+                    OAuth2LoginAuthenticationFilter.class
             );
 
         return http.build();
@@ -366,9 +385,22 @@ public class SecurityConfig {
                             ? response.getStatusCode().toString()
                             : "unavailable";
                     log.warn(
-                            "X OAuth2 user-info request failed: status={} cause={}",
+                            "X OAuth2 user-info request failed: status={} "
+                                    + "cause={} configuredScopes={} "
+                                    + "grantedScopes={} providerError={}",
                             status,
-                            e.getClass().getSimpleName()
+                            e.getClass().getSimpleName(),
+                            userRequest.getClientRegistration()
+                                    .getScopes()
+                                    .stream()
+                                    .sorted()
+                                    .toList(),
+                            userRequest.getAccessToken()
+                                    .getScopes()
+                                    .stream()
+                                    .sorted()
+                                    .toList(),
+                            summarizeXProviderError(e)
                     );
                     throw new OAuth2AuthenticationException(
                             new OAuth2Error("invalid_user_info_response"),
@@ -473,6 +505,42 @@ public class SecurityConfig {
                     "X API response field '" + name + "' is invalid");
         }
         return stringValue;
+    }
+
+    private String summarizeXProviderError(Exception exception) {
+        if (!(exception instanceof RestClientResponseException response)) {
+            return "unavailable";
+        }
+        try {
+            JsonNode root = JSON.readTree(response.getResponseBodyAsByteArray());
+            List<String> parts = new java.util.ArrayList<>();
+            for (String field : List.of("type", "title", "detail")) {
+                String value = safeXErrorField(root.path(field).asText(null));
+                if (value != null) {
+                    parts.add(field + "=" + value);
+                }
+            }
+            return parts.isEmpty() ? "unavailable" : String.join(", ", parts);
+        } catch (IOException ignored) {
+            return "unavailable";
+        }
+    }
+
+    private String safeXErrorField(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        StringBuilder sanitized = new StringBuilder();
+        value.trim().codePoints().forEach(codePoint -> sanitized.appendCodePoint(
+                Character.isISOControl(codePoint) ? ' ' : codePoint
+        ));
+        String result = sanitized.toString().trim();
+        if (result.isEmpty()) {
+            return null;
+        }
+        return result.length() <= X_ERROR_FIELD_MAX_LENGTH
+                ? result
+                : result.substring(0, X_ERROR_FIELD_MAX_LENGTH);
     }
 
     private OAuth2User processGitHubUser(OAuth2User oauth2User, OAuth2AccessToken accessToken) {
@@ -597,6 +665,17 @@ public class SecurityConfig {
             current = current.getCause();
         }
         return false;
+    }
+
+    private String oauthErrorCode(Throwable exception) {
+        Throwable current = exception;
+        while (current != null) {
+            if (current instanceof OAuth2AuthenticationException oauth) {
+                return oauth.getError().getErrorCode();
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 
     private void writeOAuth2Error(

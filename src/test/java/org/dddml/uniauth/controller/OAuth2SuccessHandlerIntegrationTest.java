@@ -2,12 +2,16 @@ package org.dddml.uniauth.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.Filter;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.Cookie;
+import org.dddml.uniauth.config.OAuth2BindingSessionRotationFilter;
 import org.dddml.uniauth.dto.RegisterRequest;
 import org.dddml.uniauth.dto.UserDto;
 import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.service.LoginMethodService;
+import org.dddml.uniauth.service.OAuth2BindingIntentService;
 import org.dddml.uniauth.service.TokenIssuanceFacade;
 import org.dddml.uniauth.service.TokenSessionSnapshot;
 import org.dddml.uniauth.service.TokenSessionTransactionService;
@@ -29,6 +33,9 @@ import org.springframework.security.authentication.AuthenticationServiceExceptio
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
+import org.springframework.security.oauth2.client.web.OAuth2LoginAuthenticationFilter;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
 import org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser;
@@ -36,6 +43,7 @@ import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
+import org.springframework.security.web.FilterChainProxy;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -43,9 +51,11 @@ import java.time.Instant;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.dddml.uniauth.support.AuthIntegrationTestSupport.issueTokens;
@@ -93,6 +103,12 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
     private ClientRegistrationRepository clientRegistrationRepository;
 
     @Autowired
+    private OAuth2BindingIntentService oauth2BindingIntentService;
+
+    @Autowired
+    private FilterChainProxy springSecurityFilterChain;
+
+    @Autowired
     @Qualifier("oauth2FailureHandler")
     private AuthenticationFailureHandler failureHandler;
 
@@ -134,7 +150,7 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
                 clientRegistrationRepository.findByRegistrationId("x");
 
         assertThat(registration.getScopes())
-                .containsExactly("users.read");
+                .containsExactly("tweet.read", "users.read");
         assertThat(registration.getProviderDetails()
                 .getUserInfoEndpoint()
                 .getUri())
@@ -192,6 +208,68 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
+    void bindingIntentFollowsLegitimateSessionFixationRotation()
+            throws Exception {
+        UserDto localUser = registerLocalUser("oauth-bind-session-rotation");
+        String providerSubject =
+                "github-session-rotation-" + UUID.randomUUID();
+        BindingCallback binding = prepareBindingCallback(
+                accessToken(localUser),
+                "github"
+        );
+        String previousSessionId = binding.session().getId();
+        AtomicReference<String> currentSessionId = new AtomicReference<>();
+
+        MockHttpServletRequest callback = new MockHttpServletRequest(
+                "GET",
+                "/oauth2/callback"
+        );
+        callback.setRequestURI("/oauth2/callback");
+        callback.setSession(binding.session());
+        new OAuth2BindingSessionRotationFilter(oauth2BindingIntentService)
+                .doFilter(
+                        callback,
+                        new MockHttpServletResponse(),
+                        (request, response) -> {
+                            HttpServletRequest wrapped =
+                                    (HttpServletRequest) request;
+                            currentSessionId.set(wrapped.changeSessionId());
+                        }
+                );
+
+        assertThat(currentSessionId.get())
+                .isNotBlank()
+                .isNotEqualTo(previousSessionId);
+        JsonNode response = executeJsonCallback(
+                authentication("github", providerSubject),
+                binding.state(),
+                binding.session()
+        );
+        assertThat(response.path("message").asText())
+                .isEqualTo("Binding successful");
+        assertThat(response.path("user").path("id").asText())
+                .isEqualTo(localUser.getId());
+    }
+
+    @Test
+    void bindingSessionRotationFilterPrecedesOAuth2Authentication() {
+        List<Filter> filters =
+                springSecurityFilterChain.getFilters("/oauth2/callback");
+
+        int rotationIndex = indexOf(
+                filters,
+                OAuth2BindingSessionRotationFilter.class
+        );
+        int oauth2LoginIndex = indexOf(
+                filters,
+                OAuth2LoginAuthenticationFilter.class
+        );
+
+        assertThat(rotationIndex).isGreaterThanOrEqualTo(0);
+        assertThat(oauth2LoginIndex).isGreaterThan(rotationIndex);
+    }
+
+    @Test
     void callbackRejectsProviderAccountAlreadyBoundToAnotherUser() throws Exception {
         String providerSubject = "github-conflict-" + UUID.randomUUID();
         JsonNode ownerResponse = executeJsonCallback(
@@ -211,6 +289,46 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
         assertThat(conflictResponse.path("authenticated").asBoolean()).isFalse();
         assertThat(conflictResponse.path("error").asText())
                 .isEqualTo("oauth2_binding_conflict");
+        assertThat(loginMethodRepository.findByAuthProviderAndProviderUserId(
+                UserLoginMethod.AuthProvider.GITHUB,
+                providerSubject
+        )).get().extracting(method -> method.getUser().getId()).isEqualTo(ownerId);
+    }
+
+    @Test
+    void redirectCallbackKeepsBindingConflictWhenSessionMarkerIsUnavailable()
+            throws Exception {
+        String providerSubject =
+                "github-redirect-conflict-" + UUID.randomUUID();
+        JsonNode ownerResponse = executeJsonCallback(
+                authentication("github", providerSubject),
+                null
+        );
+        String ownerId = ownerResponse.path("user").path("id").asText();
+        UserDto secondUser = registerLocalUser("oauth-redirect-conflict");
+        BindingCallback binding = prepareBindingCallback(
+                accessToken(secondUser),
+                "github"
+        );
+        binding.session().removeAttribute(BINDING_SESSION_ATTRIBUTE);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/oauth2/callback");
+        request.setParameter("state", binding.state());
+        request.setSession(binding.session());
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        successHandler.onAuthenticationSuccess(
+                request,
+                response,
+                authentication("github", providerSubject)
+        );
+
+        assertThat(response.getStatus()).isEqualTo(302);
+        assertThat(response.getRedirectedUrl())
+                .isEqualTo(
+                        "https://frontend.example.test/console/login"
+                                + "?error=oauth2_binding_conflict"
+                );
         assertThat(loginMethodRepository.findByAuthProviderAndProviderUserId(
                 UserLoginMethod.AuthProvider.GITHUB,
                 providerSubject
@@ -425,6 +543,35 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
+    void bindingUserInfoFailureUsesProviderErrorAndClearsMarker()
+            throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/oauth2/callback");
+        request.getSession(true).setAttribute(
+                BINDING_SESSION_ATTRIBUTE,
+                "x"
+        );
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        failureHandler.onAuthenticationFailure(
+                request,
+                response,
+                new OAuth2AuthenticationException(
+                        new OAuth2Error("invalid_user_info_response")
+                )
+        );
+
+        assertThat(response.getStatus()).isEqualTo(302);
+        assertThat(response.getRedirectedUrl())
+                .isEqualTo(
+                        "https://frontend.example.test/console/login"
+                                + "?error=oauth2_binding_provider_failed"
+                );
+        assertThat(request.getSession(false).getAttribute(
+                BINDING_SESSION_ATTRIBUTE)).isNull();
+    }
+
+    @Test
     void expiredRecentAuthenticationReturnsControlledBindingRejection()
             throws Exception {
         UserDto localUser = registerLocalUser("oauth-bind-stale-auth");
@@ -554,6 +701,17 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     private record BindingCallback(String state, MockHttpSession session) {
+    }
+
+    private int indexOf(
+            List<Filter> filters,
+            Class<? extends Filter> filterType) {
+        for (int index = 0; index < filters.size(); index++) {
+            if (filterType.isInstance(filters.get(index))) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     private String accessToken(UserDto user) {

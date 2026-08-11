@@ -202,6 +202,9 @@ spring:
             client-secret: ${TWITTER_CLIENT_SECRET}
             authorization-grant-type: authorization_code
             scope:
+              # X requires both scopes for GET /2/users/me, even though
+              # UniAuth does not read tweets.
+              - tweet.read
               - users.read
             redirect-uri: ${OAUTH2_CALLBACK_URI}
         provider:

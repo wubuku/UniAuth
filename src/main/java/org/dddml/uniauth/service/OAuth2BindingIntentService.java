@@ -74,6 +74,27 @@ public class OAuth2BindingIntentService {
         );
     }
 
+    @Transactional
+    public int rotateSession(String previousSessionId, String currentSessionId) {
+        requireValue(previousSessionId, 512);
+        requireValue(currentSessionId, 512);
+        if (previousSessionId.equals(currentSessionId)) {
+            return 0;
+        }
+        return jdbcTemplate.update(
+                """
+                UPDATE oauth2_binding_intents
+                SET session_id_hash = ?
+                WHERE session_id_hash = ?
+                  AND consumed_at IS NULL
+                  AND expires_at > ?
+                """,
+                digest(currentSessionId),
+                digest(previousSessionId),
+                Timestamp.from(Instant.now())
+        );
+    }
+
     @Transactional(propagation = Propagation.MANDATORY)
     public Optional<BindingContext> consume(
             String state,
