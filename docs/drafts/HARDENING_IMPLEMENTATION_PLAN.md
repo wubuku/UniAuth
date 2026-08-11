@@ -1454,9 +1454,10 @@ H2.5/H3.1/H3.2 是技术上必须原子切换的最小集合，不代表可在 H
 9. 对 scheme、host、port、path 做精确比较，拒绝 userinfo、编码绕过和 scheme-relative URL。
 10. 登录/绑定的成功和失败处理器共享同一 redirect resolver；消费 state、PKCE verifier
     和 binding intent 后清理临时 session，不保留 provider principal 作为应用 API 身份。
-11. OAuth scope 收敛到建立身份所需最小集合；删除 X 的 `offline.access`、
-    tweet/like/follows 等当前未使用 scope。回调完成后删除不再需要的 authorized client，
-    success/failure/logout 都不能遗留 provider access/refresh token。
+11. OAuth scope 收敛到建立身份所需最小集合；X 保留 `/2/users/me` 官方要求的
+    `tweet.read` 与 `users.read`，删除 `offline.access`、写入、点赞、关注等当前未使用
+    scope。回调完成后删除不再需要的 authorized client，success/failure/logout 都不能
+    遗留 provider access/refresh token。
 12. 建立 provider email trust policy：
     Google 必须校验 `email_verified`；GitHub 只使用 emails API 返回的 verified primary email；
     X 或无 email provider 不写 canonical `users.email`，仅在 provider/login-method 字段保存

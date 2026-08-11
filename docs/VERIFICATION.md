@@ -166,6 +166,37 @@ while counter < 3:
 
 L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 
+## 2026-08-11 OAuth 绑定与 disposable reset review 收敛
+
+> 状态：Verified。本轮是加固基线后的定向维护，不恢复已经结束的 F1-F5 加固阶段，
+> 不改变 UniAuth 的公开身份模型或消费方 API。
+
+本轮确认并修复：
+
+- X `GET /2/users/me` registration 保留 endpoint mapping 要求的
+  `tweet.read + users.read`，同时继续只请求并保留最小用户资料；
+- 普通预检查和 `uk_provider_user` 并发唯一约束裁决统一抛出
+  `OAuth2BindingConflictException`；
+- disposable social reset 接受 dedicated、existing-schema baseline 和合法
+  email-first shared-schema history；
+- reset 使用 canonical V8 schema fingerprint、完整受管表清单和 shared-schema
+  advisory lock，在同一事务内执行删除前后复验；
+- reset apply 清空无法可靠映射到已删除用户的全部 Spring Session。
+
+验证结果：
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| `mvn clean compile` / `mvn clean test-compile` / package | 通过 | main、test 编译及候选 JAR 构建成功 |
+| `mvn test` | 通过 | 264/264；0 failures/errors/skips |
+| OAuth/X/绑定冲突/Flyway 定向测试 | 通过 | 双 scope、精确 user-info URI、Bearer header、最小 principal、普通及并发冲突、canonical fingerprint |
+| `scripts/test-email-shared-schema-e2e.sh` | 通过 | 8/8；两种启动顺序、两种 history reset preview、缺失 V6 表拒绝、advisory lock 拒绝、apply 删除与 Session 失效 |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 16/16；canonical fingerprint 改造后 existing-schema adoption 仍通过完整 failure matrix |
+| Shell / Documentation / patch hygiene | 通过 | 修改脚本 `bash -n`；53 个 Markdown 文件相对链接通过；`git diff --check` 通过 |
+
+真实 Google/GitHub/X provider 授权仍属于 L4 显式 opt-in，不由上述无副作用自动化门禁
+替代。X scope 变化可能要求既有测试用户重新同意授权；UniAuth 不会因此读取推文。
+
 ## 2026-08-10 已完成的工程加固基线
 
 > 状态：Completed。F1-F5、2026-08-10 的完整 15 阶段组合门禁，以及阶段末连续

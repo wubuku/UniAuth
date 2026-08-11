@@ -77,8 +77,14 @@ class SecurityConfigXOAuth2UserServiceTest {
                                 .isEqualTo("invalid_user_info_response")
                 );
         assertThat(output)
-                .contains("configuredScopes=[users.read]")
-                .contains("grantedScopes=[users.read]")
+                .containsPattern(
+                        "configuredScopes=\\[(tweet\\.read, users\\.read"
+                                + "|users\\.read, tweet\\.read)\\]"
+                )
+                .containsPattern(
+                        "grantedScopes=\\[(tweet\\.read, users\\.read"
+                                + "|users\\.read, tweet\\.read)\\]"
+                )
                 .contains(
                         "type=https://api.x.com/2/problems/"
                                 + "not-authorized-for-resource")
@@ -172,7 +178,7 @@ class SecurityConfigXOAuth2UserServiceTest {
                                 AuthorizationGrantType.AUTHORIZATION_CODE
                         )
                         .redirectUri("https://circle.example/oauth2/callback")
-                        .scope("users.read")
+                        .scope("tweet.read", "users.read")
                         .authorizationUri(
                                 "https://x.com/i/oauth2/authorize"
                         )
@@ -186,7 +192,7 @@ class SecurityConfigXOAuth2UserServiceTest {
                 "x-access-token",
                 Instant.now(),
                 Instant.now().plusSeconds(300),
-                Set.of("users.read")
+                Set.of("tweet.read", "users.read")
         );
         return new OAuth2UserRequest(registration, accessToken);
     }

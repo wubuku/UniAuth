@@ -32,6 +32,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.dddml.uniauth.support.AuthIntegrationTestSupport.issueTokens;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -67,6 +68,31 @@ class LoginMethodConcurrencyIntegrationTest extends PostgreSqlIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Test
+    void existingProviderSubjectReturnsStableBindingConflictWithoutRace() {
+        UserDto owner = registerUser("bind-existing-owner");
+        UserDto contender = registerUser("bind-existing-contender");
+        String providerSubject = "existing-bind-" + UUID.randomUUID();
+
+        loginMethodService.bindOAuth2LoginMethod(
+                owner.getId(),
+                UserLoginMethod.AuthProvider.GITHUB,
+                providerSubject,
+                owner.getEmail(),
+                "Existing Owner"
+        );
+
+        assertThatThrownBy(() -> loginMethodService.bindOAuth2LoginMethod(
+                contender.getId(),
+                UserLoginMethod.AuthProvider.GITHUB,
+                providerSubject,
+                contender.getEmail(),
+                "Existing Contender"
+        ))
+                .isInstanceOf(OAuth2BindingConflictException.class)
+                .hasMessage("该OAuth2账户已被其他用户绑定");
+    }
 
     @Test
     void concurrentOAuthBindingReturnsOneStableConflictAndPersistsOneOwner()

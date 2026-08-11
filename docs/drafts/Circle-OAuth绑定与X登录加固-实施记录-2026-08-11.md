@@ -1,0 +1,90 @@
+# OAuth 绑定与 X 用户资料回调加固实施记录
+
+> 状态：Historical
+> 日期：2026-08-11
+> 当前事实入口：[开发指南](../DEVELOPMENT.md) 与
+> [F3 实施记录](F3_OAUTH_WEB3_CONTRACT_HARDENING_IMPLEMENTATION.md)
+
+本文件保留原有路径，以遵守仓库的历史文档保留规则。旧文件名来自最初暴露问题的外部
+集成场景；本文只记录 UniAuth 自身的通用认证契约，UniAuth 不依赖任何特定消费方。
+
+## 1. 问题边界
+
+本轮加固覆盖：
+
+- OAuth2 登录和已认证用户绑定必须使用不同入口及显式 binding intent；
+- provider subject 已属于其他用户时，普通预检查和数据库唯一约束裁决必须返回相同的
+  绑定冲突类型；
+- OAuth failure、限流和服务不可用分支都必须清理 Session 中的 binding marker；
+- X 用户资料请求必须遵守真实 provider endpoint 的 scope、Bearer header、响应信封和
+  最小字段契约；
+- disposable 社交身份重置必须在删除前证明目标是完整、受支持的 UniAuth V8 schema，
+  并使无法可靠映射到用户的 Spring Session 失效。
+
+本轮不改变身份数据模型：同一个 provider subject 只能属于一个 UniAuth 用户；冲突时
+不自动解绑、不自动合并，也不迁移身份。
+
+## 2. 最终契约
+
+### 2.1 X OAuth
+
+X 的 `GET /2/users/me` endpoint mapping 要求 OAuth2 token 同时具有：
+
+```text
+tweet.read
+users.read
+```
+
+`tweet.read` 在这里是 provider 对用户资料 endpoint 的授权前提，不表示 UniAuth 会读取
+推文。UniAuth 只调用配置的 `/2/users/me`，使用 `Authorization: Bearer ...`，并只请求、
+保留 `id`、`username`、`profile_image_url`。authorized client 在 callback 完成后删除，
+不会长期保存 provider access token。
+
+### 2.2 绑定冲突与 marker
+
+- provider subject 已绑定其他用户时统一抛出
+  `OAuth2BindingConflictException`；
+- OAuth callback 对外稳定映射为 `oauth2_binding_conflict`；
+- 并发竞争仍由 `uk_provider_user` 唯一约束裁决，失败方使用相同异常类型；
+- failure handler 无论正常失败、429 还是 503，都会清除
+  `UNIAUTH_OAUTH2_BINDING_PROVIDER`；
+- 普通登录不会因为残留 marker 或已有 access Cookie 进入绑定分支。
+
+### 2.3 Disposable reset
+
+`scripts/reset-disposable-social-identities.sh` 只允许 disposable test/demo 数据库，并
+接受以下 UniAuth Flyway history：
+
+- SQL V1-V8；
+- existing-schema baseline V1 + SQL V2-V8；
+- shared-schema V0 baseline + SQL V1-V8。
+
+脚本使用固定的 canonical V8 SHA-256 fingerprint 验证全部 14 张受管表、列、约束、
+索引及显式安全触发器/函数。`--apply` 获取与 shared-schema Flyway bootstrap 相同的
+PostgreSQL advisory lock，在同一事务内执行删除前验证、Session 清理、目标用户删除和
+删除后复验。无法取得锁、history 漂移或 fingerprint 不匹配时均失败关闭。
+
+## 3. 验收范围
+
+验收必须包含：
+
+- X registration 双 scope、精确 user-info URI、Bearer header 和最小 principal；
+- 非并发与并发 provider subject 冲突的统一异常；
+- OAuth failure 429/503 marker 清理；
+- dedicated、existing-baseline 和 email-first shared-schema reset preview；
+- 缺失核心表、schema fingerprint 漂移和 migration advisory lock 竞争拒绝；
+- reset apply 删除目标 disposable 身份并清空 Spring Session；
+- 完整 Maven 测试、Shell 语法、Markdown 链接和 `git diff --check`。
+
+最终证据：
+
+```text
+mvn clean compile / clean test-compile / package       PASS
+mvn test                                               264/264 PASS
+shared-schema/reset real-process E2E                   8/8 PASS
+Flyway baseline guard                                  16/16 PASS
+Markdown relative-link check                           53 files PASS
+modified Shell syntax / git diff --check               PASS
+```
+
+完整说明见[验证指南](../VERIFICATION.md#2026-08-11-oauth-绑定与-disposable-reset-review-收敛)。

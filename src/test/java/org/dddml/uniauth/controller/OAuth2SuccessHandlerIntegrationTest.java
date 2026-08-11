@@ -166,7 +166,7 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
                 clientRegistrationRepository.findByRegistrationId("x");
 
         assertThat(registration.getScopes())
-                .containsExactly("users.read");
+                .containsExactlyInAnyOrder("tweet.read", "users.read");
         assertThat(registration.getProviderDetails()
                 .getUserInfoEndpoint()
                 .getUri())

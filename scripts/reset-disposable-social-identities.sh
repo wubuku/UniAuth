@@ -3,6 +3,9 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FINGERPRINT_SQL="$PROJECT_DIR/scripts/sql/uniauth-schema-fingerprint.sql"
+EXPECTED_FINGERPRINT_FILE="$PROJECT_DIR/scripts/sql/uniauth-v8-schema-fingerprint.sha256"
+SHARED_SCHEMA_LOCK_KEY="-632082753896054443"
 MODE="preview"
 PROVIDERS_INPUT=""
 
@@ -23,9 +26,10 @@ The default mode is read-only. --apply deletes only non-managed users that have
 exactly one login method and whose sole method belongs to a selected provider.
 Managed testlocal/testsso/testboth fixtures and multi-method users are protected.
 The target database must also contain the exact successful UniAuth Flyway V1-V8
-history and the protected auth schema. --apply invalidates all Spring Sessions
-in the disposable database because serialized sessions cannot be safely mapped
-to deleted users.
+history, optionally preceded by the supported shared-schema V0 baseline, and the
+canonical V8 auth schema. --apply invalidates all Spring Sessions in the
+disposable database because serialized sessions cannot be safely mapped to
+deleted users.
 EOF
 }
 
@@ -67,6 +71,18 @@ if [ "${APP_DEMO_DATA_DISPOSABLE:-false}" != "true" ]; then
 fi
 if ! command -v psql >/dev/null 2>&1; then
     echo "Error: psql is required" >&2
+    exit 1
+fi
+if [ ! -r "$FINGERPRINT_SQL" ] || [ ! -r "$EXPECTED_FINGERPRINT_FILE" ]; then
+    echo "Error: canonical UniAuth schema fingerprint files are unavailable" >&2
+    exit 1
+fi
+
+EXPECTED_SCHEMA_FINGERPRINT="$(
+    tr -d '[:space:]' < "$EXPECTED_FINGERPRINT_FILE"
+)"
+if [[ ! "$EXPECTED_SCHEMA_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Error: canonical UniAuth schema fingerprint is invalid" >&2
     exit 1
 fi
 
@@ -146,7 +162,8 @@ schema_guard_sql() {
     cat <<'SQL'
 DO $$
 DECLARE
-    actual_versions text[];
+    baseline_zero_count integer;
+    expected_version integer;
     required_table text;
     required_table_names text[] := ARRAY[
         'users',
@@ -157,6 +174,8 @@ DECLARE
         'spring_session_attributes',
         'web3_nonces',
         'email_verification_codes',
+        'email_delivery_outbox',
+        'security_events',
         'token_families',
         'oauth2_binding_intents',
         'web3_challenge_counters',
@@ -203,25 +222,47 @@ BEGIN
             'refusing reset: Flyway history contains failed or repeatable rows';
     END IF;
 
-    SELECT array_agg(version::text ORDER BY version::integer)
-      INTO actual_versions
-      FROM public.uniauth_flyway_schema_history;
-    IF actual_versions IS DISTINCT FROM ARRAY[
-        '1', '2', '3', '4', '5', '6', '7', '8'
-    ]::text[] THEN
+    FOR expected_version IN 1..8 LOOP
+        IF (
+            SELECT count(*)
+              FROM public.uniauth_flyway_schema_history
+             WHERE version::text = expected_version::text
+               AND success IS TRUE
+               AND (
+                   (expected_version = 1 AND type IN ('SQL', 'BASELINE'))
+                   OR (expected_version > 1 AND type = 'SQL')
+               )
+        ) <> 1 THEN
+            RAISE EXCEPTION
+                'refusing reset: expected exactly one successful UniAuth Flyway V% row',
+                expected_version;
+        END IF;
+    END LOOP;
+
+    SELECT count(*)
+      INTO baseline_zero_count
+      FROM public.uniauth_flyway_schema_history
+     WHERE version::text = '0'
+       AND type = 'BASELINE'
+       AND success IS TRUE;
+
+    IF baseline_zero_count > 1
+       OR (
+           SELECT count(*)
+             FROM public.uniauth_flyway_schema_history
+       ) <> 8 + baseline_zero_count THEN
         RAISE EXCEPTION
-            'refusing reset: expected exact successful UniAuth Flyway V1-V8 history, got %',
-            coalesce(array_to_string(actual_versions, ','), '<empty>');
+            'refusing reset: expected exact successful UniAuth V1-V8 history with at most one V0 baseline';
     END IF;
 
-    IF EXISTS (
+    IF baseline_zero_count = 1 AND EXISTS (
         SELECT 1
           FROM public.uniauth_flyway_schema_history
-         WHERE (version::text = '1' AND type NOT IN ('SQL', 'BASELINE'))
-            OR (version::text <> '1' AND type <> 'SQL')
+         WHERE version::text = '1'
+           AND type <> 'SQL'
     ) THEN
         RAISE EXCEPTION
-            'refusing reset: unexpected Flyway migration type';
+            'refusing reset: shared-schema V0 baseline requires SQL migration V1';
     END IF;
 
     FOREACH required_table IN ARRAY required_table_names LOOP
@@ -276,11 +317,31 @@ $$;
 SQL
 }
 
-echo "Validating exact UniAuth V1-V8 schema before preview..."
+schema_fingerprint_query() {
+    sed '$ s/;[[:space:]]*$//' "$FINGERPRINT_SQL"
+}
+
+schema_validation_psql() {
+    schema_guard_sql
+    schema_fingerprint_query
+    cat <<SQL
+\gset
+SELECT :'schema_fingerprint' = '${EXPECTED_SCHEMA_FINGERPRINT}'
+    AS schema_fingerprint_matches
+\gset
+\if :schema_fingerprint_matches
+\else
+\echo 'refusing reset: canonical UniAuth V8 schema fingerprint mismatch'
+\quit 3
+\endif
+SQL
+}
+
+echo "Validating canonical UniAuth V8 schema before preview..."
 "${psql_args[@]}" -qAt <<SQL
 BEGIN;
 SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
-$(schema_guard_sql)
+$(schema_validation_psql)
 COMMIT;
 SQL
 
@@ -358,8 +419,9 @@ fi
 "${psql_args[@]}" -P pager=off <<SQL
 BEGIN;
 SET LOCAL lock_timeout = '5s';
+SELECT pg_advisory_xact_lock(${SHARED_SCHEMA_LOCK_KEY});
 
-$(schema_guard_sql)
+$(schema_validation_psql)
 
 LOCK TABLE public.users IN SHARE ROW EXCLUSIVE MODE;
 LOCK TABLE public.user_login_methods IN SHARE ROW EXCLUSIVE MODE;
@@ -435,6 +497,8 @@ WITH deleted AS (
      RETURNING users.id
 )
 SELECT count(*) AS deleted_social_users FROM deleted;
+
+$(schema_validation_psql)
 
 COMMIT;
 SQL

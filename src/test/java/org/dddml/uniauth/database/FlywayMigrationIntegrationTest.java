@@ -11,6 +11,9 @@ import org.springframework.session.Session;
 import org.springframework.session.SessionRepository;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.UUID;
@@ -49,6 +52,21 @@ class FlywayMigrationIntegrationTest extends PostgreSqlIntegrationTest {
     @Autowired
     @SuppressWarnings("rawtypes")
     private SessionRepository sessionRepository;
+
+    @Test
+    void canonicalSchemaFingerprintMatchesVersionEight() throws IOException {
+        String fingerprintSql = Files.readString(Path.of(
+                "scripts/sql/uniauth-schema-fingerprint.sql"
+        ));
+        String expectedFingerprint = Files.readString(Path.of(
+                "scripts/sql/uniauth-v8-schema-fingerprint.sha256"
+        )).trim();
+
+        assertThat(jdbcTemplate.queryForObject(
+                fingerprintSql,
+                String.class
+        )).isEqualTo(expectedFingerprint);
+    }
 
     @Test
     void freshDatabaseMigratesToVersionEightAndHibernateValidates() {

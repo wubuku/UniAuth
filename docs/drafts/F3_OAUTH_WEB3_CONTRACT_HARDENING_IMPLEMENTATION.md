@@ -75,8 +75,9 @@
 7. 首次 callback、重复 callback、并发创建和不同用户绑定依赖数据库唯一约束并映射
    稳定业务冲突；disabled/security-version 漂移在写 metadata、消费 intent 和签发
    token 前失败关闭。
-8. callback 使用完 provider profile 后删除 authorized client；X scope 收敛为登录所需
-   的只读用户 scope。
+8. callback 使用完 provider profile 后删除 authorized client；X scope 收敛为
+   `/2/users/me` 官方要求的 `tweet.read` 与 `users.read`，不增加离线、写入、关注或
+   点赞权限。
 
 ### F3.4 Web3 与 API 契约
 

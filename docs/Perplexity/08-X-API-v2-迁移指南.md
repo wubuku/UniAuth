@@ -39,10 +39,10 @@ spring:
             authorization-grant-type: authorization_code
             redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
             scope:
+              - tweet.read
               - users.read
-              # 登录只读取 /2/users/me，不需要 tweet.read。
-              # 只有产品实际调用推文、关注、点赞或长期离线 API 时，
-              # 才分别增加对应 scope。
+              # X 的 GET /2/users/me endpoint mapping 要求同时具备
+              # tweet.read 与 users.read。当前实现仍不调用推文 API。
             
         provider:
           x:

@@ -56,14 +56,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-hash_stdin() {
-    if command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 | awk '{print $1}'
-    else
-        sha256sum | awk '{print $1}'
-    fi
-}
-
 psql_value() {
     local host="$1"
     local port="$2"
@@ -145,16 +137,12 @@ schema_fingerprint() {
             PGPASSWORD="$password" \
             psql -X -qAt -v ON_ERROR_STOP=1 \
                 -h "$host" -p "$port" -U "$user" -d "$database" \
-                -f "$FINGERPRINT_SQL" \
-            | LC_ALL=C sort \
-            | hash_stdin
+                -f "$FINGERPRINT_SQL"
     else
         PGPASSWORD="$password" \
             psql -X -qAt -v ON_ERROR_STOP=1 \
                 -h "$host" -p "$port" -U "$user" -d "$database" \
-                -f "$FINGERPRINT_SQL" \
-            | LC_ALL=C sort \
-            | hash_stdin
+                -f "$FINGERPRINT_SQL"
     fi
 }
 
@@ -256,12 +244,6 @@ for command_name in docker mvn psql pg_dump pg_isready awk sort grep; do
         exit 1
     fi
 done
-if ! command -v shasum >/dev/null 2>&1 \
-    && ! command -v sha256sum >/dev/null 2>&1; then
-    echo "ERROR: shasum or sha256sum is required" >&2
-    exit 1
-fi
-
 uniauth_require_postgres
 uniauth_require_nonproduction_database_name "$POSTGRES_DATABASE"
 

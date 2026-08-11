@@ -171,9 +171,12 @@ entity 或 schema 变更至少核对：
 - `scripts/test-flyway-baseline-guard.sh`
 - `scripts/test-email-shared-schema-e2e.sh`
 - Flyway fresh/baseline 集成测试
-- schema fingerprint
+- `scripts/sql/uniauth-schema-fingerprint.sql` 与固定的 V8 fingerprint
 
 Flyway 是唯一 schema owner。已发布 migration 不得改写；新增结构修复必须使用 V9+。
+canonical fingerprint 必须覆盖全部受管表、列、约束、索引、显式触发器及其函数；
+迁移增加或修改受管对象时，必须在 fresh PostgreSQL 16 schema 上重新生成固定值并由
+集成测试核对。
 
 ## 外部集成
 
@@ -274,9 +277,13 @@ scripts/reset-disposable-social-identities.sh \
   UI 管理，不能用数据库脚本拆分；
 - `token_blacklist` 显式清理，其余 authorities、token families、binding intents 和
   login methods 依靠 `users` 外键级联删除；
-- 执行 `--apply` 前后都会验证 `uniauth_flyway_schema_history` 恰好是成功的
-  V1-V8，并检查 UniAuth 关键表、级联外键和 provider 唯一索引；schema 不匹配时
-  fail closed；
+- preview 和 `--apply` 都会验证 `uniauth_flyway_schema_history`：支持 V1-V8
+  dedicated/existing-baseline 形态，也支持合法 shared-schema 的单条 V0 baseline +
+  SQL V1-V8；失败、重复、未知版本或其他类型均 fail closed；
+- schema guard 使用固定的 canonical V8 SHA-256 fingerprint，覆盖全部 14 张受管表、
+  列、约束、索引以及 `security_events` 的 append-only 触发器和函数；
+- `--apply` 在与双方 Flyway bootstrap 相同的 PostgreSQL advisory lock 下运行，并在
+  同一个事务中于删除前后各验证一次 history 和 schema fingerprint；
 - `--apply` 会清空 disposable 数据库中的全部 `spring_session`，因为 Spring
   Session 的序列化 `SecurityContext` 没有可靠的 users 外键映射；执行后所有 UniAuth
   浏览器会话都必须重新登录；
@@ -291,8 +298,8 @@ scripts/reset-disposable-social-identities.sh \
 - provider subject 的唯一约束冲突统一返回 `oauth2_binding_conflict`；
 - OAuth 授权失败、限流器 429/503 等提前返回路径都会清除 binding marker，避免污染
   后续普通登录；
-- X 登录只申请 `users.read`，只读取 `/2/users/me` 的最小用户资料字段，不申请推文
-  读取权限；
+- X 登录申请 `/2/users/me` 官方要求的 `tweet.read` 与 `users.read`；UniAuth 仍只调用
+  用户资料 endpoint，并只保留最小用户字段，不调用推文读取 API；
 - 删除一个社交登录方式会撤销该用户现有 access token，但不会删除仍然存在的本地
   登录方式；
 - UniAuth 始终拒绝删除用户最后一种可用登录方式；

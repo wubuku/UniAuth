@@ -78,7 +78,9 @@ public class LoginMethodService {
         loginMethodRepository.findByAuthProviderAndProviderUserId(provider, providerUserId)
             .ifPresent(existing -> {
                 if (!existing.getUser().getId().equals(userId)) {
-                    throw new IllegalArgumentException("该OAuth2账户已被其他用户绑定");
+                    throw new OAuth2BindingConflictException(
+                            "该OAuth2账户已被其他用户绑定"
+                    );
                 }
             });
         

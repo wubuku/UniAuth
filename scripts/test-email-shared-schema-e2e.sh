@@ -16,9 +16,12 @@ DATABASE_USER="shared_schema_test"
 DATABASE_PASSWORD="shared-schema-${RUN_ID}"
 ROOT_FIRST_DATABASE="shared_email_root_first_test"
 EMAIL_FIRST_DATABASE="shared_email_email_first_test"
+BROKEN_SCHEMA_DATABASE="shared_email_broken_test"
+LOCKED_RESET_DATABASE="shared_email_locked_reset_test"
 DATABASE_PORT=""
 APP_PID=""
 APP_LOG=""
+LOCK_PID=""
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 API_KEY="shared-schema-key-${RUN_ID}"
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}localhost,127.0.0.1,::1"
@@ -42,10 +45,32 @@ stop_application() {
     APP_PID=""
 }
 
+stop_lock_holder() {
+    if [ -z "${LOCK_PID:-}" ]; then
+        return
+    fi
+    PGPASSWORD="$DATABASE_PASSWORD" psql \
+        -X -q -v ON_ERROR_STOP=1 \
+        -h 127.0.0.1 \
+        -p "$DATABASE_PORT" \
+        -U "$DATABASE_USER" \
+        -d postgres \
+        -c "
+            SELECT pg_terminate_backend(pid)
+            FROM pg_stat_activity
+            WHERE application_name = 'uniauth-reset-lock-test'
+              AND pid <> pg_backend_pid();
+        " >/dev/null 2>&1 || true
+    kill -TERM "$LOCK_PID" >/dev/null 2>&1 || true
+    wait "$LOCK_PID" >/dev/null 2>&1 || true
+    LOCK_PID=""
+}
+
 cleanup() {
     local exit_code=$?
     set +e
     stop_application
+    stop_lock_holder
     if docker ps -a --format '{{.Names}}' 2>/dev/null \
         | grep -Fxq "$CONTAINER_NAME"; then
         docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
@@ -97,6 +122,44 @@ db_value() {
 
 create_database() {
     db_command postgres -c "CREATE DATABASE \"$1\";" >/dev/null
+}
+
+clone_database() {
+    local source_database="$1"
+    local target_database="$2"
+    db_command postgres \
+        -c "CREATE DATABASE \"$target_database\" TEMPLATE \"$source_database\";" \
+        >/dev/null
+}
+
+run_social_reset() {
+    local database="$1"
+    shift
+    env \
+        POSTGRES_HOST=127.0.0.1 \
+        POSTGRES_PORT="$DATABASE_PORT" \
+        POSTGRES_DATABASE="$database" \
+        POSTGRES_USER="$DATABASE_USER" \
+        POSTGRES_PASSWORD="$DATABASE_PASSWORD" \
+        APP_DEMO_DATA_DISPOSABLE=true \
+        "$PROJECT_DIR/scripts/reset-disposable-social-identities.sh" \
+        --providers google \
+        "$@"
+}
+
+expect_social_reset_failure() {
+    local database="$1"
+    local expected_message="$2"
+    shift 2
+    local output_file="$TEMP_DIR/reset-${database}.log"
+
+    if run_social_reset "$database" "$@" >"$output_file" 2>&1; then
+        fail "social reset unexpectedly passed for $database"
+    fi
+    if ! grep -Fq "$expected_message" "$output_file"; then
+        cat "$output_file" >&2
+        fail "social reset did not report the expected failure for $database"
+    fi
 }
 
 start_uniauth() {
@@ -228,7 +291,7 @@ fi
 create_database "$ROOT_FIRST_DATABASE"
 create_database "$EMAIL_FIRST_DATABASE"
 
-echo "1/4 Start UniAuth first on an empty shared public schema"
+echo "1/8 Start UniAuth first on an empty shared public schema"
 start_uniauth "$ROOT_FIRST_DATABASE"
 stop_application
 [ "$(db_value "$ROOT_FIRST_DATABASE" "
@@ -237,7 +300,7 @@ stop_application
     WHERE type = 'BASELINE' AND version = '0';
 ")" = "0" ] || fail "root-first UniAuth unexpectedly created a baseline marker"
 
-echo "2/4 Start the email service second, then restart both schema owners"
+echo "2/8 Start the email service second, then restart both schema owners"
 start_email_service "$ROOT_FIRST_DATABASE"
 stop_application
 [ "$(db_value "$ROOT_FIRST_DATABASE" "
@@ -265,7 +328,7 @@ stop_application
     WHERE success;
 ")" = "6" ] || fail "root-first restart changed email-service Flyway history"
 
-echo "3/4 Start the email service first on an empty shared public schema"
+echo "3/8 Start the email service first on an empty shared public schema"
 start_email_service "$EMAIL_FIRST_DATABASE"
 stop_application
 [ "$(db_value "$EMAIL_FIRST_DATABASE" "
@@ -274,7 +337,7 @@ stop_application
     WHERE type = 'BASELINE' AND version = '0';
 ")" = "0" ] || fail "email-first service unexpectedly created a baseline marker"
 
-echo "4/4 Start UniAuth second, then restart both schema owners"
+echo "4/8 Start UniAuth second, then restart both schema owners"
 start_uniauth "$EMAIL_FIRST_DATABASE"
 stop_application
 [ "$(db_value "$EMAIL_FIRST_DATABASE" "
@@ -317,5 +380,105 @@ stop_application
     FROM uniauth_flyway_schema_history
     WHERE success;
 ")" = "9" ] || fail "email-first restart changed UniAuth Flyway history"
+
+echo "5/8 Preview disposable reset on both supported UniAuth history layouts"
+run_social_reset "$ROOT_FIRST_DATABASE" >/dev/null
+run_social_reset "$EMAIL_FIRST_DATABASE" >/dev/null
+
+echo "6/8 Reject a shared schema missing a canonical UniAuth V6 table"
+clone_database "$EMAIL_FIRST_DATABASE" "$BROKEN_SCHEMA_DATABASE"
+db_command "$BROKEN_SCHEMA_DATABASE" \
+    -c "DROP TABLE public.email_delivery_outbox;" >/dev/null
+expect_social_reset_failure \
+    "$BROKEN_SCHEMA_DATABASE" \
+    "required UniAuth table is missing: email_delivery_outbox"
+
+echo "7/8 Refuse apply while the shared schema migration lock is held"
+clone_database "$ROOT_FIRST_DATABASE" "$LOCKED_RESET_DATABASE"
+db_command "$LOCKED_RESET_DATABASE" >/dev/null <<'SQL'
+INSERT INTO public.users (
+    id,
+    username,
+    email,
+    email_identity_type
+) VALUES (
+    '11111111-1111-4111-8111-111111111111',
+    'reset-google-user',
+    'reset-google-user@oauth.local',
+    'SYNTHETIC'
+);
+
+INSERT INTO public.user_login_methods (
+    id,
+    user_id,
+    auth_provider,
+    provider_user_id,
+    provider_username,
+    is_primary,
+    is_verified
+) VALUES (
+    '22222222-2222-4222-8222-222222222222',
+    '11111111-1111-4111-8111-111111111111',
+    'GOOGLE',
+    'reset-google-subject',
+    'reset-google-user',
+    true,
+    true
+);
+
+INSERT INTO public.spring_session (
+    primary_id,
+    session_id,
+    creation_time,
+    last_access_time,
+    max_inactive_interval,
+    expiry_time,
+    principal_name
+) VALUES (
+    '33333333-3333-4333-8333-333333333333',
+    '44444444-4444-4444-8444-444444444444',
+    1,
+    1,
+    1800,
+    9999999999999,
+    'reset-google-user'
+);
+SQL
+PGAPPNAME=uniauth-reset-lock-test \
+db_command "$LOCKED_RESET_DATABASE" -At \
+    -c "SELECT pg_advisory_lock(-632082753896054443); SELECT pg_sleep(60);" \
+    >"$TEMP_DIR/reset-lock-holder.log" 2>&1 &
+LOCK_PID=$!
+for _ in $(seq 1 50); do
+    if [ "$(db_value "$LOCKED_RESET_DATABASE" \
+        "SELECT pg_try_advisory_lock(-632082753896054443);")" = "f" ]; then
+        break
+    fi
+    sleep 0.1
+done
+if [ "$(db_value "$LOCKED_RESET_DATABASE" \
+    "SELECT pg_try_advisory_lock(-632082753896054443);")" != "f" ]; then
+    fail "migration advisory lock holder did not become ready"
+fi
+expect_social_reset_failure \
+    "$LOCKED_RESET_DATABASE" \
+    "canceling statement due to lock timeout" \
+    --apply
+stop_lock_holder
+[ "$(db_value "$LOCKED_RESET_DATABASE" \
+    "SELECT count(*) FROM public.users WHERE username = 'reset-google-user';")" = "1" ] \
+    || fail "failed locked reset modified the target user"
+[ "$(db_value "$LOCKED_RESET_DATABASE" \
+    "SELECT count(*) FROM public.spring_session;")" = "1" ] \
+    || fail "failed locked reset invalidated sessions"
+
+echo "8/8 Apply reset after the migration lock is released"
+run_social_reset "$LOCKED_RESET_DATABASE" --apply >/dev/null
+[ "$(db_value "$LOCKED_RESET_DATABASE" \
+    "SELECT count(*) FROM public.users WHERE username = 'reset-google-user';")" = "0" ] \
+    || fail "successful reset did not delete the disposable social user"
+[ "$(db_value "$LOCKED_RESET_DATABASE" \
+    "SELECT count(*) FROM public.spring_session;")" = "0" ] \
+    || fail "successful reset did not invalidate Spring Sessions"
 
 echo "PASS: shared database/public schema process E2E"
