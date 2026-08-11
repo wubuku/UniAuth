@@ -284,52 +284,24 @@ scripts/reset-disposable-social-identities.sh \
 
 该脚本只适用于可丢弃的本地/测试认证数据，不是生产账号合并、解绑或删除工具。
 
-### Circle 影响评估
+### OAuth 与多登录方式回归契约
 
-这五项加固不会改变 Circle 正常登录、首次使用确认、绑定多个 provider 或邮箱登录
-的业务语义：
+以下是 UniAuth 对所有外部消费方保持稳定的服务端契约：
 
-- schema guard 只影响 `reset-social` 这一破坏性测试辅助命令；正常 UniAuth/Circle
-  启动和 OAuth 回调不受影响；
-- 并发 provider subject 冲突现在稳定返回 `oauth2_binding_conflict`。Circle 会继续
-  显示“这个社交账号已经绑定到其他 Circle 账号，不能重复绑定”，不再把数据库竞争
-  的失败方误显示为普通 OAuth 处理失败；
-- OAuth 授权失败、429 或限流器 503 都会清除 binding marker，避免下一次普通登录
-  被误判成绑定流程；
-- 直接运行 UniAuth reset 的 `--apply` 会使整个 disposable UniAuth 数据库的浏览器
-  Session 失效。Circle 联调应优先使用 `dev-circle.sh reset-social`，由 Circle 包装
-  流程同步清理对应的 disposable onboarding 数据；清理后重新用邮箱登录再继续绑定
-  测试；
-- X 只申请 `users.read`，Circle 不需要也不会获得推文读取能力。X 控制台需要允许
-  的 scope 与 UniAuth 配置保持一致。
+- provider subject 的唯一约束冲突统一返回 `oauth2_binding_conflict`；
+- OAuth 授权失败、限流器 429/503 等提前返回路径都会清除 binding marker，避免污染
+  后续普通登录；
+- X 登录只申请 `users.read`，只读取 `/2/users/me` 的最小用户资料字段，不申请推文
+  读取权限；
+- 删除一个社交登录方式会撤销该用户现有 access token，但不会删除仍然存在的本地
+  登录方式；
+- UniAuth 始终拒绝删除用户最后一种可用登录方式；
+- disposable reset 的 `--apply` 会清空目标数据库中的 Spring Session，因此所有消费
+  方的浏览器会话都必须重新登录。
 
-Circle 手动验收最小闭环：
-
-1. 用 Google/GitHub/X 任一 provider 首次登录，完成 Circle 首次使用确认；
-2. 在登录方式页面保留 `LOCAL`，依次绑定其他 provider；
-3. 尝试绑定已属于另一 Circle 用户的 provider，确认显示绑定冲突，而不是通用失败；
-4. 退出并用邮箱登录，逐个解绑社交方式，确认每次解绑后旧会话失效；
-5. 使用 `dev-circle.sh reset-social <providers> --apply` 清理后，重新确认首次登录和
-   多方式绑定流程。
-
-UniAuth 的 PostgreSQL 集成测试还固定验证一个 Circle 关键闭环：用户同时保留
-邮箱/`LOCAL` 与社交登录方式时，删除社交方式会撤销当前旧 access token，但不会删除
-`LOCAL`；用户可以重新用邮箱和密码登录，并重新读取剩余登录方式。这是“有限社交账号
-循环测试”依赖的服务端安全与可恢复性契约。
-
-Circle 外部认证开发环境还提供了一个包装清理入口：
-`seedance-research-circle-app/api-server/dev-circle.sh reset-social <providers> [--apply]`。
-它会先调用本脚本的 UniAuth 预览/写入，再由 Circle 侧脚本检查并清理已经完成首次使用
-的、仅含初始化数据的 Circle tenant。若社交用户已经完成 Circle 首次使用，必须使用
-Circle 包装入口，否则只删除 UniAuth 用户会留下孤立的 Circle user/tenant；若流程停在
-`/welcome/external` 尚未确认，Circle 侧没有 tenant，UniAuth 通用脚本即可完成清理。
-
-为了循环使用有限社交账号，优先在目标 UniAuth 用户中保留 `LOCAL` 登录方式。Circle
-账号页只对 Google/GitHub/X 等社交方式显示解绑；只要 `LOCAL` 仍然存在，就可以把
-所有社交方式逐个解绑，最后保留 `LOCAL`，而 UniAuth 仍会拒绝删除最后一种方式。邮箱
-资料字段本身不等于 `LOCAL` 登录方式，测试前应在 login-methods 列表中确认 `LOCAL`
-存在。每次解绑都会撤销旧登录会话，因此 Circle 会清除 provider session 并要求重新用
-邮箱登录后才能继续管理下一种登录方式；这是预期的安全边界，不是解绑失败。
+这些契约由 OAuth callback、并发绑定、登录方式管理和 PostgreSQL 集成测试覆盖。消费方
+可以在自己的集成测试中验证错误码、token 失效和登录方式列表，不应直接修改 UniAuth
+数据库来模拟绑定或解绑。
 
 ## 生成物与本地文件
 
