@@ -13,6 +13,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
+import org.springframework.security.config.annotation.ObjectPostProcessor;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.core.Authentication;
@@ -30,6 +31,7 @@ import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.client.web.DefaultOAuth2AuthorizationRequestResolver;
+import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestRedirectFilter;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestCustomizers;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -57,6 +59,7 @@ import org.dddml.uniauth.service.AuthRateLimiterUnavailableException;
 import org.dddml.uniauth.service.OAuth2BindingIntentService;
 import org.dddml.uniauth.service.OAuth2ProviderProfile;
 import org.dddml.uniauth.service.OAuth2ProviderProfileService;
+import org.dddml.uniauth.service.RecentAuthenticationRequiredException;
 import org.dddml.uniauth.service.RecentAuthenticationService;
 import org.springframework.http.*;
 import org.springframework.core.ParameterizedTypeReference;
@@ -65,7 +68,10 @@ import java.util.List;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import org.springframework.web.util.UriComponentsBuilder;
+import org.dddml.uniauth.service.LoginMethodConflictException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Configuration
@@ -181,8 +187,18 @@ public class SecurityConfig {
                         "OAuth2 processing rejected: {}",
                         exception.getClass().getSimpleName()
                 );
-                writeOAuth2Error(request, response);
+                writeOAuth2Error(
+                        request,
+                        response,
+                        isBindingCallback(request)
+                                && hasCause(
+                                        exception,
+                                        LoginMethodConflictException.class)
+                                ? "oauth2_binding_conflict"
+                                : "oauth2_processing_failed"
+                );
             } finally {
+                clearBindingCallbackMarker(request);
                 authorizedClientService.removeAuthorizedClient(
                         oauthToken.getAuthorizedClientRegistrationId(),
                         authentication.getName()
@@ -208,8 +224,43 @@ public class SecurityConfig {
                 response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
                 return;
             }
+            boolean binding = isBindingRequest(request)
+                    || isBindingCallback(request);
+            clearBindingCallbackMarker(request);
             response.sendRedirect(
-                    oauth2RedirectPolicy.loginErrorRedirect("oauth2_failed")
+                    oauth2RedirectPolicy.loginErrorRedirect(
+                            binding
+                                    ? "oauth2_binding_failed"
+                                    : "oauth2_failed"
+                    )
+            );
+        };
+    }
+
+    @Bean
+    public AuthenticationFailureHandler oauth2AuthorizationRequestFailureHandler() {
+        AuthenticationFailureHandler loginFailureHandler =
+                oauth2FailureHandler();
+        return (request, response, exception) -> {
+            if (isBindingRequest(request)
+                    && hasCause(
+                            exception,
+                            RecentAuthenticationRequiredException.class)) {
+                log.info("OAuth2 account binding requires recent authentication");
+                response.setStatus(HttpStatus.FORBIDDEN.value());
+                response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                response.setCharacterEncoding("UTF-8");
+                new ObjectMapper().writeValue(response.getWriter(), Map.of(
+                        "success", false,
+                        "error", "RECENT_AUTH_REQUIRED",
+                        "message", "Recent authentication is required"
+                ));
+                return;
+            }
+            loginFailureHandler.onAuthenticationFailure(
+                    request,
+                    response,
+                    exception
             );
         };
     }
@@ -250,6 +301,20 @@ public class SecurityConfig {
             )
             // OAuth2登录配置
             .oauth2Login(oauth2 -> oauth2
+                .withObjectPostProcessor(
+                    new ObjectPostProcessor<
+                            OAuth2AuthorizationRequestRedirectFilter>() {
+                        @Override
+                        public <O extends
+                                OAuth2AuthorizationRequestRedirectFilter>
+                                O postProcess(O filter) {
+                            filter.setAuthenticationFailureHandler(
+                                    oauth2AuthorizationRequestFailureHandler()
+                            );
+                            return filter;
+                        }
+                    }
+                )
                 .loginPage("/login")
                 .successHandler(oauth2SuccessHandler())
                 .failureHandler(oauth2FailureHandler())
@@ -329,43 +394,85 @@ public class SecurityConfig {
     }
 
     private OAuth2User loadXUser(OAuth2UserRequest userRequest) throws Exception {  // ✅ X API v2：方法名更新
-        // 手动调用Twitter API获取用户信息
-        String authorizationHeader = "Bearer " + userRequest.getAccessToken().getTokenValue();
-
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", authorizationHeader);
+        headers.setBearerAuth(
+                userRequest.getAccessToken().getTokenValue());
 
         HttpEntity<?> entity = new HttpEntity<>(headers);
 
-        // 调用Twitter API v2
+        String userInfoUri = userRequest.getClientRegistration()
+                .getProviderDetails()
+                .getUserInfoEndpoint()
+                .getUri();
+        if (userInfoUri == null || userInfoUri.isBlank()) {
+            throw new IllegalArgumentException(
+                    "X OAuth registration has no user-info URI");
+        }
+        String requestUri = UriComponentsBuilder
+                .fromUriString(userInfoUri)
+                .queryParam(
+                        "user.fields",
+                        "id,username,profile_image_url")
+                .build()
+                .toUriString();
         ResponseEntity<Map<String, Object>> response = oauth2RestTemplate.exchange(
-            "https://api.x.com/2/users/me?user.fields=created_at,description,entities,id,location,name,pinned_tweet_id,profile_image_url,protected,public_metrics,url,username,verified,verified_type,withheld",
+            requestUri,
             HttpMethod.GET,
             entity,
             new ParameterizedTypeReference<Map<String, Object>>() {}
         );
 
-        if (response.getBody() != null && response.getBody().containsKey("data")) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> userData = (Map<String, Object>) response.getBody().get("data");
-
-            // 创建扁平化的属性映射
-            Map<String, Object> attributes = new HashMap<>();
-            attributes.putAll(userData);
-
-            // 确保username属性存在
-            if (!attributes.containsKey("username")) {
-                throw new IllegalArgumentException("Twitter API response missing 'username' field");
-            }
-
-            return new DefaultOAuth2User(
-                Collections.singleton(new SimpleGrantedAuthority("ROLE_USER")),
-                attributes,
-                "username"  // 使用username作为name属性
-            );
-        } else {
+        Map<String, Object> responseBody = response.getBody();
+        if (responseBody == null) {
             throw new IllegalArgumentException("Invalid Twitter API response structure");
         }
+        Object rawData = responseBody.get("data");
+        if (!(rawData instanceof Map<?, ?> data)) {
+            throw new IllegalArgumentException(
+                    "Invalid Twitter API data structure");
+        }
+
+        Map<String, Object> attributes = new LinkedHashMap<>();
+        attributes.put("id", requiredXAttribute(data, "id"));
+        attributes.put("username", requiredXAttribute(data, "username"));
+        String profileImageUrl = optionalXAttribute(
+                data,
+                "profile_image_url");
+        if (profileImageUrl != null) {
+            attributes.put("profile_image_url", profileImageUrl);
+        }
+        return new DefaultOAuth2User(
+                Collections.singleton(
+                        new SimpleGrantedAuthority("ROLE_USER")),
+                attributes,
+                "username");
+    }
+
+    private String requiredXAttribute(
+            Map<?, ?> data,
+            String name) {
+        String value = optionalXAttribute(data, name);
+        if (value == null) {
+            throw new IllegalArgumentException(
+                    "X API response missing '" + name + "' field");
+        }
+        return value;
+    }
+
+    private String optionalXAttribute(
+            Map<?, ?> data,
+            String name) {
+        Object value = data.get(name);
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof String stringValue)
+                || stringValue.isBlank()
+                || stringValue.chars().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException(
+                    "X API response field '" + name + "' is invalid");
+        }
+        return stringValue;
     }
 
     private OAuth2User processGitHubUser(OAuth2User oauth2User, OAuth2AccessToken accessToken) {
@@ -451,23 +558,65 @@ public class SecurityConfig {
         return accept != null && accept.contains(MediaType.APPLICATION_JSON_VALUE);
     }
 
+    private boolean isBindingRequest(HttpServletRequest request) {
+        String path = request.getRequestURI().substring(
+                request.getContextPath().length()
+        );
+        return path.equals("/oauth2/bind")
+                || path.startsWith("/oauth2/bind/");
+    }
+
+    private boolean isBindingCallback(HttpServletRequest request) {
+        if (!"/oauth2/callback".equals(
+                request.getRequestURI().substring(
+                        request.getContextPath().length()))) {
+            return false;
+        }
+        return request.getSession(false) != null
+                && request.getSession(false).getAttribute(
+                        ExplicitOAuth2AuthorizationRequestResolver
+                                .BINDING_SESSION_ATTRIBUTE) != null;
+    }
+
+    private void clearBindingCallbackMarker(HttpServletRequest request) {
+        if (request.getSession(false) != null) {
+            request.getSession(false).removeAttribute(
+                    ExplicitOAuth2AuthorizationRequestResolver
+                            .BINDING_SESSION_ATTRIBUTE);
+        }
+    }
+
+    private boolean hasCause(
+            Throwable exception,
+            Class<? extends Throwable> causeType) {
+        Throwable current = exception;
+        while (current != null) {
+            if (causeType.isInstance(current)) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
     private void writeOAuth2Error(
             HttpServletRequest request,
-            HttpServletResponse response) throws IOException {
+            HttpServletResponse response,
+            String error) throws IOException {
         if (acceptsJson(request)) {
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
             response.setCharacterEncoding("UTF-8");
             new ObjectMapper().writeValue(response.getWriter(), Map.of(
                     "message", "OAuth2 processing failed",
                     "authenticated", false,
-                    "error", "oauth2_processing_failed",
+                    "error", error,
                     "timestamp", System.currentTimeMillis(),
                     "path", request.getRequestURI()
             ));
         } else {
             response.sendRedirect(
                     oauth2RedirectPolicy.loginErrorRedirect(
-                            "oauth2_processing_failed"
+                            error
                     )
             );
         }

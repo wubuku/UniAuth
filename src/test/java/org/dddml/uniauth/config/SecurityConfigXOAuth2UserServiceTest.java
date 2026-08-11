@@ -2,7 +2,6 @@ package org.dddml.uniauth.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
@@ -46,10 +45,14 @@ class SecurityConfigXOAuth2UserServiceTest {
 
     @Test
     void xUserInfoFailureBecomesOAuthAuthenticationFailure() {
-        server.expect(requestTo(startsWith(
-                        "https://api.x.com/2/users/me")))
+        server.expect(requestTo(
+                        "https://api.x.com/2/users/me"
+                                + "?user.fields=id,username,profile_image_url"))
                 .andExpect(request -> assertThat(request.getMethod())
                         .isEqualTo(HttpMethod.GET))
+                .andExpect(request -> assertThat(
+                        request.getHeaders().getFirst("Authorization"))
+                        .isEqualTo("Bearer x-access-token"))
                 .andRespond(withStatus(HttpStatus.FORBIDDEN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .body("""
@@ -72,14 +75,19 @@ class SecurityConfigXOAuth2UserServiceTest {
 
     @Test
     void xUserInfoResponseUsesUsernameAsPrincipalName() {
-        server.expect(requestTo(startsWith(
-                        "https://api.x.com/2/users/me")))
+        server.expect(requestTo(
+                        "https://api.x.com/2/users/me"
+                                + "?user.fields=id,username,profile_image_url"))
+                .andExpect(request -> assertThat(
+                        request.getHeaders().getFirst("Authorization"))
+                        .isEqualTo("Bearer x-access-token"))
                 .andRespond(withSuccess("""
                         {
                           "data": {
                             "id": "x-user-1",
-                            "name": "Circle User",
-                            "username": "circle_user"
+                            "username": "circle_user",
+                            "profile_image_url": "https://img.example/x.png",
+                            "description": "must not be retained"
                           }
                         }
                         """, MediaType.APPLICATION_JSON));
@@ -88,7 +96,56 @@ class SecurityConfigXOAuth2UserServiceTest {
 
         assertThat(user.getName()).isEqualTo("circle_user");
         assertThat((String) user.getAttribute("id")).isEqualTo("x-user-1");
+        assertThat((String) user.getAttribute("profile_image_url"))
+                .isEqualTo("https://img.example/x.png");
+        assertThat(user.getAttributes()).containsOnlyKeys(
+                "id",
+                "username",
+                "profile_image_url");
         server.verify();
+    }
+
+    @Test
+    void xUserInfoRejectsMissingId() {
+        expectXResponse("""
+                {"data":{"username":"circle_user"}}
+                """);
+
+        assertThatThrownBy(() -> userService.loadUser(xUserRequest()))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+        server.verify();
+    }
+
+    @Test
+    void xUserInfoRejectsMissingUsername() {
+        expectXResponse("""
+                {"data":{"id":"x-user-1"}}
+                """);
+
+        assertThatThrownBy(() -> userService.loadUser(xUserRequest()))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+        server.verify();
+    }
+
+    @Test
+    void xUserInfoRejectsNonObjectData() {
+        expectXResponse("""
+                {"data":[]}
+                """);
+
+        assertThatThrownBy(() -> userService.loadUser(xUserRequest()))
+                .isInstanceOf(OAuth2AuthenticationException.class);
+        server.verify();
+    }
+
+    private void expectXResponse(String body) {
+        server.expect(requestTo(
+                        "https://api.x.com/2/users/me"
+                                + "?user.fields=id,username,profile_image_url"))
+                .andExpect(request -> assertThat(
+                        request.getHeaders().getFirst("Authorization"))
+                        .isEqualTo("Bearer x-access-token"))
+                .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
     }
 
     private OAuth2UserRequest xUserRequest() {
@@ -100,7 +157,7 @@ class SecurityConfigXOAuth2UserServiceTest {
                                 AuthorizationGrantType.AUTHORIZATION_CODE
                         )
                         .redirectUri("https://circle.example/oauth2/callback")
-                        .scope("tweet.read", "users.read")
+                        .scope("users.read")
                         .authorizationUri(
                                 "https://x.com/i/oauth2/authorize"
                         )
@@ -114,7 +171,7 @@ class SecurityConfigXOAuth2UserServiceTest {
                 "x-access-token",
                 Instant.now(),
                 Instant.now().plusSeconds(300),
-                Set.of("tweet.read", "users.read")
+                Set.of("users.read")
         );
         return new OAuth2UserRequest(registration, accessToken);
     }

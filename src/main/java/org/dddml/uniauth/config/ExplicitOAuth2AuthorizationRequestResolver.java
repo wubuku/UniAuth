@@ -19,6 +19,8 @@ import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequ
 public class ExplicitOAuth2AuthorizationRequestResolver
         implements OAuth2AuthorizationRequestResolver {
 
+    static final String BINDING_SESSION_ATTRIBUTE =
+            "UNIAUTH_OAUTH2_BINDING_PROVIDER";
     private static final String LOGIN_BASE_URI = "/oauth2/authorization";
     private static final String BIND_BASE_URI = "/oauth2/bind";
 
@@ -67,6 +69,11 @@ public class ExplicitOAuth2AuthorizationRequestResolver
     @Override
     public OAuth2AuthorizationRequest resolve(HttpServletRequest request) {
         boolean binding = isBindingRequest(request);
+        if (!binding && request.getSession(false) != null) {
+            request.getSession(false).removeAttribute(
+                    BINDING_SESSION_ATTRIBUTE
+            );
+        }
         OAuth2AuthorizationRequest authorizationRequest = binding
                 ? bindResolver.resolve(request)
                 : loginResolver.resolve(request);
@@ -78,6 +85,11 @@ public class ExplicitOAuth2AuthorizationRequestResolver
             HttpServletRequest request,
             String clientRegistrationId) {
         boolean binding = isBindingRequest(request);
+        if (!binding && request.getSession(false) != null) {
+            request.getSession(false).removeAttribute(
+                    BINDING_SESSION_ATTRIBUTE
+            );
+        }
         OAuth2AuthorizationRequest authorizationRequest = binding
                 ? bindResolver.resolve(request, clientRegistrationId)
                 : loginResolver.resolve(request, clientRegistrationId);
@@ -108,6 +120,10 @@ public class ExplicitOAuth2AuthorizationRequestResolver
                     request.getSession(true).getId(),
                     registrationId,
                     token
+            );
+            request.getSession(true).setAttribute(
+                    BINDING_SESSION_ATTRIBUTE,
+                    registrationId
             );
             return authorizationRequest;
         } catch (RuntimeException exception) {

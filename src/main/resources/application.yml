@@ -202,7 +202,6 @@ spring:
             client-secret: ${TWITTER_CLIENT_SECRET}
             authorization-grant-type: authorization_code
             scope:
-              - tweet.read
               - users.read
             redirect-uri: ${OAUTH2_CALLBACK_URI}
         provider:
@@ -221,7 +220,8 @@ spring:
             authorization-uri: https://x.com/i/oauth2/authorize
             token-uri: https://api.x.com/2/oauth2/token
             user-info-uri: https://api.x.com/2/users/me
-            user-name-attribute: data.username  # ✅ 响应格式改变：包装在data字段中
+            # The custom X user service flattens data.username to username.
+            user-name-attribute: username
             jwk-set-uri: https://x.com/i/oauth2/jwks
 
   thymeleaf:

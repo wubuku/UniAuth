@@ -9,6 +9,7 @@ import org.dddml.uniauth.entity.UserLoginMethod;
 import org.dddml.uniauth.repository.UserLoginMethodRepository;
 import org.dddml.uniauth.service.LoginMethodService;
 import org.dddml.uniauth.service.TokenIssuanceFacade;
+import org.dddml.uniauth.service.TokenSessionSnapshot;
 import org.dddml.uniauth.service.TokenSessionTransactionService;
 import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.support.PostgreSqlIntegrationTest;
@@ -18,6 +19,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -35,6 +37,7 @@ import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
 import java.net.URLEncoder;
@@ -46,13 +49,20 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.dddml.uniauth.support.AuthIntegrationTestSupport.issueTokens;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest(properties = {
         "app.frontend.url=https://frontend.example.test/console",
         "app.frontend.allowed-redirect-origins=https://alternate.example.test"
 })
+@AutoConfigureMockMvc
 @ActiveProfiles("test")
 class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
+
+    private static final String BINDING_SESSION_ATTRIBUTE =
+            "UNIAUTH_OAUTH2_BINDING_PROVIDER";
 
     @Autowired
     @Qualifier("oauth2SuccessHandler")
@@ -86,6 +96,9 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
     @Qualifier("oauth2FailureHandler")
     private AuthenticationFailureHandler failureHandler;
 
+    @Autowired
+    private MockMvc mockMvc;
+
     @ParameterizedTest
     @ValueSource(strings = {"google", "github", "x"})
     void providerCallbackCreatesStableAccountWithoutExternalProviderCalls(String provider)
@@ -117,9 +130,19 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
 
     @Test
     void xRegistrationRequestsScopesRequiredByCurrentUserEndpoint() {
-        assertThat(clientRegistrationRepository.findByRegistrationId("x")
-                .getScopes())
-                .containsExactlyInAnyOrder("tweet.read", "users.read");
+        var registration =
+                clientRegistrationRepository.findByRegistrationId("x");
+
+        assertThat(registration.getScopes())
+                .containsExactly("users.read");
+        assertThat(registration.getProviderDetails()
+                .getUserInfoEndpoint()
+                .getUri())
+                .isEqualTo("https://api.x.com/2/users/me");
+        assertThat(registration.getProviderDetails()
+                .getUserInfoEndpoint()
+                .getUserNameAttributeName())
+                .isEqualTo("username");
     }
 
     @Test
@@ -187,7 +210,7 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
 
         assertThat(conflictResponse.path("authenticated").asBoolean()).isFalse();
         assertThat(conflictResponse.path("error").asText())
-                .isEqualTo("oauth2_processing_failed");
+                .isEqualTo("oauth2_binding_conflict");
         assertThat(loginMethodRepository.findByAuthProviderAndProviderUserId(
                 UserLoginMethod.AuthProvider.GITHUB,
                 providerSubject
@@ -376,12 +399,63 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
-    void authorizationRequestDoesNotPersistAnUntrustedRefererOrigin() {
+    void bindingOauth2FailureUsesBindingErrorAndClearsMarker() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/oauth2/callback");
+        request.getSession(true).setAttribute(
+                BINDING_SESSION_ATTRIBUTE,
+                "github"
+        );
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        failureHandler.onAuthenticationFailure(
+                request,
+                response,
+                new AuthenticationServiceException("provider rejected binding")
+        );
+
+        assertThat(response.getStatus()).isEqualTo(302);
+        assertThat(response.getRedirectedUrl())
+                .isEqualTo(
+                        "https://frontend.example.test/console/login"
+                                + "?error=oauth2_binding_failed"
+                );
+        assertThat(request.getSession(false).getAttribute(
+                BINDING_SESSION_ATTRIBUTE)).isNull();
+    }
+
+    @Test
+    void expiredRecentAuthenticationReturnsControlledBindingRejection()
+            throws Exception {
+        UserDto localUser = registerLocalUser("oauth-bind-stale-auth");
+        TokenSessionSnapshot snapshot = tokenSessionTransactionService.create(
+                localUser.getId(),
+                Instant.now().minusSeconds(601),
+                null
+        );
+        String accessToken = tokenIssuanceFacade.sign(snapshot).accessToken();
+
+        mockMvc.perform(get("/oauth2/bind/github")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error")
+                        .value("RECENT_AUTH_REQUIRED"))
+                .andExpect(jsonPath("$.message")
+                        .value("Recent authentication is required"));
+    }
+
+    @Test
+    void ordinaryAuthorizationRequestClearsBindingMarkerAndRejectsUntrustedRefererOrigin() {
         MockHttpServletRequest request = new MockHttpServletRequest(
                 "GET",
                 "/oauth2/authorization/github"
         );
         request.addHeader("Referer", "https://evil.example/account");
+        request.getSession(true).setAttribute(
+                BINDING_SESSION_ATTRIBUTE,
+                "github"
+        );
 
         authorizationRequestResolver.resolve(request);
 
@@ -389,6 +463,9 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
                 .satisfies(session -> {
                     if (session != null) {
                         assertThat(session.getAttribute("OAUTH2_FRONTEND_URL")).isNull();
+                        assertThat(session.getAttribute(
+                                BINDING_SESSION_ATTRIBUTE))
+                                .isNull();
                     }
                 });
     }
