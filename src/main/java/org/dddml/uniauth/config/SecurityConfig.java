@@ -33,6 +33,8 @@ import org.springframework.security.oauth2.client.web.DefaultOAuth2Authorization
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestCustomizers;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
@@ -43,6 +45,7 @@ import org.springframework.security.authentication.dao.DaoAuthenticationProvider
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClientResponseException;
 import org.dddml.uniauth.service.LoginMethodService;
 import org.dddml.uniauth.service.AuthCookieService;
 import org.dddml.uniauth.service.TokenValidationService;
@@ -285,17 +288,28 @@ public class SecurityConfig {
             String registrationId = userRequest.getClientRegistration().getRegistrationId();
 
             if ("x".equals(registrationId)) {  // ✅ X API v2：检查 'x' 而不是 'twitter'
-                // 自定义Twitter用户信息获取
                 try {
-                    OAuth2User xUser = loadXUser(userRequest);  // ✅ X API v2：变量名和方法名更新
+                    OAuth2User xUser = loadXUser(userRequest);
 
-                    // 为Twitter手动存储access token到authorizedClientService
+                    // 为 X 手动存储 access token 到 authorizedClientService。
                     // 注意：这里无法直接存储，因为没有Authentication对象
-                    // Twitter token验证暂时无法工作，除非使用其他方法
+                    // X token 验证暂时无法工作，除非使用其他方法。
 
                     return xUser;
                 } catch (Exception e) {
-                    throw new RuntimeException("Failed to load Twitter user", e);
+                    String status = e instanceof RestClientResponseException response
+                            ? response.getStatusCode().toString()
+                            : "unavailable";
+                    log.warn(
+                            "X OAuth2 user-info request failed: status={} cause={}",
+                            status,
+                            e.getClass().getSimpleName()
+                    );
+                    throw new OAuth2AuthenticationException(
+                            new OAuth2Error("invalid_user_info_response"),
+                            "Failed to load X user profile",
+                            e
+                    );
                 }
             } else {
                 // 对于其他提供商使用默认服务

@@ -25,6 +25,7 @@ import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
 import org.springframework.security.oauth2.core.oidc.OidcIdToken;
@@ -79,6 +80,9 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
     private OAuth2AuthorizationRequestResolver authorizationRequestResolver;
 
     @Autowired
+    private ClientRegistrationRepository clientRegistrationRepository;
+
+    @Autowired
     @Qualifier("oauth2FailureHandler")
     private AuthenticationFailureHandler failureHandler;
 
@@ -109,6 +113,13 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
             assertThat(method.getUser().getId()).isEqualTo(userId);
             assertThat(method.isPrimary()).isTrue();
         });
+    }
+
+    @Test
+    void xRegistrationRequestsScopesRequiredByCurrentUserEndpoint() {
+        assertThat(clientRegistrationRepository.findByRegistrationId("x")
+                .getScopes())
+                .containsExactlyInAnyOrder("tweet.read", "users.read");
     }
 
     @Test
