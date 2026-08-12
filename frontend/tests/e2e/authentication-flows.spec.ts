@@ -7,6 +7,7 @@ const currentUser = {
   userName: 'browser-user',
   userEmail: 'browser-user@example.invalid',
   userId: 'browser-user-id',
+  hasLocalPassword: true,
 };
 
 test.beforeEach(async ({ page }) => {
@@ -82,6 +83,75 @@ test('local login surfaces a rejected credential response', async ({ page }) => 
 
   await expect(page.getByText('Invalid credentials')).toBeVisible();
   await expect(page).toHaveURL('/login');
+});
+
+test('authenticated user can change password and is returned to login', async ({ page }) => {
+  await mockCurrentUser(page);
+  let changePasswordBody: Record<string, string> | undefined;
+  await page.route(/\/api\/auth\/login$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        authenticated: true,
+        user: {
+          id: 'browser-user-id',
+          username: 'browser-user',
+          email: 'browser-user@example.invalid',
+          displayName: 'Browser User',
+          provider: 'local',
+        },
+        accessToken: 'mock.access.token',
+        tokenType: 'Bearer',
+      }),
+    });
+  });
+  await page.route(/\/api\/user\/password$/, async (route) => {
+    changePasswordBody = route.request().postDataJSON();
+    expect(route.request().headers().authorization)
+      .toBe('Bearer mock.access.token');
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        message: 'Password changed; please sign in again',
+      }),
+    });
+  });
+
+  await page.goto('/login');
+  await page.getByPlaceholder('用户名').fill('browser-user');
+  await page.getByPlaceholder('密码').fill('browser-password');
+  await page.locator('form').getByRole('button', { name: '登录' }).click();
+
+  await expect(page.getByRole('button', { name: '修改密码' })).toBeVisible();
+  await page.getByRole('button', { name: '修改密码' }).click();
+  await page.getByPlaceholder('当前密码').fill('browser-password');
+  await page.getByPlaceholder('新密码（至少8位）')
+    .fill('browser-strong-password');
+  await page.getByPlaceholder('确认新密码').fill('browser-strong-password');
+  await page.getByRole('button', { name: '确认修改' }).click();
+
+  await expect(page).toHaveURL('/login?passwordChanged=true');
+  await expect(page.getByText('密码已修改，请使用新密码登录')).toBeVisible();
+  expect(changePasswordBody).toEqual({
+    currentPassword: 'browser-password',
+    newPassword: 'browser-strong-password',
+    newPasswordConfirm: 'browser-strong-password',
+  });
+});
+
+test('user without a local password does not see the change-password action', async ({ page }) => {
+  await mockCurrentUser(page, {
+    ...currentUser,
+    provider: 'github',
+    hasLocalPassword: false,
+  });
+
+  await page.goto('/');
+
+  await expect(page.getByRole('button', { name: '修改密码' })).toHaveCount(0);
 });
 
 test('OAuth provider navigation does not attach client-controlled redirect state', async ({ page }) => {

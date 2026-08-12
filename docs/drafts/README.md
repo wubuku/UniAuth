@@ -33,6 +33,7 @@
 
 | 文档 | 状态 | 说明 |
 |------|------|------|
+| [用户名初始化管理员与登录后改密实施记录-2026-08-12.md](用户名初始化管理员与登录后改密实施记录-2026-08-12.md) | Reference | 显式初始化用户名/密码管理员、登录后改密、CAS 与 token family 撤销的实施和验收记录 |
 | [EMAIL-AUTH-PLAN.md](EMAIL-AUTH-PLAN.md) | Historical | 邮箱注册/验证早期规划；当前 challenge、投递、消费和并发边界见 [F1 实施记录](F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md) |
 | [PASSWORD-RESET-PLAN.md](PASSWORD-RESET-PLAN.md) | Historical | 密码重置早期规划；当前枚举防护、challenge 和 token 撤销边界见 [F1](F1_EMAIL_IDENTITY_HARDENING_IMPLEMENTATION.md)、[F2](F2_TOKEN_SESSION_HARDENING_IMPLEMENTATION.md) 与 [验证指南](../VERIFICATION.md) |
 

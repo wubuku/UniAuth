@@ -87,6 +87,7 @@ public class ResourceServerConfig {
             .authorizeHttpRequests(authz -> authz
                 .requestMatchers("/api/auth/**").permitAll()  // 认证API公开
                 .requestMatchers("/api/user").authenticated()  // 所有认证用户都可以访问
+                .requestMatchers("/api/user/password").authenticated()
                 .requestMatchers("/api/admin/**").hasAuthority("ROLE_ADMIN")  // 只有ROLE_ADMIN权限可以访问
                 .requestMatchers("/api/manager/**").hasAnyAuthority("ROLE_ADMIN", "ROLE_MANAGER")  // ROLE_ADMIN或ROLE_MANAGER权限可以访问
                 .anyRequest().authenticated()  // 所有API请求都需要认证

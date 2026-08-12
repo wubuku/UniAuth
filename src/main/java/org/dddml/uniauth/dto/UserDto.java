@@ -22,4 +22,5 @@ public class UserDto {
     private String avatarUrl;
     private Set<String> authorities;
     private String provider;
+    private boolean hasLocalPassword;
 }

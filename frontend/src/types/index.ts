@@ -12,6 +12,7 @@ export interface User {
   userEmail?: string;
   userId?: string;
   userAvatar?: string;
+  hasLocalPassword?: boolean;
   providerInfo?: {
     // Google特有
     sub?: string;

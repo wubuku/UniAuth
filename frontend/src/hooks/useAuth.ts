@@ -177,6 +177,7 @@ export function useAuth() {
         email: response.user.email,
         displayName: response.user.displayName,
         avatarUrl: response.user.avatarUrl,
+        hasLocalPassword: true,
         provider: 'local'
       });
       

@@ -77,7 +77,8 @@
 | `/api/auth/login` | POST | 用户名密码登录 | `{"username": "...", "password": "..."}` | `{"user": {...}, "message": "Login successful", "authenticated": true, "accessToken": "...", "refreshToken": "...", "accessTokenExpiresIn": 3600, "refreshTokenExpiresIn": 604800, "tokenType": "Bearer"}` | `{"error": "Invalid credentials"}` (401) |
 | `/api/auth/refresh` | POST | 刷新 token | N/A (从 cookie 获取 refreshToken) | `{"message": "Token refreshed successfully", "accessToken": "...", "refreshToken": "...", "accessTokenExpiresIn": 3600, "refreshTokenExpiresIn": 604800, "tokenType": "Bearer"}` | `{"error": "Refresh token not found"}` (401) |
 | `/api/auth/logout` | POST | 登出 | N/A | `{"message": "Logged out successfully"}` | `{"message": "Logged out with warnings"}` |
-| `/api/user` | GET | 获取当前用户信息 | N/A | `{"authenticated": true, "provider": "...", "userName": "...", "userEmail": "...", "userId": "...", "userAvatar": "...", "providerInfo": {...}}` | `{"error": "User not authenticated"}` (401) |
+| `/api/user` | GET | 获取当前用户信息 | N/A | `{"authenticated": true, "provider": "...", "userName": "...", "userEmail": "...", "userId": "...", "userAvatar": "...", "hasLocalPassword": true, "providerInfo": {...}}` | `{"error": "User not authenticated"}` (401) |
+| `/api/user/password` | PUT | 登录后修改当前用户的本地密码 | `{"currentPassword": "...", "newPassword": "...", "newPasswordConfirm": "..."}` | `{"success": true, "message": "Password changed; please sign in again"}`；成功后认证 Cookie 被清理，旧 token 失效 | `401 CURRENT_PASSWORD_INVALID`、`403 RECENT_AUTH_REQUIRED`、`409 PASSWORD_CHANGED_CONCURRENTLY`、`400 PASSWORD_CONFIRMATION_MISMATCH` |
 
 #### 3.2.2 OAuth2 相关接口
 
@@ -128,7 +129,8 @@
 ### 3.5 前端集成指南
 
 1. **认证流程**：
-   - 用户名密码登录：调用 `/api/auth/login`，处理响应中的 token
+   - 用户名密码登录：调用 `/api/auth/login`，处理响应中的 token；初始化管理员也使用此接口
+     直接以配置的用户名/密码登录
    - 第三方登录：重定向到 `/oauth2/authorization/{provider}`，处理回调
    - token 刷新：实现自动刷新机制，调用 `/api/auth/refresh`
    - **受保护页面访问流程**：
@@ -142,6 +144,8 @@
 2. **API 调用**：
    - 携带 token 进行认证：优先使用 cookie，跨域时使用请求头
    - 处理 401 错误：触发 token 刷新或重新登录
+   - 对 `hasLocalPassword=true` 的当前用户提供修改密码入口；修改成功后清理本地认证状态，
+     回到登录页并使用新密码重新登录
 
 3. **路由控制**：
    - 前端完全控制页面路由

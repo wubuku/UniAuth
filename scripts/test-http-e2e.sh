@@ -31,6 +31,11 @@ EMAIL_SERVICE_API_KEY="email-reference-e2e-${RUN_ID}"
 EMAIL_SERVICE_PORT=""
 EMAIL_STUB_PORT=""
 COOKIE_JAR="$TEMP_DIR/cookies.txt"
+BOOTSTRAP_ADMIN_COOKIE_JAR="$TEMP_DIR/bootstrap-admin-cookies.txt"
+BOOTSTRAP_ADMIN_USERNAME="shell-admin-${RUN_ID}"
+BOOTSTRAP_ADMIN_EMAIL="${BOOTSTRAP_ADMIN_USERNAME}@example.invalid"
+BOOTSTRAP_ADMIN_INITIAL_PASSWORD="initial-admin-password-${RUN_ID}"
+BOOTSTRAP_ADMIN_NEW_PASSWORD="strong-admin-password-${RUN_ID}"
 INTROSPECTION_CLIENT_ID="resource-server-e2e"
 INTROSPECTION_CLIENT_SECRET="introspection-e2e-${RUN_ID}-change-me-now"
 JWT_RSA_KEY_FILE_VALUE="$TEMP_DIR/signing-key.ser"
@@ -338,6 +343,7 @@ assert_auth_cookie_headers() {
 
 cookie_jar_value() {
     local cookie_name="$1"
+    local cookie_jar="${2:-$COOKIE_JAR}"
     awk -F '\t' -v cookie_name="$cookie_name" '
         ($0 !~ /^#/ || $0 ~ /^#HttpOnly_/) && $6 == cookie_name {
             value = $7
@@ -347,7 +353,7 @@ cookie_jar_value() {
                 print value
             }
         }
-    ' "$COOKIE_JAR"
+    ' "$cookie_jar"
 }
 
 bootstrap_csrf() {
@@ -543,6 +549,11 @@ start_application() {
         export TWITTER_CLIENT_SECRET=e2e-x-secret
         export APP_DEMO_DATA_ENABLED=false
         export APP_DEMO_DATA_DISPOSABLE=false
+        export APP_BOOTSTRAP_ADMIN_ENABLED=true
+        export APP_BOOTSTRAP_ADMIN_USERNAME="$BOOTSTRAP_ADMIN_USERNAME"
+        export APP_BOOTSTRAP_ADMIN_EMAIL="$BOOTSTRAP_ADMIN_EMAIL"
+        export APP_BOOTSTRAP_ADMIN_PASSWORD="$BOOTSTRAP_ADMIN_INITIAL_PASSWORD"
+        export APP_BOOTSTRAP_ADMIN_DISPLAY_NAME="Shell E2E Administrator"
         export EMAIL_SERVICE_URL="$ACTIVE_EMAIL_SERVICE_URL"
         export EMAIL_SERVICE_API_KEY
         export APP_EMAIL_SERVICE_URL="$ACTIVE_EMAIL_SERVICE_URL"
@@ -999,6 +1010,178 @@ jwks_response="$(curl -sS "${BASE_URL}/oauth2/jwks")"
     || fail "JWKS did not expose RS256"
 
 echo "4/17 Register and authenticate a local account"
+bootstrap_admin_user_id="$(db_value "
+    SELECT u.id
+    FROM users u
+    JOIN user_login_methods m ON m.user_id = u.id
+    WHERE u.username = '$BOOTSTRAP_ADMIN_USERNAME'
+      AND u.email = '$BOOTSTRAP_ADMIN_EMAIL'
+      AND u.enabled = true
+      AND m.auth_provider = 'LOCAL'
+      AND m.local_username = '$BOOTSTRAP_ADMIN_USERNAME'
+      AND m.local_password_hash IS NOT NULL;
+")"
+[ -n "$bootstrap_admin_user_id" ] \
+    || fail "bootstrap administrator was not created with local credentials"
+[ "$(db_value "
+    SELECT count(*)
+    FROM user_authorities
+    WHERE user_id = '$bootstrap_admin_user_id'
+      AND authority IN ('ROLE_USER', 'ROLE_ADMIN');
+")" = "2" ] || fail "bootstrap administrator did not receive user and admin roles"
+
+bootstrap_wrong_login_status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/login" \
+        -H "Content-Type: application/json" \
+        --data "$(
+            jq -cn \
+                --arg username "$BOOTSTRAP_ADMIN_USERNAME" \
+                '{username: $username, password: "wrong-password"}'
+        )"
+)"
+[ "$bootstrap_wrong_login_status" = "401" ] \
+    || fail "bootstrap administrator accepted a wrong password"
+
+bootstrap_login_headers="$TEMP_DIR/bootstrap-admin-login-headers.txt"
+bootstrap_login_response="$(
+    curl -sS -D "$bootstrap_login_headers" \
+        -b "$BOOTSTRAP_ADMIN_COOKIE_JAR" \
+        -c "$BOOTSTRAP_ADMIN_COOKIE_JAR" \
+        -X POST "${BASE_URL}/api/auth/login" \
+        -H "Content-Type: application/json" \
+        --data "$(
+            jq -cn \
+                --arg username "$BOOTSTRAP_ADMIN_USERNAME" \
+                --arg password "$BOOTSTRAP_ADMIN_INITIAL_PASSWORD" \
+                '{username: $username, password: $password}'
+        )"
+)"
+[ "$(jq -er '.authenticated' <<<"$bootstrap_login_response")" = "true" ] \
+    || fail "bootstrap administrator could not log in by username"
+[ "$(jq -er '.user.authorities | index("ROLE_ADMIN") != null' \
+    <<<"$bootstrap_login_response")" = "true" ] \
+    || fail "bootstrap administrator login response omitted ROLE_ADMIN"
+bootstrap_admin_access_token="$(
+    jq -er '.accessToken' <<<"$bootstrap_login_response"
+)"
+bootstrap_admin_refresh_token="$(
+    cookie_jar_value refreshToken "$BOOTSTRAP_ADMIN_COOKIE_JAR"
+)"
+[ -n "$bootstrap_admin_refresh_token" ] \
+    || fail "bootstrap administrator login did not set a refresh cookie"
+assert_auth_cookie_headers "$bootstrap_login_headers" 3600 604800
+
+bootstrap_current_user="$(
+    curl -sS \
+        -H "Authorization: Bearer $bootstrap_admin_access_token" \
+        "${BASE_URL}/api/user"
+)"
+[ "$(jq -er '.userName' <<<"$bootstrap_current_user")" \
+    = "$BOOTSTRAP_ADMIN_USERNAME" ] \
+    || fail "bootstrap administrator current-user name changed"
+[ "$(jq -er '.hasLocalPassword' <<<"$bootstrap_current_user")" = "true" ] \
+    || fail "bootstrap administrator was not reported as password-capable"
+
+bootstrap_admin_csrf_response="$(
+    curl -sS \
+        -b "$BOOTSTRAP_ADMIN_COOKIE_JAR" \
+        -c "$BOOTSTRAP_ADMIN_COOKIE_JAR" \
+        "${BASE_URL}/api/auth/csrf"
+)"
+bootstrap_admin_csrf_header="$(
+    jq -er '.headerName' <<<"$bootstrap_admin_csrf_response"
+)"
+bootstrap_admin_csrf_token="$(
+    jq -er '.token' <<<"$bootstrap_admin_csrf_response"
+)"
+bootstrap_change_headers="$TEMP_DIR/bootstrap-admin-change-headers.txt"
+bootstrap_change_status="$(
+    curl -sS -o "$TEMP_DIR/bootstrap-admin-change.json" \
+        -D "$bootstrap_change_headers" \
+        -w '%{http_code}' \
+        -b "$BOOTSTRAP_ADMIN_COOKIE_JAR" \
+        -c "$BOOTSTRAP_ADMIN_COOKIE_JAR" \
+        -X PUT "${BASE_URL}/api/user/password" \
+        -H "${bootstrap_admin_csrf_header}: ${bootstrap_admin_csrf_token}" \
+        -H "Content-Type: application/json" \
+        --data "$(
+            jq -cn \
+                --arg currentPassword "$BOOTSTRAP_ADMIN_INITIAL_PASSWORD" \
+                --arg newPassword "$BOOTSTRAP_ADMIN_NEW_PASSWORD" \
+                '{
+                  currentPassword: $currentPassword,
+                  newPassword: $newPassword,
+                  newPasswordConfirm: $newPassword
+                }'
+        )"
+)"
+[ "$bootstrap_change_status" = "200" ] \
+    || fail "bootstrap administrator could not change its password"
+[ "$(jq -er '.success' "$TEMP_DIR/bootstrap-admin-change.json")" = "true" ] \
+    || fail "bootstrap administrator password change did not return success"
+assert_auth_cookie_headers "$bootstrap_change_headers" 0 0
+grep -qi 'set-cookie: JSESSIONID=.*Max-Age=0' "$bootstrap_change_headers" \
+    || fail "password change did not clear the session cookie"
+
+[ "$(request_status GET /api/user \
+    -H "Authorization: Bearer $bootstrap_admin_access_token")" = "401" ] \
+    || fail "password change left the old administrator access token active"
+[ "$(jq -er '.active' <<<"$(introspect_token \
+    "$bootstrap_admin_access_token")")" = "false" ] \
+    || fail "introspection left the old administrator access token active"
+
+bootstrap_admin_csrf_response="$(
+    curl -sS \
+        -b "$BOOTSTRAP_ADMIN_COOKIE_JAR" \
+        -c "$BOOTSTRAP_ADMIN_COOKIE_JAR" \
+        "${BASE_URL}/api/auth/csrf"
+)"
+bootstrap_admin_csrf_header="$(
+    jq -er '.headerName' <<<"$bootstrap_admin_csrf_response"
+)"
+bootstrap_admin_csrf_token="$(
+    jq -er '.token' <<<"$bootstrap_admin_csrf_response"
+)"
+bootstrap_admin_session_id="$(
+    cookie_jar_value JSESSIONID "$BOOTSTRAP_ADMIN_COOKIE_JAR"
+)"
+bootstrap_refresh_status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/refresh" \
+        -H "${bootstrap_admin_csrf_header}: ${bootstrap_admin_csrf_token}" \
+        -H "Cookie: JSESSIONID=${bootstrap_admin_session_id}; refreshToken=${bootstrap_admin_refresh_token}"
+)"
+[ "$bootstrap_refresh_status" = "401" ] \
+    || fail "password change left the old administrator refresh token active"
+
+bootstrap_old_password_status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/login" \
+        -H "Content-Type: application/json" \
+        --data "$(
+            jq -cn \
+                --arg username "$BOOTSTRAP_ADMIN_USERNAME" \
+                --arg password "$BOOTSTRAP_ADMIN_INITIAL_PASSWORD" \
+                '{username: $username, password: $password}'
+        )"
+)"
+[ "$bootstrap_old_password_status" = "401" ] \
+    || fail "bootstrap administrator initial password still worked after change"
+bootstrap_new_password_status="$(
+    curl -sS -o /dev/null -w '%{http_code}' \
+        -X POST "${BASE_URL}/api/auth/login" \
+        -H "Content-Type: application/json" \
+        --data "$(
+            jq -cn \
+                --arg username "$BOOTSTRAP_ADMIN_USERNAME" \
+                --arg password "$BOOTSTRAP_ADMIN_NEW_PASSWORD" \
+                '{username: $username, password: $password}'
+        )"
+)"
+[ "$bootstrap_new_password_status" = "200" ] \
+    || fail "bootstrap administrator new password did not work"
+
 local_username="shell-user-${RUN_ID}"
 local_email="${local_username}@example.invalid"
 local_password="initial-password-${RUN_ID}"

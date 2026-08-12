@@ -1,7 +1,7 @@
 # UniAuth 文档体系建设计划
 
 > 状态：Live；首版体系已建立，随项目演进持续校准
-> 首版基线：2026-08-07；最近校准：2026-08-10
+> 首版基线：2026-08-07；最近校准：2026-08-12
 > 原则：已有文档不移动；新文档链接已有内容；当前事实以代码、配置和可执行验证为准。
 
 ## 目标
@@ -39,7 +39,7 @@
 | API 行为 | controller、service、repository 和 entity |
 | 前端端口、代理、构建输出 | `frontend/vite.config.ts`、`frontend/package.json` |
 | Python 示例行为 | `python-resource-server/app.py` |
-| 可执行验证状态 | `scripts/verify.sh` 与 `docs/VERIFICATION.md` 记录的 2026-08-10 完整门禁 |
+| 可执行验证状态 | `scripts/verify.sh` 与 `docs/VERIFICATION.md` 记录的 2026-08-12 完整门禁 |
 
 现有 prose 与这些来源冲突时，不把 prose 视为当前事实。
 
@@ -123,9 +123,9 @@
   security version 和 session claim/rotation/revoke 契约；旧 SQL 已归档到 runtime
   classpath 外。
 - Java 已有 PostgreSQL/Testcontainers 集成测试；当前完整 Maven 为
-  247/247，0 failures/errors/skips。
-- HTTP Shell E2E 当前 17/17、Flyway baseline guard 16/16、Mock Playwright
-  29/29、生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器
+  270/270，0 failures/errors/skips。
+- HTTP Shell E2E 当前 17/17、Flyway baseline guard 17/17、Mock Playwright
+  31/31、生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器
   20/20、邮件 REST stub contract 12/12；同页面和同源双标签页 refresh 协调、
   跨标签页 refresh/logout 迟到写回拒绝、logout 存储边界、完整 session claims、
   生产 diagnostics 排除与跨 hostname Bearer/Cookie 隔离均已进入统一门禁。

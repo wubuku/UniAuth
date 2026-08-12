@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -376,6 +377,53 @@ public class LoginMethodService {
         );
         
         log.info("Local password updated");
+    }
+
+    /**
+     * Changes a local password after verifying the current password.
+     *
+     * The password hash update is a database CAS so concurrent changes cannot
+     * silently overwrite one another.
+     */
+    public void changePassword(
+            String userId,
+            String currentPassword,
+            String newPassword) {
+        passwordPolicyService.validateCredentialInput(currentPassword);
+        passwordPolicyService.validateNewPassword(newPassword);
+
+        UserLoginMethod loginMethod = loginMethodRepository
+                .findByUserIdAndAuthProvider(userId, AuthProvider.LOCAL)
+                .orElseThrow(() -> new IllegalStateException(
+                        "User has no local password"
+                ));
+        String expectedHash = loginMethod.getLocalPasswordHash();
+        if (expectedHash == null
+                || !passwordEncoder.matches(currentPassword, expectedHash)) {
+            throw new BadCredentialsException("Current password is invalid");
+        }
+
+        String newHash = passwordEncoder.encode(newPassword);
+        if (loginMethodRepository.compareAndSetLocalPassword(
+                loginMethod.getId(),
+                userId,
+                expectedHash,
+                newHash
+        ) != 1) {
+            throw new LoginMethodConflictException(
+                    "Password was changed concurrently"
+            );
+        }
+        tokenSessionTransactionService.incrementSecurityVersionAndRevoke(
+                userId,
+                "PASSWORD_CHANGED"
+        );
+        securityEventService.append(
+                "PASSWORD_CHANGED",
+                userId,
+                SecurityEventService.Outcome.SUCCESS,
+                null
+        );
     }
 
     private RuntimeException translateBindingConflict(

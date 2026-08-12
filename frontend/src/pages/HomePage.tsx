@@ -1,12 +1,21 @@
 import { Link } from 'react-router-dom';
+import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
+import { AuthService } from '../services/authService';
+import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import {
   DiagnosticsHomeLinks,
   diagnosticsEnabled,
 } from 'virtual:diagnostics-routes';
 
 export default function HomePage() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+
+  const handlePasswordChanged = () => {
+    AuthService.clearLocalAuthentication();
+    window.location.href = '/login?passwordChanged=true';
+  };
 
   return (
     <div style={{
@@ -57,9 +66,29 @@ export default function HomePage() {
           textAlign: 'center'
         }}>
           {isAuthenticated ? (
-            diagnosticsEnabled && DiagnosticsHomeLinks
-              ? <DiagnosticsHomeLinks />
-              : <span>已登录</span>
+            <>
+              <div style={{
+                display: 'flex',
+                gap: '12px',
+                flexWrap: 'wrap',
+                justifyContent: 'center',
+              }}>
+                {diagnosticsEnabled && DiagnosticsHomeLinks && (
+                  <DiagnosticsHomeLinks />
+                )}
+                {userHasLocalPassword(user) && (
+                  <button
+                    type="button"
+                    onClick={() => setChangePasswordOpen(true)}
+                  >
+                    修改密码
+                  </button>
+                )}
+              </div>
+              {!diagnosticsEnabled && (
+                <div style={{ marginTop: '12px' }}>已登录</div>
+              )}
+            </>
           ) : (
             <Link
               to="/login"
@@ -128,6 +157,17 @@ export default function HomePage() {
           </p>
         </div>
       </div>
+      <ChangePasswordModal
+        isOpen={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+        onChanged={handlePasswordChanged}
+      />
     </div>
   );
+}
+
+function userHasLocalPassword(
+  user: ReturnType<typeof useAuth>['user']
+): boolean {
+  return user?.hasLocalPassword === true;
 }

@@ -1,6 +1,6 @@
 # UniAuth - 统一身份认证系统
 
-> 状态：顶部当前可执行基线与 live guides 已于 2026-08-10 校准；下文长篇历史说明
+> 状态：顶部当前可执行基线与 live guides 已于 2026-08-12 校准；下文长篇历史说明
 > 仍需按其状态标记核验。UniAuth 已完成仓库级工程加固基线：F1-F5、完整 15 阶段门禁
 > 和阶段末连续三轮无修改检查均已完成。
 > 该声明不等同于生产发布、容量、真实 provider、灾备或合规认证完成。
@@ -26,12 +26,12 @@
 | 数据库 | PostgreSQL 16-only；自动化固定 `postgres:16.13` |
 | Migration | Flyway V1 baseline + V2 + V3 + V4 + V5 + V6 + V7 + V8，history `uniauth_flyway_schema_history` |
 | 邮件数据库布局 | 默认独立数据库；显式 `shared-uniauth` 可与 UniAuth 共用 `public` schema，两侧 relation 名无冲突并使用独立 Flyway history |
-| Java 验证 | 当前完整基线 247 tests，0 failures/errors/skips |
+| Java 验证 | 当前完整基线 270 tests，0 failures/errors/skips |
 | 邮件参考服务 | F5 完整基线 154 tests，0 failures/errors/skips |
 | Shared-schema E2E | 4/4；UniAuth/邮件服务两种启动顺序、独立 history 和 baseline V0 |
 | HTTP E2E | 17/17；含四条安全链 CORS、邮件真实/失败路径和紧急签名 key rotation/revoke |
 | Flyway baseline guard | 17/17 |
-| Playwright | 29 个 Mock 浏览器测试 + 2 个生产构建测试 + 1 个真实邮箱登录跨服务 E2E |
+| Playwright | 31 个 Mock 浏览器测试 + 2 个生产构建测试 + 1 个真实邮箱登录跨服务 E2E |
 | Python | 20 个资源服务器测试 + 12 个邮件 REST stub 契约测试 |
 | 统一门禁 | 15/15 通过；Maven/npm/Python 供应链、敏感扫描和完整跨服务验收 |
 

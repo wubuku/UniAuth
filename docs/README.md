@@ -1,6 +1,6 @@
 # UniAuth 文档导航
 
-> 当前文档基线：2026-08-10
+> 当前文档基线：2026-08-12
 > 本页是项目文档的主入口。代码、配置与本文冲突时，以当前代码和配置为准。
 > `docs/Perplexity/` 和 `docs/drafts/` 中包含大量历史方案，不应直接当作运行手册。
 
@@ -26,6 +26,10 @@
   灾备或合规认证完成。
 - 默认不激活 Spring profile，后端端口是 `8081`。
 - 演示数据默认关闭且不再全表清理；显式启用仍只允许 test/demo 命名的 disposable 数据库。
+- 默认不创建固定管理员账号；需要初始化可登录的管理员时，必须显式配置
+  `APP_BOOTSTRAP_ADMIN_*`，首次登录后可通过修改密码接口更换初始密码。
+- 用户名/密码登录支持普通本地用户名和邮箱形式的本地用户名；登录后修改密码会撤销旧
+  token family 并要求重新登录。
 - Vite 使用 `5173`，Python 资源服务器代码实际使用 `5002`。
 - `dev`、`test`、`prod` 只支持显式 PostgreSQL 16；自动化固定
   `postgres:16.13`，SQLite runtime 已退役。
@@ -53,7 +57,7 @@
   Python 离线 JWT/JWKS/邮件 stub 契约测试；另有真实五服务邮箱登录 Playwright
   套件，验证资源域无认证 Cookie 且跨 origin 请求使用 Bearer header。ESLint、
   Maven/npm/Python 供应链审计、候选构建敏感扫描和 15 阶段统一验证入口已纳入门禁；
-  2026-08-09 的 F5 完整门禁已 15/15 通过。
+  2026-08-12 的 F5 及初始化管理员/登录后改密完整门禁已 15/15 通过。
 - 生产配置要求外部 owner-only RSA key、非 placeholder HTTPS/secret/provider
   配置，公开 readiness 不泄露组件细节；伪造 forwarded header 不改变 redirect、
   Secure Cookie 或限流来源。紧急单 key rotation 会立即使旧 token 失效并要求重认证。

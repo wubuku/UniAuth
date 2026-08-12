@@ -22,6 +22,8 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 ## 当前认证能力
 
 - 本地用户名/密码注册与登录。
+- 显式配置的初始化管理员可直接使用初始化的用户名/密码登录；系统默认不创建固定管理员账号。
+- 已配置本地密码的用户可在登录后修改密码，成功后所有旧 token 认证状态失效。
 - Google、GitHub、X OAuth2 Client 登录。
 - 多登录方式绑定、移除和主方式选择。
 - 邮箱验证码注册、邮箱加密码登录与密码重置。
@@ -48,6 +50,13 @@ Authorization Server 协议已经完整接通。
 5. 普通生产前端通过 Cookie 和 canonical current-user API 恢复身份，不持久化
    access token。只有显式 diagnostics dev/E2E 模式为异构资源服务器演示把 JSON
    access token 写入 localStorage。
+
+初始化管理员不是隐含的 demo 账号。只有显式启用 `app.bootstrap-admin` 并提供
+通过密码策略的用户名、邮箱和密码时，`BootstrapAdminInitializer` 才会创建一个
+`ROLE_USER + ROLE_ADMIN` 的 `LOCAL` 登录方式；重复启动不覆盖已有密码。用户登录
+后通过 `PUT /api/user/password` 修改自己的本地密码，服务使用数据库条件 CAS
+避免并发请求静默覆盖，并在成功后递增 security version、撤销 token family 和清理
+认证 Cookie。
 
 ### OAuth2 登录
 
@@ -140,6 +149,11 @@ UniAuth 用户/认证表；disposable 空库恢复后会启动真实 Spring 应�
    和撤销状态；`authorities` claim 转换为 Spring Security authority。
 5. `/api/user` 和其他 `/api/**` 受资源服务器链保护；带认证 Cookie 的 unsafe 请求
    还必须提交 Session bootstrap 返回的精确单值 CSRF header。
+
+`PUT /api/user/password` 只允许当前认证用户修改自己的 `LOCAL` 密码。请求包含
+`currentPassword`、`newPassword` 和 `newPasswordConfirm`；当前密码错误返回
+`401`，确认值不一致返回 `400`，recent-auth 过期返回 `403`。修改成功返回 `200`
+并清理认证 Cookie，用户必须使用新密码重新建立会话。
 
 ### Python 资源服务器
 

@@ -9,7 +9,7 @@
 - `docs/ARCHITECTURE.md`: 当前模块、安全链、身份和 JWT 模型。
 - `docs/CONFIGURATION.md`: 端口、profile、数据库、回调、CORS 和密钥基线。
 - `docs/DEVELOPMENT.md`: 安全构建、启动前检查和日常工作流。
-- `docs/VERIFICATION.md`: 权威交付门槛、验证层级、2026-08-09 基线和测试缺口。
+- `docs/VERIFICATION.md`: 权威交付门槛、验证层级、2026-08-12 基线和测试缺口。
 - `docs/OPERATIONS.md`: 生产 guard、readiness、备份恢复、紧急密钥轮换和供应链门禁。
 - `docs/EMAIL_LOGIN_BROWSER_E2E.md`: 真实邮箱注册/登录、前端回跳、跨 origin
   Python API Bearer 访问和独立服务脚本。
@@ -42,6 +42,10 @@ UniAuth 是一个单仓库认证系统，包含三个主要运行部分和一个
 后端同时承担几种角色：
 
 - 本地用户名/密码、邮箱验证码、Web3 钱包认证。
+- 用户名/密码登录同时支持普通本地用户名和邮箱形式的 `LOCAL` 用户名；初始化管理员
+  仅在显式配置 `APP_BOOTSTRAP_ADMIN_*` 时创建，默认不会生成固定 `admin` 凭据。
+- 已配置本地密码的用户可通过 `PUT /api/user/password` 修改密码；成功后递增 token
+  security version、撤销所有 token family、清理认证 Cookie，必须重新登录。
 - Google、GitHub、X 的 OAuth2 Client。
 - 自定义 RS256 JWT 的签发方和资源服务器。
 - 暴露 JWKS 与 token introspection 接口。
@@ -211,6 +215,7 @@ JWKS、旧 token 和 Python 资源服务器；真实环境仍需外部密钥管�
 - 登录方式管理：`LoginMethodController`, `LoginMethodService`。
 - 邮箱验证码：`EmailAuthController`, `EmailVerificationCodeService`。
 - 密码重置：`ForgotPasswordController`, `ForgotPasswordService`。
+- 登录后修改密码：`PasswordController`, `LoginMethodService.changePassword`。
 - Web3/SIWE：`Web3AuthController`, `Web3AuthService`, `Web3NonceService`, `Web3SignatureUtils`。
 - 前端 API 边界：`frontend/src/services/authService.ts`。
 - 前端认证状态：`frontend/src/hooks/useAuth.ts`。
@@ -241,6 +246,13 @@ JWKS、旧 token 和 Python 资源服务器；真实环境仍需外部密钥管�
 `POST /api/auth/login` 的邮箱加密码登录不调用邮件服务；verification purpose 和
 前端请求类型当前只允许 `REGISTRATION`、`PASSWORD_RESET`，没有受支持的邮箱验证码
 登录 endpoint。
+
+初始化管理员是独立于 disposable demo data 的显式启动能力。只有启用
+`app.bootstrap-admin.enabled` 并提供通过密码策略的用户名、邮箱和密码时，应用才会
+创建 `ROLE_USER + ROLE_ADMIN` 的本地登录方式；重复启动不得覆盖已有密码。首次登录
+后应立即通过 `PUT /api/user/password` 更换初始化密码。该接口要求 recent-auth、
+当前密码和新密码策略，使用 PostgreSQL 条件 CAS 处理并发修改；成功后旧 access token、
+refresh token、token family 和认证 Cookie 均不可继续使用。
 
 UniAuth 在同一事务中创建 HMAC challenge 与 transactional outbox，初始状态为
 `PENDING_DELIVERY`；worker 使用稳定 idempotency key 调用邮件服务，并通过受鉴权
@@ -399,10 +411,10 @@ PYTHON_BIN=python3 scripts/test-email-login-browser-e2e.sh
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-当前加固完成基线（2026-08-10；F1-F5、完整统一门禁和阶段末连续三轮检查均已完成）：
+当前加固完成基线（2026-08-12；F1-F5、初始化管理员/登录后改密、完整统一门禁和阶段末连续三轮检查均已完成）：
 
-- 当前根统一门禁：Maven 264 tests、shared-schema process E2E 4/4、
-  HTTP 17/17、Flyway baseline guard 17/17、Mock Playwright 29/29、
+- 当前根统一门禁：Maven 270 tests、shared-schema process E2E 4/4、
+  HTTP 17/17、Flyway baseline guard 17/17、Mock Playwright 31/31、
   生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 20/20、邮件 REST stub
   contract 12/12；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
   patch hygiene 均通过；完整 `scripts/verify.sh` 15/15 以
@@ -512,7 +524,7 @@ PYTHON_BIN=python3 scripts/verify.sh
 - Shell HTTP E2E：17/17；正常邮箱流程使用真实参考服务，失败映射场景使用受控
   stub，并覆盖紧急 signing-key rotation/revoke。
 - Flyway baseline guard：17/17。
-- Mock Playwright：29/29；生产 Playwright：2/2；真实邮箱登录浏览器 E2E：1/1。
+- Mock Playwright：31/31；生产 Playwright：2/2；真实邮箱登录浏览器 E2E：1/1。
 - Python 资源服务器：20/20；邮件 REST stub contract：12/12。
 - 前端 ESLint、TypeScript 和生产构建通过。
 - 最终加固 F1-F5 每批只执行固定范围验收和完整门禁，不分别执行连续三轮无修改检查；

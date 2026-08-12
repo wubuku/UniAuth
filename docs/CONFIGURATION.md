@@ -323,6 +323,28 @@ V1-V5 history 和核心 relation。
 
 初始化器只 upsert `testlocal`、`testsso`、`testboth` 三个受管账户，不执行 `deleteAll()`。
 
+### 初始化管理员账号
+
+系统默认不会创建固定的 `admin` 账号，也不会内置可猜测的默认密码。需要在系统
+初始化时提供一个可用的用户名/密码管理员账号时，必须显式设置：
+
+| 配置 | 环境变量 | 默认值 | 说明 |
+|------|----------|--------|------|
+| `app.bootstrap-admin.enabled` | `APP_BOOTSTRAP_ADMIN_ENABLED` | `false` | 显式启用初始化 |
+| `app.bootstrap-admin.username` | `APP_BOOTSTRAP_ADMIN_USERNAME` | 空 | 本地登录用户名；邮箱形式必须与 email 相同 |
+| `app.bootstrap-admin.email` | `APP_BOOTSTRAP_ADMIN_EMAIL` | 空 | 管理员邮箱 |
+| `app.bootstrap-admin.password` | `APP_BOOTSTRAP_ADMIN_PASSWORD` | 空 | 必须通过当前密码策略 |
+| `app.bootstrap-admin.display-name` | `APP_BOOTSTRAP_ADMIN_DISPLAY_NAME` | `Administrator` | 显示名称 |
+
+初始化器只在账号不存在时创建 `ROLE_USER + ROLE_ADMIN` 的 `LOCAL` 登录方式；
+重复启动不会覆盖现有密码。已存在但身份、管理员权限或本地凭据不完整时启动
+失败关闭，避免静默接管错误账号。初始化密码应在首次登录后通过前端“修改密码”
+或 `PUT /api/user/password` 更换为组织要求的强密码。
+
+登录后修改密码要求当前 JWT 的 `auth_time` 在 recent-auth 窗口内，并验证当前密码、
+新密码策略和确认字段。成功后递增用户 token security version、撤销所有 token family、
+清理认证 Cookie，因此旧 access/refresh token 不能继续使用；用户必须用新密码重新登录。
+
 ### Migration 目录
 
 Flyway 只扫描 `src/main/resources/db/migration/postgresql/`。历史 V1-V4、V6-V8

@@ -54,6 +54,25 @@ public interface UserLoginMethodRepository extends JpaRepository<UserLoginMethod
     @Query(
         value = """
                 UPDATE user_login_methods
+                SET local_password_hash = :newPasswordHash
+                WHERE id = :methodId
+                  AND user_id = :userId
+                  AND auth_provider = 'LOCAL'
+                  AND local_password_hash = :expectedPasswordHash
+                """,
+        nativeQuery = true
+    )
+    int compareAndSetLocalPassword(
+        @Param("methodId") String methodId,
+        @Param("userId") String userId,
+        @Param("expectedPasswordHash") String expectedPasswordHash,
+        @Param("newPasswordHash") String newPasswordHash
+    );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+                UPDATE user_login_methods
                 SET is_primary = false
                 WHERE user_id = :userId
                   AND is_primary IS TRUE

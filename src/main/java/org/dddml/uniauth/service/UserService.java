@@ -271,6 +271,10 @@ public class UserService {
         dto.setDisplayName(user.getDisplayName());
         dto.setAvatarUrl(user.getAvatarUrl());
         dto.setAuthorities(user.getAuthorities());
+        dto.setHasLocalPassword(user.getLoginMethods().stream()
+                .anyMatch(method -> method.isLocalMethod()
+                        && method.getLocalPasswordHash() != null
+                        && !method.getLocalPasswordHash().isBlank()));
         
         // 获取主要登录方式的provider信息
         if (!user.getLoginMethods().isEmpty()) {

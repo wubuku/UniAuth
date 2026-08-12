@@ -69,6 +69,18 @@ public class ApiAuthController {
             userInfo.put("userName", username);
             userInfo.put("userEmail", user.getEmail());
             userInfo.put("userAvatar", user.getAvatarUrl());
+            userInfo.put(
+                    "hasLocalPassword",
+                    loginMethodRepository
+                            .findByUserIdAndAuthProvider(
+                                    userId,
+                                    org.dddml.uniauth.entity.UserLoginMethod
+                                            .AuthProvider.LOCAL
+                            )
+                            .map(method -> method.getLocalPasswordHash() != null
+                                    && !method.getLocalPasswordHash().isBlank())
+                            .orElse(false)
+            );
             userInfo.put("providerInfo", new HashMap<>());
             return ResponseEntity.ok(userInfo);
         }

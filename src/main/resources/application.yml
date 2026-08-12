@@ -51,6 +51,12 @@ app:
   demo-data:
     enabled: false
     disposable: false
+  bootstrap-admin:
+    enabled: ${APP_BOOTSTRAP_ADMIN_ENABLED:false}
+    username: ${APP_BOOTSTRAP_ADMIN_USERNAME:}
+    email: ${APP_BOOTSTRAP_ADMIN_EMAIL:}
+    password: ${APP_BOOTSTRAP_ADMIN_PASSWORD:}
+    display-name: ${APP_BOOTSTRAP_ADMIN_DISPLAY_NAME:Administrator}
   frontend:
     type: react  # 可选值: thymeleaf（传统模板）, react（现代SPA）
     url: ${APP_FRONTEND_URL:}

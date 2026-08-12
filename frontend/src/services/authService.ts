@@ -360,6 +360,26 @@ export class AuthService {
     }
   }
 
+  static async changePassword(data: {
+    currentPassword: string;
+    newPassword: string;
+    newPasswordConfirm: string;
+  }): Promise<{ success: boolean; message: string }> {
+    try {
+      const accessToken = this.diagnosticAccessToken();
+      const response = await axios.put(`${API_BASE_URL}/api/user/password`, data, {
+        withCredentials: true,
+        headers: {
+          ...(accessToken && { 'Authorization': `Bearer ${accessToken}` }),
+        },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Change password error:', error);
+      throw this.handleApiError(error, '修改密码失败');
+    }
+  }
+
   /**
    * 处理API错误，返回更友好的错误信息
    */

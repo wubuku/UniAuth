@@ -187,6 +187,13 @@ export default function LoginPage() {
     }
   }, [user, navigate, loginReturnPath]);
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('passwordChanged')
+        === 'true') {
+      setSuccessMessage('密码已修改，请使用新密码登录');
+    }
+  }, []);
+
   const isValidEmail = (value: string): boolean => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
   };

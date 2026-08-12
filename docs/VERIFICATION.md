@@ -1,7 +1,7 @@
 # UniAuth 验证指南
 
 > 状态：Live
-> 最近基线：2026-08-09
+> 最近基线：2026-08-12
 > 本页是项目交付验收的权威规则，区分静态/构建验证与会启动应用的行为验证。
 
 ## 交付验收硬门槛
@@ -197,10 +197,10 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 真实 Google/GitHub/X provider 授权仍属于 L4 显式 opt-in，不由上述无副作用自动化门禁
 替代。X scope 变化可能要求既有测试用户重新同意授权；UniAuth 不会因此读取推文。
 
-## 2026-08-10 已完成的工程加固基线
+## 2026-08-12 当前验证基线
 
-> 状态：Completed。F1-F5、2026-08-10 的完整 15 阶段组合门禁，以及阶段末连续
-> 三轮无修改检查均已完成。
+> 状态：Completed。F1-F5、初始化管理员/登录后改密改进、2026-08-12 的完整 15 阶段
+> 组合门禁，以及阶段末连续三轮无修改检查均已完成。
 > 覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1、Batch B2a、
 > Batch B2b、邮件服务边界、邮箱 challenge 投递接受/原子消费、敏感响应、API key
 > 单值鉴权、认证 Cookie/浏览器 refresh 存储预备切片，以及当前格式 refresh
@@ -213,7 +213,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | 检查 | 结果 | 证据 |
 |------|------|------|
 | `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
-| `mvn test` | 通过 | 247/247；0 failures/errors/skips |
+| `mvn test` | 通过 | 270/270；0 failures/errors/skips；包含初始化管理员用户名登录、登录后改密和旧 token/session 撤销 |
 | 根 Maven dependency audit | 通过 | OWASP Dependency-Check 报告包含 94 项 dependency evidence；CVSS 7 阻断 |
 | `scripts/test-http-e2e.sh` | 通过 | 17/17；真实应用、独立 PostgreSQL 16.13、四条安全链 CORS、refresh/logout、邮件/Web3/JWT/登录方式，以及紧急 signing-key rotation/revoke |
 | `scripts/test-flyway-baseline-guard.sh` | 通过 | 17/17；覆盖 exact schema、V2/V4/V6 初始及 apply 前只读预检、PostgreSQL major、确认 token、共享 advisory lock、V2-V6 grouped rollback 与临时凭据清理 |
@@ -226,14 +226,14 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `npm audit --audit-level=moderate` | 通过 | 0 vulnerabilities |
 | `npx tsc --noEmit` | 通过 | 无 TypeScript 错误 |
 | `npm run build` | 通过 | Vite 生产构建成功，保留 chunk warning |
-| `npm run test:e2e` | 通过 | 29/29 Chrome-channel Mock Playwright tests；OAuth 登录/显式绑定入口分离，同页面与同源双标签页只消费一次 refresh，logout 保留无关存储，跨标签页 logout 不会被迟到 refresh continuation 恢复 |
+| `npm run test:e2e` | 通过 | 31/31 Chrome-channel Mock Playwright tests；包含修改密码入口、纯 OAuth2/Web3 用户隐藏入口、OAuth 登录/显式绑定入口分离，同页面与同源双标签页只消费一次 refresh，logout 保留无关存储，跨标签页 logout 不会被迟到 refresh continuation 恢复 |
 | `npm run test:e2e:production` | 通过 | 2/2；生产静态构建不包含诊断路由/bundle，普通登录不持久化 bearer credential |
 | 邮箱登录浏览器 E2E | 通过 | 1/1；真实 PostgreSQL/UniAuth/Vite/Python/stub，注册、验证码、同源回跳、跨 hostname Bearer、`credentials: omit`、资源域哨兵 Cookie 不随请求发送、邮箱密码再次登录 |
 | Python | 通过 | 20/20 离线 RSA/JWKS/Flask tests；hash lock 与 audit 通过；仅有 3 个精确、2026-10-01 UTC 到期的 `cryptography 48.0.1` 例外 |
 | 邮件 REST stub contract | 通过 | 12/12；API key/health/接受/拒绝/限流/坏请求、idempotent retry/conflict、delivery status、response-lost recovery 和安全临时捕获文件 |
 | Shell syntax | 通过 | 启动、Flyway、export 和 E2E 脚本 `bash -n` |
 | Documentation | 通过 | 根入口、文档树、组件 README 和 skill 包相对链接检查，`git diff --check` |
-| `scripts/verify.sh` | 通过 | 15/15；671 个源码/候选构建文件敏感扫描 0 findings，57 个 Markdown 文件链接通过 |
+| `scripts/verify.sh` | 通过 | 15/15；697 个源码/候选构建文件敏感扫描 0 findings，59 个 Markdown 文件链接通过 |
 
 Shell HTTP E2E 使用 `test` profile、UniAuth disposable PostgreSQL 16.13、参考邮件服务
 disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列开始前启动真实
