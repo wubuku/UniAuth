@@ -401,8 +401,8 @@ PYTHON_BIN=python3 scripts/verify.sh
 
 当前加固完成基线（2026-08-10；F1-F5、完整统一门禁和阶段末连续三轮检查均已完成）：
 
-- 当前根统一门禁：Maven 247 tests、shared-schema process E2E 4/4、
-  HTTP 17/17、Flyway baseline guard 16/16、Mock Playwright 29/29、
+- 当前根统一门禁：Maven 264 tests、shared-schema process E2E 4/4、
+  HTTP 17/17、Flyway baseline guard 17/17、Mock Playwright 29/29、
   生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 20/20、邮件 REST stub
   contract 12/12；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
   patch hygiene 均通过；完整 `scripts/verify.sh` 15/15 以
@@ -511,7 +511,7 @@ PYTHON_BIN=python3 scripts/verify.sh
   12/12 + 20/20，统一门禁 `12/12` 通过。
 - Shell HTTP E2E：17/17；正常邮箱流程使用真实参考服务，失败映射场景使用受控
   stub，并覆盖紧急 signing-key rotation/revoke。
-- Flyway baseline guard：16/16。
+- Flyway baseline guard：17/17。
 - Mock Playwright：29/29；生产 Playwright：2/2；真实邮箱登录浏览器 E2E：1/1。
 - Python 资源服务器：20/20；邮件 REST stub contract：12/12。
 - 前端 ESLint、TypeScript 和生产构建通过。

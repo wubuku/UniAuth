@@ -30,7 +30,7 @@
 | 邮件参考服务 | F5 完整基线 154 tests，0 failures/errors/skips |
 | Shared-schema E2E | 4/4；UniAuth/邮件服务两种启动顺序、独立 history 和 baseline V0 |
 | HTTP E2E | 17/17；含四条安全链 CORS、邮件真实/失败路径和紧急签名 key rotation/revoke |
-| Flyway baseline guard | 16/16 |
+| Flyway baseline guard | 17/17 |
 | Playwright | 29 个 Mock 浏览器测试 + 2 个生产构建测试 + 1 个真实邮箱登录跨服务 E2E |
 | Python | 20 个资源服务器测试 + 12 个邮件 REST stub 契约测试 |
 | 统一门禁 | 15/15 通过；Maven/npm/Python 供应链、敏感扫描和完整跨服务验收 |

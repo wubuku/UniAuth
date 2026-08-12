@@ -191,7 +191,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `mvn test` | 通过 | 264/264；0 failures/errors/skips |
 | OAuth/X/绑定冲突/Flyway 定向测试 | 通过 | 双 scope、精确 user-info URI、Bearer header、最小 principal、普通及并发冲突、canonical fingerprint |
 | `scripts/test-email-shared-schema-e2e.sh` | 通过 | 8/8；两种启动顺序、两种 history reset preview、缺失 V6 表拒绝、advisory lock 拒绝、apply 删除与 Session 失效 |
-| `scripts/test-flyway-baseline-guard.sh` | 通过 | 16/16；canonical fingerprint 改造后 existing-schema adoption 仍通过完整 failure matrix |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 17/17；canonical fingerprint、baseline advisory lock 改造后 existing-schema adoption 仍通过完整 failure matrix |
 | Shell / Documentation / patch hygiene | 通过 | 修改脚本 `bash -n`；53 个 Markdown 文件相对链接通过；`git diff --check` 通过 |
 
 真实 Google/GitHub/X provider 授权仍属于 L4 显式 opt-in，不由上述无副作用自动化门禁
@@ -216,7 +216,7 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 | `mvn test` | 通过 | 247/247；0 failures/errors/skips |
 | 根 Maven dependency audit | 通过 | OWASP Dependency-Check 报告包含 94 项 dependency evidence；CVSS 7 阻断 |
 | `scripts/test-http-e2e.sh` | 通过 | 17/17；真实应用、独立 PostgreSQL 16.13、四条安全链 CORS、refresh/logout、邮件/Web3/JWT/登录方式，以及紧急 signing-key rotation/revoke |
-| `scripts/test-flyway-baseline-guard.sh` | 通过 | 16/16；覆盖 exact schema、V2/V4/V6 初始及 apply 前只读预检、PostgreSQL major、确认 token、V2-V6 grouped rollback 与临时凭据清理 |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 17/17；覆盖 exact schema、V2/V4/V6 初始及 apply 前只读预检、PostgreSQL major、确认 token、共享 advisory lock、V2-V6 grouped rollback 与临时凭据清理 |
 | Flyway integration | 通过 | fresh V1→V8、existing baseline V1→V8、V7→V8、Hibernate validate、Session、checksum/failure recovery |
 | Shared-schema process E2E | 通过 | 4/4；UniAuth-first 与 email-first 两种启动顺序、独立 history、受控 baseline V0、重启与业务表共存 |
 | 邮件参考服务 | 通过 | 154 tests；Shell runtime 44/44、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；Flyway V1-V5、idempotency identity、终态载荷脱敏、schema-owner、migration discovery/naming、精确 peer history、半成品 peer、队列生命周期行形状、database layout 和非 PostgreSQL datasource 拒绝矩阵通过 |

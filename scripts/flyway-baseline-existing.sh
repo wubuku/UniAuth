@@ -21,6 +21,11 @@ REHEARSAL_USER="uniauth"
 REHEARSAL_PASSWORD="uniauth-rehearsal-$$"
 REHEARSAL_PORT=""
 FLYWAY_CONFIG_FILE=""
+BASELINE_LOCK_PID=""
+BASELINE_LOCK_LOG=""
+BASELINE_LOCK_APP_NAME="uniauth-baseline-apply-lock-$$"
+
+SHARED_SCHEMA_LOCK_KEY="-632082753896054443"
 
 # shellcheck source=scripts/runtime-guard.sh
 source "$SCRIPT_DIR/runtime-guard.sh"
@@ -48,6 +53,11 @@ EOF
 cleanup() {
     if [ -n "$FLYWAY_CONFIG_FILE" ]; then
         rm -f "$FLYWAY_CONFIG_FILE"
+    fi
+    if [ -n "$BASELINE_LOCK_PID" ]; then
+        kill -TERM "$BASELINE_LOCK_PID" >/dev/null 2>&1 || true
+        wait "$BASELINE_LOCK_PID" >/dev/null 2>&1 || true
+        BASELINE_LOCK_PID=""
     fi
     if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -Fxq "$CONTAINER_NAME"; then
         docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
@@ -231,6 +241,87 @@ run_flyway() {
     rm -f "$config_file"
     FLYWAY_CONFIG_FILE=""
     return "$exit_code"
+}
+
+acquire_baseline_lock() {
+    local lock_log="$ARTIFACT_DIR/baseline-apply-lock.log"
+    local lock_state=""
+    local holder_exit_code=0
+
+    : > "$lock_log"
+    BASELINE_LOCK_LOG="$lock_log"
+    PGPASSWORD="$POSTGRES_PASSWORD" \
+        PGAPPNAME="$BASELINE_LOCK_APP_NAME" \
+        psql -X -qAt -v ON_ERROR_STOP=1 \
+            -h "$POSTGRES_HOST" \
+            -p "$POSTGRES_PORT" \
+            -U "$POSTGRES_USER" \
+            -d "$POSTGRES_DATABASE" \
+            -c "
+                SELECT pg_try_advisory_lock(${SHARED_SCHEMA_LOCK_KEY});
+                SELECT pg_sleep(86400);
+            " >"$lock_log" 2>&1 &
+    BASELINE_LOCK_PID=$!
+
+    for _ in $(seq 1 100); do
+        if lock_state="$(
+            source_psql_value "
+                SELECT CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM pg_locks lock_entry
+                        JOIN pg_stat_activity activity
+                          ON activity.pid = lock_entry.pid
+                        WHERE lock_entry.locktype = 'advisory'
+                          AND lock_entry.granted
+                          AND activity.application_name = '$BASELINE_LOCK_APP_NAME'
+                    ) THEN 'LOCK_ACQUIRED'
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM pg_stat_activity activity
+                        WHERE activity.application_name = '$BASELINE_LOCK_APP_NAME'
+                    ) THEN 'LOCK_BUSY'
+                    ELSE 'LOCK_PENDING'
+                END;
+            "
+        )"; then
+            :
+        else
+            lock_state="LOCK_PENDING"
+        fi
+        if [ "$lock_state" = "LOCK_ACQUIRED" ]; then
+            return 0
+        fi
+        if [ "$lock_state" = "LOCK_BUSY" ]; then
+            kill -TERM "$BASELINE_LOCK_PID" >/dev/null 2>&1 || true
+            wait "$BASELINE_LOCK_PID" >/dev/null 2>&1 || true
+            BASELINE_LOCK_PID=""
+            echo "ERROR: unable to acquire the shared Flyway advisory lock" >&2
+            if [ -s "$lock_log" ]; then
+                cat "$lock_log" >&2
+            fi
+            return 1
+        fi
+        if ! kill -0 "$BASELINE_LOCK_PID" >/dev/null 2>&1; then
+            wait "$BASELINE_LOCK_PID" || holder_exit_code=$?
+            echo "ERROR: unable to acquire the shared Flyway advisory lock" >&2
+            if [ -s "$lock_log" ]; then
+                cat "$lock_log" >&2
+            fi
+            BASELINE_LOCK_PID=""
+            return "${holder_exit_code:-1}"
+        fi
+        sleep 0.1
+    done
+
+    kill -TERM "$BASELINE_LOCK_PID" >/dev/null 2>&1 || true
+    wait "$BASELINE_LOCK_PID" >/dev/null 2>&1 || true
+    BASELINE_LOCK_PID=""
+    echo "ERROR: unable to acquire the shared Flyway advisory lock" >&2
+    if [ -s "$lock_log" ]; then
+        cat "$lock_log" >&2
+    fi
+    return 1
 }
 
 if [ "$MODE" != "rehearse" ] && [ "$MODE" != "apply" ]; then
@@ -657,6 +748,50 @@ if [ "$MODE" = "apply" ]; then
     APPLY_SOURCE_EMAIL_IDENTITY_VIOLATIONS="$(source_email_identity_violations)"
     if [ -n "$APPLY_SOURCE_EMAIL_IDENTITY_VIOLATIONS" ]; then
         echo "ERROR: source email-identity data changed during rehearsal; refusing baseline apply: $APPLY_SOURCE_EMAIL_IDENTITY_VIOLATIONS" >&2
+        exit 1
+    fi
+
+    if ! acquire_baseline_lock; then
+        exit 1
+    fi
+
+    # Re-check the source after acquiring the shared lock.  The rehearsal
+    # checks above only prove the state at the end of the read-only rehearsal.
+    APPLY_SOURCE_FINGERPRINT="$(
+        schema_fingerprint \
+            "$POSTGRES_HOST" \
+            "$POSTGRES_PORT" \
+            "$POSTGRES_DATABASE" \
+            "$POSTGRES_USER" \
+            "$POSTGRES_PASSWORD" \
+            true
+    )"
+    if [ "$APPLY_SOURCE_FINGERPRINT" != "$SOURCE_FINGERPRINT" ]; then
+        echo "ERROR: source schema changed before the locked baseline apply" >&2
+        exit 1
+    fi
+
+    APPLY_EXISTING_HISTORY="$(source_history_tables)"
+    if [ -n "$APPLY_EXISTING_HISTORY" ]; then
+        echo "ERROR: a Flyway history table appeared before the locked baseline apply: $APPLY_EXISTING_HISTORY" >&2
+        exit 1
+    fi
+
+    APPLY_SOURCE_DATA_VIOLATIONS="$(source_data_violations)"
+    if [ -n "$APPLY_SOURCE_DATA_VIOLATIONS" ]; then
+        echo "ERROR: source data changed before the locked baseline apply: $APPLY_SOURCE_DATA_VIOLATIONS" >&2
+        exit 1
+    fi
+
+    APPLY_SOURCE_ENTITY_SCHEMA_VIOLATIONS="$(source_entity_schema_violations)"
+    if [ -n "$APPLY_SOURCE_ENTITY_SCHEMA_VIOLATIONS" ]; then
+        echo "ERROR: source entity-schema data changed before the locked baseline apply: $APPLY_SOURCE_ENTITY_SCHEMA_VIOLATIONS" >&2
+        exit 1
+    fi
+
+    APPLY_SOURCE_EMAIL_IDENTITY_VIOLATIONS="$(source_email_identity_violations)"
+    if [ -n "$APPLY_SOURCE_EMAIL_IDENTITY_VIOLATIONS" ]; then
+        echo "ERROR: source email-identity data changed before the locked baseline apply: $APPLY_SOURCE_EMAIL_IDENTITY_VIOLATIONS" >&2
         exit 1
     fi
 
