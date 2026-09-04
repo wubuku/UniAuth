@@ -35,7 +35,13 @@ uniauth_require_oauth_credentials
 uniauth_prepare_runtime "$PROJECT_DIR"
 
 echo "Compiling backend..."
-(cd "$PROJECT_DIR" && mvn clean compile)
+# UNIAUTH_START_INCREMENTAL=1 opts into an incremental `mvn compile` (no
+# clean) for fast dev restarts; the default keeps the full clean build.
+if [ "${UNIAUTH_START_INCREMENTAL:-0}" = "1" ]; then
+    (cd "$PROJECT_DIR" && mvn compile)
+else
+    (cd "$PROJECT_DIR" && mvn clean compile)
+fi
 
 echo "Starting UniAuth at http://localhost:${SERVER_PORT:-8081}"
 echo "Press Ctrl+C to stop"
