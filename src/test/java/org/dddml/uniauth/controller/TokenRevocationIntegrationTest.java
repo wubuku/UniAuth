@@ -383,11 +383,35 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
-    void cookieAuthenticatedRefreshRequiresOneExactCsrfHeader()
+    void refreshRotatesWithoutCsrfSessionForCookieClients()
             throws Exception {
-        LoginTokens login = registerAndLogin("refresh-csrf");
+        LoginTokens login = registerAndLogin("refresh-no-session");
 
-        mockMvc.perform(post("/api/auth/refresh")
+        MvcResult result = mockMvc.perform(post("/api/auth/refresh")
+                        .cookie(new Cookie(
+                                "refreshToken",
+                                login.refreshToken()
+                        )))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message")
+                        .value("Token refreshed successfully"))
+                .andExpect(jsonPath("$.refreshToken").doesNotExist())
+                .andReturn();
+
+        String rotatedRefreshToken = responseCookie(result, "refreshToken");
+        assertThat(rotatedRefreshToken).isNotEqualTo(login.refreshToken());
+
+        TokenFamilyEntity family = tokenFamily(login.familyId());
+        assertThat(family.getRevokedAt()).isNull();
+        assertThat(family.getRevokeReason()).isNull();
+    }
+
+    @Test
+    void cookieAuthenticatedStateChangingRequestsStillRequireOneExactCsrfHeader()
+            throws Exception {
+        LoginTokens login = registerAndLogin("logout-csrf");
+
+        mockMvc.perform(post("/api/auth/logout")
                         .cookie(new Cookie(
                                 "refreshToken",
                                 login.refreshToken()
@@ -395,7 +419,7 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error").value("CSRF_TOKEN_INVALID"));
 
-        mockMvc.perform(post("/api/auth/refresh")
+        mockMvc.perform(post("/api/auth/logout")
                         .cookie(
                                 login.csrf().sessionCookie(),
                                 new Cookie(
@@ -407,7 +431,7 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error").value("CSRF_TOKEN_INVALID"));
 
-        mockMvc.perform(post("/api/auth/refresh")
+        mockMvc.perform(post("/api/auth/logout")
                         .cookie(
                                 login.csrf().sessionCookie(),
                                 new Cookie(
@@ -423,15 +447,9 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error").value("CSRF_TOKEN_INVALID"));
 
-        mockMvc.perform(withCsrf(
-                        post("/api/auth/refresh")
-                                .cookie(new Cookie(
-                                        "refreshToken",
-                                        login.refreshToken()
-                                )),
-                        login.csrf()
-                ))
-                .andExpect(status().isOk());
+        TokenFamilyEntity family = tokenFamily(login.familyId());
+        assertThat(family.getRevokedAt()).isNull();
+        assertThat(family.getRevokeReason()).isNull();
     }
 
     @Test

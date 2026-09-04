@@ -149,6 +149,12 @@ UniAuth 用户/认证表；disposable 空库恢复后会启动真实 Spring 应�
    和撤销状态；`authorities` claim 转换为 Spring Security authority。
 5. `/api/user` 和其他 `/api/**` 受资源服务器链保护；带认证 Cookie 的 unsafe 请求
    还必须提交 Session bootstrap 返回的精确单值 CSRF header。
+6. 例外：`POST /api/auth/refresh` 不要求 Session CSRF header。它的凭据就是
+   HttpOnly + SameSite=Lax 的 refresh Cookie：跨站浏览器 POST 无法附带该 Cookie，
+   而重放已轮换 token 会撤销整族。豁免使 refresh 在 HTTP Session（默认 30 分钟
+   超时）早已过期后仍可续期 7 天有效期的 token family，这是 BFF 等服务端客户端
+   的必要行为；带认证 Cookie 的其他 unsafe 请求（logout、密码修改等）仍受
+   Session CSRF 保护。
 
 `PUT /api/user/password` 只允许当前认证用户修改自己的 `LOCAL` 密码。请求包含
 `currentPassword`、`newPassword` 和 `newPasswordConfirm`；当前密码错误返回

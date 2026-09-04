@@ -26,6 +26,14 @@ public class CsrfProtectionFilter extends OncePerRequestFilter {
     private static final Set<String> SAFE_METHODS =
             Set.of("GET", "HEAD", "OPTIONS", "TRACE");
 
+    // Token refresh is authorized by the HttpOnly SameSite=Lax refresh cookie
+    // itself and must keep working for server-to-server clients whose HTTP
+    // session (and therefore session-scoped CSRF token) has already expired;
+    // a refresh token family outlives the session timeout by days. Cross-site
+    // browser POSTs cannot attach a Lax cookie, and replaying a rotated token
+    // still revokes the whole family.
+    private static final String TOKEN_REFRESH_REQUEST_URI = "/api/auth/refresh";
+
     private final AuthCookieService authCookieService;
     private final CsrfBootstrapProperties properties;
 
@@ -36,6 +44,7 @@ public class CsrfProtectionFilter extends OncePerRequestFilter {
             FilterChain filterChain) throws ServletException, IOException {
         if (SAFE_METHODS.contains(request.getMethod())
                 || "/oauth2/introspect".equals(request.getRequestURI())
+                || TOKEN_REFRESH_REQUEST_URI.equals(request.getRequestURI())
                 || !hasAuthenticationCookie(request)) {
             filterChain.doFilter(request, response);
             return;
