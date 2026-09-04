@@ -31,7 +31,9 @@ public class CsrfProtectionFilter extends OncePerRequestFilter {
     // session (and therefore session-scoped CSRF token) has already expired;
     // a refresh token family outlives the session timeout by days. Cross-site
     // browser POSTs cannot attach a Lax cookie, and replaying a rotated token
-    // still revokes the whole family.
+    // still revokes the whole family. Only POST /api/auth/refresh is mapped;
+    // the method check keeps the exemption scoped to that handler so future
+    // handlers on the same path cannot inherit it silently.
     private static final String TOKEN_REFRESH_REQUEST_URI = "/api/auth/refresh";
 
     private final AuthCookieService authCookieService;
@@ -44,7 +46,8 @@ public class CsrfProtectionFilter extends OncePerRequestFilter {
             FilterChain filterChain) throws ServletException, IOException {
         if (SAFE_METHODS.contains(request.getMethod())
                 || "/oauth2/introspect".equals(request.getRequestURI())
-                || TOKEN_REFRESH_REQUEST_URI.equals(request.getRequestURI())
+                || ("POST".equals(request.getMethod())
+                        && TOKEN_REFRESH_REQUEST_URI.equals(request.getRequestURI()))
                 || !hasAuthenticationCookie(request)) {
             filterChain.doFilter(request, response);
             return;

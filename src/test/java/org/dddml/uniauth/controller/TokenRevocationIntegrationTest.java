@@ -52,6 +52,7 @@ import static org.dddml.uniauth.support.AuthIntegrationTestSupport.responseCooki
 import static org.dddml.uniauth.support.AuthIntegrationTestSupport.withCsrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.cookie;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -407,6 +408,28 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
+    void refreshExemptsLiveSessionWithMismatchedCsrfHeader() throws Exception {
+        LoginTokens login = registerAndLogin("refresh-stale-csrf");
+
+        MvcResult result = mockMvc.perform(post("/api/auth/refresh")
+                        .cookie(
+                                login.csrf().sessionCookie(),
+                                new Cookie(
+                                        "refreshToken",
+                                        login.refreshToken()
+                                )
+                        )
+                        .header(login.csrf().headerName(), "stale-csrf-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message")
+                        .value("Token refreshed successfully"))
+                .andReturn();
+
+        String rotatedRefreshToken = responseCookie(result, "refreshToken");
+        assertThat(rotatedRefreshToken).isNotEqualTo(login.refreshToken());
+    }
+
+    @Test
     void cookieAuthenticatedStateChangingRequestsStillRequireOneExactCsrfHeader()
             throws Exception {
         LoginTokens login = registerAndLogin("logout-csrf");
@@ -444,6 +467,26 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
                                 login.csrf().token(),
                                 login.csrf().token()
                         ))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("CSRF_TOKEN_INVALID"));
+
+        mockMvc.perform(put("/api/user/password")
+                        .cookie(new Cookie(
+                                "accessToken",
+                                login.accessToken()
+                        )))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("CSRF_TOKEN_INVALID"));
+
+        mockMvc.perform(put("/api/user/password")
+                        .cookie(
+                                login.csrf().sessionCookie(),
+                                new Cookie(
+                                        "accessToken",
+                                        login.accessToken()
+                                )
+                        )
+                        .header(login.csrf().headerName(), "wrong-token"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error").value("CSRF_TOKEN_INVALID"));
 
