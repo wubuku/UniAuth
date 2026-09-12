@@ -17,6 +17,8 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.time.DateTimeException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -149,34 +151,44 @@ public class TokenValidationService {
     }
 
     private ValidatedToken decodeSignedRefreshToken(String tokenValue) {
-        Jws<Claims> parsed = jwtTokenService.parseSignedToken(tokenValue);
-        requireHeader(parsed.getHeader());
-        Claims claims = parsed.getBody();
-        if (!REFRESH_TYPE.equals(claims.get("type", String.class))) {
-            throw new JwtException("Only refresh tokens are accepted");
+        try {
+            Jws<Claims> parsed =
+                    jwtTokenService.parseSignedToken(tokenValue);
+            requireHeader(parsed.getHeader());
+            Claims claims = parsed.getBody();
+            if (!REFRESH_TYPE.equals(claims.get("type", String.class))) {
+                throw new JwtException("Only refresh tokens are accepted");
+            }
+            if (!jwtTokenService.getToken().getIssuer().equals(
+                    claims.getIssuer()
+            )) {
+                throw new JwtException("Refresh token issuer is invalid");
+            }
+            return validatedToken(
+                    claims.getId(),
+                    TokenBlacklistEntity.TokenType.REFRESH,
+                    claims.getSubject(),
+                    claims.get("userId", String.class),
+                    claims.get("username", String.class),
+                    claims.get("sid", String.class),
+                    numberClaim(claims, "generation"),
+                    numberClaim(claims, "ver"),
+                    numberClaim(claims, "auth_time"),
+                    claims.getIssuedAt() != null
+                            ? claims.getIssuedAt().toInstant()
+                            : null,
+                    claims.getExpiration() != null
+                            ? claims.getExpiration().toInstant()
+                            : null
+            );
+        } catch (io.jsonwebtoken.JwtException
+                 | DateTimeException
+                 | IllegalArgumentException exception) {
+            throw new JwtException(
+                    "Refresh token is invalid",
+                    exception
+            );
         }
-        if (!jwtTokenService.getToken().getIssuer().equals(
-                claims.getIssuer()
-        )) {
-            throw new JwtException("Refresh token issuer is invalid");
-        }
-        return validatedToken(
-                claims.getId(),
-                TokenBlacklistEntity.TokenType.REFRESH,
-                claims.getSubject(),
-                claims.get("userId", String.class),
-                claims.get("username", String.class),
-                claims.get("sid", String.class),
-                numberClaim(claims, "generation"),
-                numberClaim(claims, "ver"),
-                numberClaim(claims, "auth_time"),
-                claims.getIssuedAt() != null
-                        ? claims.getIssuedAt().toInstant()
-                        : null,
-                claims.getExpiration() != null
-                        ? claims.getExpiration().toInstant()
-                        : null
-        );
     }
 
     private ValidatedToken validatedToken(
@@ -298,7 +310,14 @@ public class TokenValidationService {
         if (!(value instanceof Number number)) {
             throw new JwtException("Token " + name + " claim is invalid");
         }
-        return number.longValue();
+        try {
+            return new BigDecimal(number.toString()).longValueExact();
+        } catch (ArithmeticException | NumberFormatException exception) {
+            throw new JwtException(
+                    "Token " + name + " claim is invalid",
+                    exception
+            );
+        }
     }
 
     private void requireUuid(String value) {

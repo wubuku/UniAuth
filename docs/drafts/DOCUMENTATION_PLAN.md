@@ -1,7 +1,7 @@
 # UniAuth 文档体系建设计划
 
 > 状态：Live；首版体系已建立，随项目演进持续校准
-> 首版基线：2026-08-07；最近校准：2026-08-12
+> 首版基线：2026-08-07；最近校准：2026-09-12
 > 原则：已有文档不移动；新文档链接已有内容；当前事实以代码、配置和可执行验证为准。
 
 ## 目标
@@ -92,6 +92,7 @@
 | P1 | 说明参考服务缺失 migration location 与非法 migration 命名必须 fail closed，并记录覆盖拒绝证据 | 已完成 |
 | P1 | 说明参考服务 JPA repository 测试必须使用 PostgreSQL + Flyway + Hibernate validate，并记录真实约束断言 | 已完成 |
 | P1 | 明确邮件 relation 与 UniAuth V1-V7 无命名冲突，并记录同 public schema 下独立 history、受控 baseline V0、精确 peer history、半成品 peer 拒绝、双启动顺序与选择性备份边界 | 已完成 |
+| P1 | 固定 refresh 无效凭据返回 401、基础设施失败返回 503 的错误分类，并记录 2026-09-12 PostgreSQL 集成验证 | 已完成 |
 | P2 | 随代码修复逐步校准详细 API/集成文档 | 延后 |
 
 ## 端口和状态漂移处置
@@ -171,7 +172,12 @@
 - token family/security version 已接入 access/refresh 严格校验、generation CAS、
   replay/logout/凭据变化整族撤销和受鉴权 strict introspection。refresh token 只通过
   HttpOnly Cookie 传递；普通生产构建不暴露或持久化 access token，显式 diagnostics
-  dev/E2E 才保留跨域 Bearer 演示。Python 离线 JWKS 校验仍不能感知数据库实时撤销。
+  dev/E2E 才保留跨域 Bearer 演示。格式错误、过期、签名无效、超范围时间值、小数或
+  溢出的整数 session claim，以及其他 claims 不合法的 refresh token 统一作为无效
+  凭据返回 `401`；只有数据库或服务端基础设施失败返回
+  `503 TOKEN_REFRESH_UNAVAILABLE`，且 refresh 持久化失败必须事务回滚。2026-09-12
+  已通过 PostgreSQL 定向集成测试 19/19 和完整 Maven 278/278 固定该契约。Python
+  离线 JWKS 校验仍不能感知数据库实时撤销。
 - Web3 的 `isNewUser`、bind 返回处理、EIP-191 字节长度、完整 SIWE message 绑定、
   PostgreSQL nonce 原子 upsert、带 message/有效期条件的原子消费和并发重放均已
   修复并由 V5、Java 集成测试和真实 HTTP E2E 覆盖；后续只在新的固定范围中继续

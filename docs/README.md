@@ -1,6 +1,6 @@
 # UniAuth 文档导航
 
-> 当前文档基线：2026-08-12
+> 当前文档基线：2026-09-12
 > 本页是项目文档的主入口。代码、配置与本文冲突时，以当前代码和配置为准。
 > `docs/Perplexity/` 和 `docs/drafts/` 中包含大量历史方案，不应直接当作运行手册。
 
@@ -58,6 +58,9 @@
   套件，验证资源域无认证 Cookie 且跨 origin 请求使用 Bearer header。ESLint、
   Maven/npm/Python 供应链审计、候选构建敏感扫描和 15 阶段统一验证入口已纳入门禁；
   2026-08-12 的 F5 及初始化管理员/登录后改密完整门禁已 15/15 通过。
+- 2026-09-12 定向修复 refresh 无效凭据错误分类：格式错误、过期、签名无效以及
+  claims 不合法的 refresh token 返回 `401`，只有数据库或服务端基础设施失败返回
+  `503 TOKEN_REFRESH_UNAVAILABLE`；当前证据见 [验证指南](VERIFICATION.md)。
 - 生产配置要求外部 owner-only RSA key、非 placeholder HTTPS/secret/provider
   配置，公开 readiness 不泄露组件细节；伪造 forwarded header 不改变 redirect、
   Secure Cookie 或限流来源。紧急单 key rotation 会立即使旧 token 失效并要求重认证。

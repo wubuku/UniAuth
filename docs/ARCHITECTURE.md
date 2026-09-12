@@ -155,6 +155,11 @@ UniAuth 用户/认证表；disposable 空库恢复后会启动真实 Spring 应�
    超时）早已过期后仍可续期 7 天有效期的 token family，这是 BFF 等服务端客户端
    的必要行为；带认证 Cookie 的其他 unsafe 请求（logout、密码修改等）仍受
    Session CSRF 保护。
+7. refresh token 的语法、签名、有效期、header、issuer、type、identity/session
+   claims 和持久状态校验共同构成凭据验证。任一凭据校验失败均返回 `401`；数据库
+   或其他服务端基础设施失败才返回 `503 TOKEN_REFRESH_UNAVAILABLE`。底层 JJWT
+   解析异常在 `TokenValidationService` 转换为 Spring Security `JwtException`，
+   使 controller 不会把格式错误、过期或签名无效的 token 误报成服务不可用。
 
 `PUT /api/user/password` 只允许当前认证用户修改自己的 `LOCAL` 密码。请求包含
 `currentPassword`、`newPassword` 和 `newPasswordConfirm`；当前密码错误返回

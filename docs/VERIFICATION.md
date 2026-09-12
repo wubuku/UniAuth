@@ -1,7 +1,7 @@
 # UniAuth 验证指南
 
 > 状态：Live
-> 最近基线：2026-08-12
+> 最近基线：2026-08-12；最近定向维护验证：2026-09-12
 > 本页是项目交付验收的权威规则，区分静态/构建验证与会启动应用的行为验证。
 
 ## 交付验收硬门槛
@@ -165,6 +165,37 @@ while counter < 3:
 | L4 外部集成 | OAuth provider、邮件、Web3、远端 JWKS | 是 |
 
 L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
+
+## 2026-09-12 refresh 无效凭据错误分类修复
+
+> 状态：Verified。该定向维护修复 BFF 持有过期、损坏或密钥轮换前 provider session
+> 时，UniAuth 将 refresh 凭据错误误报为服务不可用的问题；不改变 token family、
+> rotation、replay、logout、CSRF 或 Cookie transport 契约。
+
+复现确认 `POST /api/auth/refresh` 收到格式错误的 refresh Cookie 时，底层 JJWT
+抛出的 `io.jsonwebtoken.JwtException` 未被 controller 的 Spring Security
+`JwtException` 分支识别，因而错误返回 `503 TOKEN_REFRESH_UNAVAILABLE`。修复后：
+
+- 格式错误、过期、签名无效、时间值超出运行时范围、小数或溢出的整数 session
+  claim，以及其他不合法 refresh token 都作为无效凭据返回
+  `401 {"error":"Token refresh failed"}`；
+- 缺失 refresh Cookie 继续返回 `401`；
+- 数据库或其他服务端基础设施失败仍返回 `503 TOKEN_REFRESH_UNAVAILABLE`；
+- refresh rotation、replay 拒绝、并发 CAS、logout 和持久失败语义保持不变。
+
+验证结果：
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| `mvn -q -Dtest=TokenRevocationIntegrationTest test` | 通过 | 19/19；PostgreSQL 16.13 Testcontainers 集成测试覆盖格式错误、过期、错误签名、超范围 `auth_time` 和小数 `generation` 的 HTTP `401`，并保留 rotation、replay、并发、logout，以及 refresh 持久化失败返回 `503` 且事务回滚的断言 |
+| `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
+| `mvn test` | 通过 | 278/278；0 failures/errors/skips |
+| Circle 本地 BFF/UniAuth HTTP 回归 | 通过 | `18081` 无效 refresh 返回 `401`；经 `5189` 的无效 provider session 返回 `401` 并清理 provider/Circle 会话 Cookie；受管账号 login、me、CSRF、refresh 均返回 `200` |
+| Patch hygiene | 通过 | `git diff --check` |
+
+本次自动化不调用真实 OAuth、邮件或其他外部 provider，也不连接共享数据库。Circle
+开发栈的 BFF/UniAuth 代理链另以本地 `dev` 运行态验证，不替代上述 PostgreSQL
+集成测试。
 
 ## 2026-08-11 OAuth 绑定与 disposable reset review 收敛
 

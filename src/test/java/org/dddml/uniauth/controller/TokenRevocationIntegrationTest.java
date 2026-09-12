@@ -31,6 +31,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.security.KeyPairGenerator;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
@@ -356,6 +357,174 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
+    void malformedRefreshTokenIsRejectedAsInvalidCredentials()
+            throws Exception {
+        CsrfContext csrf = bootstrapCsrf(mockMvc, objectMapper);
+
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        "not-a-jwt"
+                                )),
+                        csrf
+                ))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("Token refresh failed"));
+    }
+
+    @Test
+    void expiredRefreshTokenIsRejectedAsInvalidCredentials()
+            throws Exception {
+        LoginTokens login = registerAndLogin("refresh-expired");
+        Claims current = claims(login.refreshToken());
+        Map<String, Object> expiredClaims = new HashMap<>(current);
+        expiredClaims.remove("iat");
+        expiredClaims.remove("exp");
+        Instant now = Instant.now();
+        String expiredRefreshToken = Jwts.builder()
+                .setClaims(expiredClaims)
+                .setIssuedAt(Date.from(now.minusSeconds(120)))
+                .setExpiration(Date.from(now.minusSeconds(60)))
+                .setHeaderParam(
+                        "kid",
+                        jwtTokenService.getToken().getKid()
+                )
+                .signWith(
+                        jwtTokenService.getPrivateKey(),
+                        SignatureAlgorithm.RS256
+                )
+                .compact();
+
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        expiredRefreshToken
+                                )),
+                        login.csrf()
+                ))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("Token refresh failed"));
+    }
+
+    @Test
+    void refreshTokenWithInvalidSignatureIsRejectedAsInvalidCredentials()
+            throws Exception {
+        LoginTokens login = registerAndLogin("refresh-invalid-signature");
+        Claims current = claims(login.refreshToken());
+        KeyPairGenerator keyPairGenerator =
+                KeyPairGenerator.getInstance("RSA");
+        keyPairGenerator.initialize(2048);
+        String invalidSignatureRefreshToken = Jwts.builder()
+                .setClaims(new HashMap<>(current))
+                .setHeaderParam(
+                        "kid",
+                        jwtTokenService.getToken().getKid()
+                )
+                .signWith(
+                        keyPairGenerator.generateKeyPair().getPrivate(),
+                        SignatureAlgorithm.RS256
+                )
+                .compact();
+
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        invalidSignatureRefreshToken
+                                )),
+                        login.csrf()
+                ))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("Token refresh failed"));
+    }
+
+    @Test
+    void refreshTokenWithOutOfRangeAuthTimeIsRejectedAsInvalidCredentials()
+            throws Exception {
+        LoginTokens login = registerAndLogin("refresh-invalid-auth-time");
+        Claims current = claims(login.refreshToken());
+        Map<String, Object> invalidClaims = new HashMap<>(current);
+        invalidClaims.put("auth_time", Long.MAX_VALUE);
+        String invalidAuthTimeRefreshToken = Jwts.builder()
+                .setClaims(invalidClaims)
+                .setHeaderParam(
+                        "kid",
+                        jwtTokenService.getToken().getKid()
+                )
+                .signWith(
+                        jwtTokenService.getPrivateKey(),
+                        SignatureAlgorithm.RS256
+                )
+                .compact();
+
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        invalidAuthTimeRefreshToken
+                                )),
+                        login.csrf()
+                ))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("Token refresh failed"));
+    }
+
+    @Test
+    void refreshTokenWithFractionalGenerationIsRejectedAsInvalidCredentials()
+            throws Exception {
+        LoginTokens login = registerAndLogin("refresh-fractional-generation");
+        Claims current = claims(login.refreshToken());
+        Map<String, Object> invalidClaims = new HashMap<>(current);
+        invalidClaims.put("generation", 0.5);
+        String fractionalGenerationRefreshToken = Jwts.builder()
+                .setClaims(invalidClaims)
+                .setHeaderParam(
+                        "kid",
+                        jwtTokenService.getToken().getKid()
+                )
+                .signWith(
+                        jwtTokenService.getPrivateKey(),
+                        SignatureAlgorithm.RS256
+                )
+                .compact();
+
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        fractionalGenerationRefreshToken
+                                )),
+                        login.csrf()
+                ))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("Token refresh failed"));
+    }
+
+    @Test
+    void refreshReportsUnavailableOnDatabaseFailure() throws Exception {
+        LoginTokens login = registerAndLogin("refresh-database-failure");
+        installFailureTrigger();
+
+        mockMvc.perform(withCsrf(
+                        post("/api/auth/refresh")
+                                .cookie(new Cookie(
+                                        "refreshToken",
+                                        login.refreshToken()
+                                )),
+                        login.csrf()
+                ))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.error")
+                        .value("TOKEN_REFRESH_UNAVAILABLE"));
+
+        TokenFamilyEntity family = tokenFamily(login.familyId());
+        assertThat(family.getCurrentGeneration()).isZero();
+        assertThat(family.getRevokedAt()).isNull();
+    }
+
+    @Test
     void logoutReportsIncompleteRevocationButStillClearsLocalStateOnDatabaseFailure()
             throws Exception {
         LoginTokens login = registerAndLogin("logout-database-failure");
@@ -642,10 +811,7 @@ class TokenRevocationIntegrationTest extends PostgreSqlIntegrationTest {
                 LANGUAGE plpgsql
                 AS $$
                 BEGIN
-                    IF OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL THEN
-                        RAISE EXCEPTION 'injected token family failure';
-                    END IF;
-                    RETURN NEW;
+                    RAISE EXCEPTION 'injected token family failure';
                 END
                 $$
                 """.formatted(FAILURE_FUNCTION));

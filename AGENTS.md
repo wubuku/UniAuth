@@ -199,6 +199,12 @@ base/dev/test 使用本地 HTTP
 access token 放入 localStorage；显式 diagnostics 模式才为异构资源服务器测试保留
 该值，并始终移除历史 `refreshToken` key。
 
+`POST /api/auth/refresh` 的错误分类是稳定认证契约：缺失 refresh Cookie，以及格式错误、
+过期、签名无效、issuer/type/claims 不合法、已轮换或已撤销的 refresh token 都属于
+凭据拒绝，返回 `401`；只有数据库或其他服务端基础设施失败才返回
+`503 TOKEN_REFRESH_UNAVAILABLE`。JJWT `io.jsonwebtoken.JwtException` 必须在 service
+边界转换为 controller 已识别的 Spring Security `JwtException`，不能落入通用异常分支。
+
 `JwtTokenService` 构造时读取 `jwt.rsa.key-file`；默认路径是 ignored 的
 `.local/uniauth/rsa-keys.ser`。已有密钥无法解析或 POSIX 权限过宽时启动失败，
 新生成的本地密钥会收紧为 owner-only。修改密钥格式、路径或轮换逻辑时必须验证
