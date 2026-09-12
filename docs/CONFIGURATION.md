@@ -20,18 +20,41 @@
 ## OAuth provider HTTP 边界
 
 OAuth authorization-code token 交换、Spring 标准 provider user-info 请求以及
-GitHub/X 的补充 profile 请求都使用 `app.oauth2.http` 下的显式超时：
+GitHub/X 的补充 profile 请求都使用 `app.oauth2.http` 下的同一组有界 HTTP client：
 
 | 属性 | 环境变量 | 默认值 | 有效范围 |
 |------|----------|--------|----------|
 | `connect-timeout-ms` | `OAUTH2_HTTP_CONNECT_TIMEOUT_MS` | `5000` | `100..60000` |
 | `read-timeout-ms` | `OAUTH2_HTTP_READ_TIMEOUT_MS` | `10000` | `100..60000` |
+| `proxy-mode` | `OAUTH2_HTTP_PROXY_MODE` | `AUTO` | `AUTO` / `DIRECT` / `HTTP` |
+| `proxy-url` | `OAUTH2_HTTP_PROXY_URL` | 标准代理环境变量 | 无认证的 `http://host:port` |
+
+正常部署不需要在 `application.yml`、外部配置文件或 `.env` 中重复写代理。`AUTO` 按以下
+顺序选择 OAuth provider 出站路由：
+
+1. 当前进程的 `OAUTH2_HTTP_PROXY_MODE` / `OAUTH2_HTTP_PROXY_URL` 精确覆盖；
+2. `https_proxy`、`HTTPS_PROXY`、`http_proxy`、`HTTP_PROXY`；
+3. 应用配置中的同名值；
+4. JDK 默认 `ProxySelector`，在支持的平台/JDK 组合上可读取操作系统代理；
+5. 没有可用代理时直连。
+
+`all_proxy` 常用于 SOCKS CLI 流量，但本客户端只接受 HTTP CONNECT proxy，因此不会把
+`socks5://...` 误当作 HTTP proxy。运维若按惯例同时导出 `https_proxy`、`http_proxy`
+和 `all_proxy`，OAuth client 会使用前两者之一。机器专属 host/port 不得提交到仓库配置。
+
+`OAUTH2_HTTP_PROXY_MODE=DIRECT` 是显式排障覆盖：即使环境中存在标准代理变量，也强制
+OAuth client 直连。`HTTP` 模式要求显式可用的 proxy URL。URL 只允许无认证
+`http://host:port`，禁止 userinfo、path、query、fragment、空白、控制字符和非法端口。
+该路由只作用于 OAuth token、user-info 和补充 profile 请求，不设置 JVM 全局代理，
+也不改变邮件、数据库或其他 HTTP client。
 
 token endpoint 使用 OAuth2 form/JSON 专用转换器和错误处理器，但与 user-info client
 共享上述 timeout 边界。超时配置不合法时 ApplicationContext 启动失败；客户端不对
 authorization code、provider token 或 user-info 请求执行盲重试。生产部署仍必须
 使用 provider 的 HTTPS endpoint 和 JVM 信任链校验，测试只通过 loopback 慢响应及
-合成成功响应验证连接、读取和解析契约。
+合成成功响应验证连接、代理选择、读取和解析契约。启动日志只记录路由类型及代理
+host/port；失败日志只记录稳定 OAuth 错误码、失败分类和异常类名，不记录 code、token、
+secret、Cookie、URL query、异常 message 或 provider 响应正文。
 
 ## 邮件服务依赖
 

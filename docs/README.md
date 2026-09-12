@@ -61,6 +61,10 @@
 - 2026-09-12 定向修复 refresh 无效凭据错误分类：格式错误、过期、签名无效以及
   claims 不合法的 refresh token 返回 `401`，只有数据库或服务端基础设施失败返回
   `503 TOKEN_REFRESH_UNAVAILABLE`；当前证据见 [验证指南](VERIFICATION.md)。
+- OAuth token、user-info 和补充 profile 请求使用同一有界 JDK HTTP client；默认从
+  标准 `https_proxy` / `http_proxy` 或 JDK 可见的系统代理自动选择路由，无需在配置
+  文件固化机器地址。代理仅作用于 OAuth client，失败日志按网络/TLS/provider/protocol
+  分类且不记录 code、token、secret、Cookie、URL query 或响应正文。
 - 生产配置要求外部 owner-only RSA key、非 placeholder HTTPS/secret/provider
   配置，公开 readiness 不泄露组件细节；伪造 forwarded header 不改变 redirect、
   Secure Cookie 或限流来源。紧急单 key rotation 会立即使旧 token 失效并要求重认证。

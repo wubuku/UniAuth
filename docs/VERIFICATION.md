@@ -106,6 +106,10 @@ python3 -m unittest -v test_app.py
   前后端做联调；联调不能替代两端各自的自动化门禁。
 - 实际 HTTP 验证必须记录端口、profile、数据库目标、关键环境覆盖和观察到的状态码/响应契约。
 - 不得要求用户先代为完成本可自动化的首轮验收。交付信心必须来自测试证据，而不是 review。
+- OAuth provider 出站变更至少覆盖：默认/JDK 路由、标准 proxy 环境变量映射、显式
+  HTTP proxy socket、`DIRECT` 覆盖、非法 URL 启动拒绝、connect/read timeout 和安全
+  失败分类。真实 provider 不使用 authorization code 的自动重放；完整开发栈可用无凭据
+  token 请求返回的预期客户端错误证明网络/TLS/代理链路可达。
 
 真实邮箱登录跨服务浏览器门禁是：
 

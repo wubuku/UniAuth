@@ -66,6 +66,8 @@ app:
     http:
       connect-timeout-ms: ${OAUTH2_HTTP_CONNECT_TIMEOUT_MS:5000}
       read-timeout-ms: ${OAUTH2_HTTP_READ_TIMEOUT_MS:10000}
+      proxy-mode: ${OAUTH2_HTTP_PROXY_MODE:AUTO}
+      proxy-url: ${OAUTH2_HTTP_PROXY_URL:${https_proxy:${HTTPS_PROXY:${http_proxy:${HTTP_PROXY:}}}}}
   email:
     service:
       url: ${EMAIL_SERVICE_URL:http://localhost:8095}

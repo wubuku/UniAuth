@@ -136,10 +136,18 @@ Swagger UI 的当前 Maven WebJar 仍可带来未达到 CVSS 7 阻断线的 DOMP
 | 变更 | 至少执行 |
 |------|----------|
 | migration/schema | Flyway guard、PostgreSQL integration、shared-schema E2E |
-| prod 配置/代理边界 | production guard、production HTTP boundary、readiness |
+| prod 配置/反向代理边界 | production guard、production HTTP boundary、readiness |
+| OAuth provider 出站代理 | OAuth HTTP client 定向测试、ApplicationContext、真实启动方的 provider 可达性预检 |
 | RSA key/kid/JWT | key-file tests、JWT integration、HTTP key rotation、Python contracts |
 | 备份恢复 | `scripts/test-auth-backup-restore-rehearsal.sh` |
 | 依赖/lock/CI | supply-chain self-tests 和完整 `scripts/verify.sh` |
 | 文档链接 | project-docs relative-link checker 和 `git diff --check` |
 
 详细交付标准见[验证指南](VERIFICATION.md)，配置字段见[配置基线](CONFIGURATION.md)。
+
+OAuth provider 出站优先继承标准 `https_proxy` / `http_proxy` 或 JDK 可见的操作系统
+代理，不要求运维把机器地址写进应用配置。显式 `OAUTH2_HTTP_PROXY_URL` 仅用于部署平台
+需要精确覆盖的场景，`OAUTH2_HTTP_PROXY_MODE=DIRECT` 仅用于受控排障。代理范围严格
+限定在 OAuth client，不能借社交登录故障给整个 JVM 设置全局代理。启动器若代表完整
+社交登录栈宣告 ready，还必须通过无凭据 provider token endpoint 可达性探测；本服务的
+通用 readiness 仍只表达 UniAuth 自身及其强依赖状态。

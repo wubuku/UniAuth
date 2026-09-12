@@ -116,6 +116,21 @@ SPRING_PROFILES_ACTIVE=dev \
 ./start.sh
 ```
 
+在需要代理访问 OAuth provider 的网络中，优先使用调用环境或操作系统代理，无需修改
+配置文件：
+
+```bash
+export https_proxy=http://127.0.0.1:<port>
+export http_proxy=http://127.0.0.1:<port>
+./start.sh
+```
+
+`AUTO` 会先读取 `OAUTH2_HTTP_PROXY_URL` 和标准 HTTP(S) proxy 环境变量，再交给 JDK
+默认系统路由。代理只影响 OAuth token/user-info/profile 客户端；不要为了社交登录给
+整个 JVM 添加全局 proxy system properties。需要确认直连行为时，可对单次启动设置
+`OAUTH2_HTTP_PROXY_MODE=DIRECT`。完整优先级和 URL 约束见
+[配置基线](CONFIGURATION.md#oauth-provider-http-边界)。
+
 `dev` 只接受 dev/test/demo 命名数据库；`test` 只接受明确 disposable 的 test/demo
 数据库。自动化验证优先使用 Testcontainers 或 `scripts/test-http-e2e.sh`，不要手工
 创建共享测试库。

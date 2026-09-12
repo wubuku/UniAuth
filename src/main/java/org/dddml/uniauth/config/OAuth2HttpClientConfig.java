@@ -1,6 +1,8 @@
 package org.dddml.uniauth.config;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
@@ -14,17 +16,27 @@ import org.springframework.security.oauth2.core.http.converter.OAuth2AccessToken
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestTemplate;
 
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
+import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 
 @Configuration
 @EnableConfigurationProperties(OAuth2HttpClientProperties.class)
+@Slf4j
 public class OAuth2HttpClientConfig {
 
     @Bean("oauth2RestTemplate")
     RestTemplate oauth2RestTemplate(
             RestTemplateBuilder builder,
             OAuth2HttpClientProperties properties) {
+        log.info(
+                "OAuth2 HTTP client configured: proxy={}, connectTimeoutMs={}, readTimeoutMs={}",
+                properties.proxyRouteDescription(),
+                properties.getConnectTimeoutMs(),
+                properties.getReadTimeoutMs()
+        );
         return boundedBuilder(builder, properties).build();
     }
 
@@ -56,12 +68,42 @@ public class OAuth2HttpClientConfig {
     private RestTemplateBuilder boundedBuilder(
             RestTemplateBuilder builder,
             OAuth2HttpClientProperties properties) {
+        var requestFactoryBuilder = ClientHttpRequestFactoryBuilder.jdk();
+        URI proxyUri = properties.getProxyMode()
+                == OAuth2HttpClientProperties.ProxyMode.DIRECT
+                ? null
+                : properties.proxyUri();
+        ProxySelector proxySelector = proxySelector(properties, proxyUri);
+        if (proxySelector != null) {
+            requestFactoryBuilder = requestFactoryBuilder
+                    .withHttpClientCustomizer(httpClient -> httpClient.proxy(
+                            proxySelector
+                    ));
+        }
         return builder
+                .requestFactoryBuilder(requestFactoryBuilder)
                 .connectTimeout(Duration.ofMillis(
                         properties.getConnectTimeoutMs()
                 ))
                 .readTimeout(Duration.ofMillis(
                         properties.getReadTimeoutMs()
                 ));
+    }
+
+    static ProxySelector proxySelector(
+            OAuth2HttpClientProperties properties,
+            URI proxyUri) {
+        if (properties.getProxyMode()
+                == OAuth2HttpClientProperties.ProxyMode.DIRECT) {
+            return java.net.http.HttpClient.Builder.NO_PROXY;
+        }
+        if (proxyUri != null) {
+            InetSocketAddress proxyAddress = InetSocketAddress.createUnresolved(
+                    proxyUri.getHost(),
+                    proxyUri.getPort()
+            );
+            return ProxySelector.of(proxyAddress);
+        }
+        return null;
     }
 }

@@ -690,6 +690,10 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 外部依赖下载遇到网络阻断时，可使用用户提供的本机 `http_proxy`、`https_proxy`
   和 `all_proxy` 临时注入当前命令；不要把机器专用代理地址写入仓库配置、`.npmrc`
   或可提交的环境文件。
+- OAuth provider 客户端的正常代理入口是标准 `https_proxy` / `http_proxy` 或 JDK
+  可见的系统代理，不要求把代理地址写入应用配置；`OAUTH2_HTTP_PROXY_URL` 是精确覆盖，
+  `OAUTH2_HTTP_PROXY_MODE=DIRECT` 是排障覆盖。该代理只能作用于 OAuth client，禁止
+  为此设置 JVM 全局代理或影响邮件等其他出站客户端。
 - 工作区可能有其他开发者并行修改。绝不能丢弃、覆盖或回滚不是自己创建的改动，
   也绝不能使用 `git stash` 干扰共享工作区。
 - 若其他人的修改导致编译或测试夹具暂时阻塞，只做解除验证阻塞所必需的最小测试

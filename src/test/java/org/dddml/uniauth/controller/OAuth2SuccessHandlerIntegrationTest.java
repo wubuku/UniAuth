@@ -21,6 +21,7 @@ import org.dddml.uniauth.service.TokenSessionTransactionService;
 import org.dddml.uniauth.service.UserService;
 import org.dddml.uniauth.support.PostgreSqlIntegrationTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +29,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.mock.mockito.SpyBean;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -52,6 +55,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -60,6 +64,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.web.client.ResourceAccessException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.dddml.uniauth.support.AuthIntegrationTestSupport.issueTokens;
@@ -77,6 +82,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@ExtendWith(OutputCaptureExtension.class)
 class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
 
     private static final String BINDING_SESSION_ATTRIBUTE =
@@ -514,7 +520,8 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
     }
 
     @Test
-    void oauth2FailureHandlerUsesTheConfiguredFrontendLoginPage() throws Exception {
+    void oauth2FailureHandlerUsesTheConfiguredFrontendLoginPage(
+            CapturedOutput output) throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRequestURI("/oauth2/callback");
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -522,7 +529,15 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
         failureHandler.onAuthenticationFailure(
                 request,
                 response,
-                new AuthenticationServiceException("provider rejected request")
+                new OAuth2AuthenticationException(
+                        new OAuth2Error("invalid_token_response"),
+                        new ResourceAccessException(
+                                "sensitive-code=must-not-be-logged",
+                                new HttpConnectTimeoutException(
+                                        "sensitive-provider-url"
+                                )
+                        )
+                )
         );
 
         assertThat(response.getStatus()).isEqualTo(302);
@@ -530,6 +545,39 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
                 .isEqualTo(
                         "https://frontend.example.test/console/login?error=oauth2_failed"
                 );
+        assertThat(output)
+                .contains(
+                        "OAuth2 login failed: errorCode=invalid_token_response,"
+                                + " category=CONNECT_TIMEOUT,"
+                                + " causeType=HttpConnectTimeoutException"
+                )
+                .doesNotContain("sensitive-code")
+                .doesNotContain("sensitive-provider-url");
+    }
+
+    @Test
+    void oauth2FailureHandlerDoesNotLogUnsafeProviderErrorCodes(
+            CapturedOutput output) throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/oauth2/callback");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        failureHandler.onAuthenticationFailure(
+                request,
+                response,
+                new OAuth2AuthenticationException(
+                        new OAuth2Error("invalid\nforged-log-entry")
+                )
+        );
+
+        assertThat(response.getStatus()).isEqualTo(302);
+        assertThat(output)
+                .contains(
+                        "OAuth2 login failed: errorCode=unavailable,"
+                                + " category=OAUTH_PROTOCOL,"
+                                + " causeType=OAuth2AuthenticationException"
+                )
+                .doesNotContain("forged-log-entry");
     }
 
     @Test

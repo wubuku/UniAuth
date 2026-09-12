@@ -57,6 +57,7 @@
 
 | 文档 | 状态 | 说明 |
 |------|------|------|
+| [OAuth-provider出站代理与失败诊断实施记录-2026-09-12.md](OAuth-provider出站代理与失败诊断实施记录-2026-09-12.md) | Draft | Google token 交换出站超时的证据、OAuth 专用代理边界、安全诊断和验收账本 |
 | [Spring_Boot_OAuth2_重定向问题.md](Spring_Boot_OAuth2_重定向问题.md) | Reference | 候选方案集合，不是当前实现说明 |
 | [oauth2-redirect-issue-analysis.md](oauth2-redirect-issue-analysis.md) | Historical | 记录已修复的硬编码前端地址问题；当前 redirect 与绑定边界见 [F3 实施记录](F3_OAUTH_WEB3_CONTRACT_HARDENING_IMPLEMENTATION.md) |
 | [OAuth绑定与X用户资料回调加固实施记录-2026-08-11.md](OAuth绑定与X用户资料回调加固实施记录-2026-08-11.md) | Historical | OAuth/绑定加固记录；内容已改写为 UniAuth 通用契约，不代表对特定消费方的依赖 |

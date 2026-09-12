@@ -215,9 +215,13 @@ public class SecurityConfig {
     public AuthenticationFailureHandler oauth2FailureHandler() {
         return (request, response, exception) -> {
             String oauthErrorCode = oauthErrorCode(exception);
+            OAuth2FailureDiagnostics.Summary diagnostics =
+                    OAuth2FailureDiagnostics.summarize(exception);
             log.warn(
-                    "OAuth2 login failed: errorCode={}",
-                    oauthErrorCode == null ? "unavailable" : oauthErrorCode
+                    "OAuth2 login failed: errorCode={}, category={}, causeType={}",
+                    OAuth2FailureDiagnostics.safeErrorCode(oauthErrorCode),
+                    diagnostics.category(),
+                    diagnostics.causeType()
             );
             boolean binding = isBindingRequest(request)
                     || isBindingCallback(request);
