@@ -1,6 +1,6 @@
 # OAuth provider 出站代理与失败诊断：实施记录
 
-> 状态：实现、自动化门禁与连续三轮审查完成，待 Circle 隔离栈重启和真实隧道验收
+> 状态：实现、自动化门禁、连续三轮审查、Circle 隔离栈与真实隧道验收全部完成
 > 日期：2026-09-12
 > 范围：authorization-code token 交换、标准 user-info、GitHub/X 补充 profile 请求
 
@@ -95,3 +95,27 @@ OAuth2 login failed: errorCode=invalid_token_response
 本次自动化不重放真实 authorization code，也不打印 provider URL query、OAuth code、
 token、client secret、Cookie 或响应正文。真实 provider 可达性和浏览器回跳由 Circle
 一键开发栈在 UniAuth 提交后统一验证。
+
+## Circle 隔离栈与真实登录验收
+
+UniAuth `main` 修订 `f8cfe1247a1d1de5dc4f51a9ad86e5c76903258c` 发布后，在 Circle
+长期 worktree 中不设置临时 proxy 环境变量，执行：
+
+```bash
+./dev-circle.sh --force-kill --skip-rag
+```
+
+启动器自动读取 macOS 系统 HTTP/HTTPS proxy `127.0.0.1:1235`。停止旧栈前和新
+UniAuth readiness 后的 Google token endpoint 无凭据探测均得到预期 `HTTP 400`；
+新进程日志记录 `proxy=http@127.0.0.1:1235`，实际启动 revision 与上述提交一致。
+scenemill、UniAuth、Circle PWA、web-studio、S3 readiness、JWKS、capabilities 和
+OAuth failure handoff 全部门禁通过，启动结果为 `ready`。
+
+Playwright 只使用 DOM、URL 和网络证据确认 Circle 登录页可见 Google 登录按钮，点击后
+到达 Google 官方登录页；授权请求使用外网回调
+`https://api.u2511175.nyat.app:55139/oauth2/callback`、PKCE challenge 和
+`openid profile email` scopes。未使用截图，也未自动输入或保存真实 Google 账号凭据。
+
+用户于 2026-09-12 手动完成真实社交账号授权与回跳，确认登录已经恢复正常。该结果补齐
+自动化不能安全伪造的 authorization code、provider token 交换和最终 Circle session
+建立证据。
