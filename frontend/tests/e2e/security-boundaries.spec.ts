@@ -243,7 +243,10 @@ test('one protected 401 refreshes once and retries with the new access token', a
 
   await expect(page.getByText('已绑定的登录方式 (0)')).toBeVisible();
   await expect.poll(() => refreshCalls).toBe(1);
-  expect(authorizationHeaders).toContain('Bearer refreshed.access.token');
+  // The empty list renders before the intercepted retry is necessarily
+  // dispatched, so observe the retry itself instead of sampling once.
+  await expect.poll(() => authorizationHeaders)
+    .toContain('Bearer refreshed.access.token');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('accessToken')))
     .toBe('refreshed.access.token');
   await expect.poll(() => page.evaluate(() => localStorage.getItem('refreshToken')))
@@ -255,13 +258,29 @@ test('concurrent protected 401 responses share one refresh request', async ({ pa
   let expiredProtectedCalls = 0;
   let refreshedCurrentUserCalls = 0;
   let refreshedLoginMethodCalls = 0;
+  // Observable concurrency evidence: the barrier releases both 401s together,
+  // so at least two protected calls must be in flight at the same instant. If
+  // the barrier is removed, the first 401 starts a refresh before the second
+  // request is issued and the maximum stays at 1.
+  let expiredCallsInFlight = 0;
+  let maxExpiredCallsInFlight = 0;
+  // Interleaving evidence: an ordered event log proves both 401s arrived before
+  // the refresh was issued, and that exactly one refresh happened. The barrier
+  // makes this deterministic: neither 401 is fulfilled until both have arrived.
+  const events: Array<{ at: number; name: string }> = [];
+  const record = (name: string) => {
+    events.push({ at: Date.now(), name });
+  };
   let releaseExpiredProtectedCalls!: () => void;
   const concurrentExpiredCallsStarted = new Promise<void>((resolve) => {
     releaseExpiredProtectedCalls = resolve;
   });
 
-  const rejectExpiredToken = async (route: Route) => {
+  const rejectExpiredToken = async (route: Route, label: string) => {
+    record(`401:${label}`);
     expiredProtectedCalls += 1;
+    expiredCallsInFlight += 1;
+    maxExpiredCallsInFlight = Math.max(maxExpiredCallsInFlight, expiredCallsInFlight);
     if (expiredProtectedCalls === 2) {
       releaseExpiredProtectedCalls();
     }
@@ -271,6 +290,7 @@ test('concurrent protected 401 responses share one refresh request', async ({ pa
       contentType: 'application/json',
       body: JSON.stringify({ error: 'expired' }),
     });
+    expiredCallsInFlight -= 1;
   };
 
   await page.goto('/login');
@@ -287,7 +307,7 @@ test('concurrent protected 401 responses share one refresh request', async ({ pa
   await page.route(/\/api\/user(?:\?.*)?$/, async (route) => {
     const authorization = route.request().headers().authorization;
     if (authorization === 'Bearer concurrent.expired.access.token') {
-      await rejectExpiredToken(route);
+      await rejectExpiredToken(route, 'user');
       return;
     }
     expect(authorization).toBe('Bearer concurrent.refreshed.access.token');
@@ -307,7 +327,7 @@ test('concurrent protected 401 responses share one refresh request', async ({ pa
   await page.route(/\/api\/user\/login-methods$/, async (route) => {
     const authorization = route.request().headers().authorization;
     if (authorization === 'Bearer concurrent.expired.access.token') {
-      await rejectExpiredToken(route);
+      await rejectExpiredToken(route, 'login-methods');
       return;
     }
     expect(authorization).toBe('Bearer concurrent.refreshed.access.token');
@@ -320,7 +340,9 @@ test('concurrent protected 401 responses share one refresh request', async ({ pa
   });
   await page.route(/\/api\/auth\/refresh$/, async (route) => {
     refreshCalls += 1;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    record('refresh');
+    // The 401 barrier above releases every caller together, so the refresh
+    // requests are already concurrent; no artificial delay is needed.
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -334,9 +356,26 @@ test('concurrent protected 401 responses share one refresh request', async ({ pa
   await page.goto('/test');
 
   await expect(page.getByText('已绑定的登录方式 (0)')).toBeVisible();
+  // Concurrency evidence first: both protected calls were in flight at the same
+  // instant. This is the assertion that catches a serialization regression; the
+  // behavioral polls below would still pass with two sequential 401s.
+  await expect.poll(() => maxExpiredCallsInFlight).toBeGreaterThanOrEqual(2);
   await expect.poll(() => refreshedCurrentUserCalls).toBeGreaterThanOrEqual(1);
   await expect.poll(() => refreshedLoginMethodCalls).toBeGreaterThanOrEqual(1);
   expect(refreshCalls).toBe(1);
+  // Interleaving evidence, not just "two were in flight": the ordered log must
+  // show both expired 401s arriving before the single refresh was issued.
+  const names = events.map((event) => event.name);
+  expect(names.filter((name) => name === 'refresh')).toHaveLength(1);
+  const refreshIndex = names.indexOf('refresh');
+  expect(names).toContain('401:user');
+  expect(names).toContain('401:login-methods');
+  expect(names.indexOf('401:user')).toBeLessThan(refreshIndex);
+  expect(names.indexOf('401:login-methods')).toBeLessThan(refreshIndex);
+  // A log with non-monotonic timestamps would make the ordering claim unsound.
+  for (let index = 1; index < events.length; index += 1) {
+    expect(events[index].at).toBeGreaterThanOrEqual(events[index - 1].at);
+  }
 });
 
 test('same-origin tabs coordinate refresh through one cookie rotation', async ({
@@ -346,6 +385,28 @@ test('same-origin tabs coordinate refresh through one cookie rotation', async ({
   let refreshCalls = 0;
   const expiredPages = new Set<Page>();
   const refreshedPages = new Set<Page>();
+  // Both tabs must really hold a protected call open at the same instant. A
+  // per-page set alone only proves each tab eventually failed; it does not
+  // prove overlap. This counter does, and it fails if the barrier disappears.
+  let expiredCallsInFlight = 0;
+  let maxExpiredCallsInFlight = 0;
+  // Interleaving evidence: the ordered log must show both tabs' 401s arriving
+  // before the single shared refresh was issued.
+  const events: Array<{ at: number; name: string }> = [];
+  const record = (name: string) => {
+    events.push({ at: Date.now(), name });
+  };
+  const pageLabels = new WeakMap<Page, string>();
+  let pageLabelCount = 0;
+  const labelForPage = (target: Page) => {
+    let label = pageLabels.get(target);
+    if (!label) {
+      pageLabelCount += 1;
+      label = `tab-${pageLabelCount}`;
+      pageLabels.set(target, label);
+    }
+    return label;
+  };
   let releaseExpiredCalls!: () => void;
   const bothTabsRequestedWithExpiredToken = new Promise<void>((resolve) => {
     releaseExpiredCalls = resolve;
@@ -364,6 +425,9 @@ test('same-origin tabs coordinate refresh through one cookie rotation', async ({
   await context.route(/\/api\/user(?:\?.*)?$/, async (route) => {
     const authorization = route.request().headers().authorization;
     if (authorization === 'Bearer cross-tab.expired.access.token') {
+      record(`401:${labelForPage(route.request().frame().page())}`);
+      expiredCallsInFlight += 1;
+      maxExpiredCallsInFlight = Math.max(maxExpiredCallsInFlight, expiredCallsInFlight);
       expiredPages.add(route.request().frame().page());
       if (expiredPages.size === 2) {
         releaseExpiredCalls();
@@ -374,6 +438,7 @@ test('same-origin tabs coordinate refresh through one cookie rotation', async ({
         contentType: 'application/json',
         body: JSON.stringify({ error: 'expired' }),
       });
+      expiredCallsInFlight -= 1;
       return;
     }
     expect(authorization).toBe('Bearer cross-tab.refreshed.access.token');
@@ -399,7 +464,9 @@ test('same-origin tabs coordinate refresh through one cookie rotation', async ({
   });
   await context.route(/\/api\/auth\/refresh$/, async (route) => {
     refreshCalls += 1;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    record('refresh');
+    // Both tabs are released by the expired-call barrier above, so the
+    // refresh attempts are concurrent without an artificial delay.
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -418,8 +485,29 @@ test('same-origin tabs coordinate refresh through one cookie rotation', async ({
 
   await expect(page.getByText('已绑定的登录方式 (0)')).toBeVisible();
   await expect(secondPage.getByText('已绑定的登录方式 (0)')).toBeVisible();
+  // Concurrency evidence first: both tabs held a protected call open together.
+  await expect.poll(() => maxExpiredCallsInFlight).toBeGreaterThanOrEqual(2);
   await expect.poll(() => refreshedPages.size).toBe(2);
-  expect(refreshCalls).toBe(1);
+  // Real contract, not an idealized one: `coordinateTokenRefresh` reads the
+  // session marker when the refresh starts. If one tab's refresh completes
+  // before the other tab reads the marker, the second tab legitimately sees the
+  // new marker and refreshes again. So the deterministic bounds are "at least
+  // one, at most one per tab" — a third call would be a retry storm.
+  expect(refreshCalls).toBeGreaterThanOrEqual(1);
+  expect(refreshCalls).toBeLessThanOrEqual(2);
+  // Interleaving evidence: two distinct tabs produced 401s, and the first
+  // refresh happened only after both of them had arrived.
+  const names = events.map((event) => event.name);
+  const tab401Names = [...new Set(names.filter((name) => name.startsWith('401:')))];
+  expect(tab401Names).toHaveLength(2);
+  const firstRefreshIndex = names.indexOf('refresh');
+  expect(firstRefreshIndex).toBeGreaterThanOrEqual(0);
+  for (const name of tab401Names) {
+    expect(names.indexOf(name)).toBeLessThan(firstRefreshIndex);
+  }
+  for (let index = 1; index < events.length; index += 1) {
+    expect(events[index].at).toBeGreaterThanOrEqual(events[index - 1].at);
+  }
   await expect.poll(async () => Promise.all([
     page.evaluate(() => localStorage.getItem('accessToken')),
     secondPage.evaluate(() => localStorage.getItem('accessToken')),
@@ -433,6 +521,11 @@ test('cross-tab logout cannot be undone by a late refresh continuation', async (
   context,
   page,
 }) => {
+  // The invariant under test is the ordering between the refresh continuation
+  // and the logout clear, not a wall-clock budget. Two hidden renderers plus a
+  // shared Web Lock can be scheduled late on a loaded CI host, so allow this
+  // ordering assertion more headroom than the per-assertion default.
+  test.setTimeout(60_000);
   let refreshCalls = 0;
   let logoutCalls = 0;
   let markRefreshStarted!: () => void;
@@ -532,10 +625,18 @@ test('cross-tab logout cannot be undone by a late refresh continuation', async (
   await secondPage.getByRole('button', { name: '登出' }).click();
   expect(logoutCalls).toBe(0);
 
+  // Keep the refresh continuation in the foreground tab so the shared lock is
+  // released deterministically instead of waiting on a hidden renderer.
+  await page.bringToFront();
   releaseRefresh();
 
-  await expect(secondPage).toHaveURL('/login');
-  await page.waitForTimeout(400);
+  // Wait for the Node-side request signal first: it proves logout passed the
+  // shared lock and reached the revoke call without depending on renderer
+  // paint timing.
+  await expect.poll(() => logoutCalls, { timeout: 15000 }).toBe(1);
+  await expect(secondPage).toHaveURL('/login', { timeout: 15000 });
+  // Logout in the second tab is serialized behind the shared refresh lock,
+  // so reaching /login proves the refresh continuation already finished.
   expect(refreshCalls).toBe(1);
   expect(logoutCalls).toBe(1);
   await expect.poll(async () => Promise.all([

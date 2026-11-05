@@ -26,9 +26,11 @@
 | 数据库 | PostgreSQL 16-only；自动化固定 `postgres:16.13` |
 | Migration | Flyway V1 baseline + V2 + V3 + V4 + V5 + V6 + V7 + V8，history `uniauth_flyway_schema_history` |
 | 邮件数据库布局 | 默认独立数据库；显式 `shared-uniauth` 可与 UniAuth 共用 `public` schema，两侧 relation 名无冲突并使用独立 Flyway history |
-| Java 验证 | 当前完整基线 270 tests，0 failures/errors/skips |
+| Java 验证 | 当前完整基线 335 tests，0 failures/errors/skips |
+| 前端验证 | Vitest 组件/页面单测 22/22（4 个文件）；ESLint、`tsc --noEmit`、生产构建通过 |
+| 跨端契约 | `contracts/api-wire-contract.json` 被 Java 集成测试（3）和前端 TS 类型测试（3）双向消费 |
 | 邮件参考服务 | F5 完整基线 154 tests，0 failures/errors/skips |
-| Shared-schema E2E | 4/4；UniAuth/邮件服务两种启动顺序、独立 history 和 baseline V0 |
+| Shared-schema E2E | 8/8；UniAuth/邮件服务两种启动顺序、独立 history 和 baseline V0 |
 | HTTP E2E | 17/17；含四条安全链 CORS、邮件真实/失败路径和紧急签名 key rotation/revoke |
 | Flyway baseline guard | 17/17 |
 | Playwright | 31 个 Mock 浏览器测试 + 2 个生产构建测试 + 1 个真实邮箱登录跨服务 E2E |

@@ -144,7 +144,9 @@ PYTHON_BIN=python3 scripts/verify-python-supply-chain.sh
 ```
 
 当前 `cryptography 48.0.1` 的 3 个限时 audit 例外记录在
-`pip-audit-exceptions.json`，均于 2026-10-01 UTC 到期；对应路径不被本示例使用。
+`pip-audit-exceptions.json`，到期日为 `2027-02-01` UTC；对应路径不被本示例使用。
+`PyJWT 2.15.1` 和 `Werkzeug 3.1.9` 已升级，覆盖 2026-10 后新披露的 advisory。
+锁文件使用 `pip-compile --no-header` 生成，避免把本机 `pip` 参数写入头部。
 
 真实联调可通过以下方式测试受保护端点：
 

@@ -69,6 +69,13 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    @Autowired
+    private org.dddml.uniauth.service.TokenSessionTransactionService
+            tokenSessionTransactionService;
+
+    @Autowired
+    private org.dddml.uniauth.service.TokenIssuanceFacade tokenIssuanceFacade;
+
     @Test
     void signedNonceCreatesOneWeb3UserAndCannotBeReplayed() throws Exception {
         ECKeyPair keyPair = Keys.createEcKeyPair();
@@ -188,6 +195,62 @@ class Web3AuthenticationIntegrationTest extends PostgreSqlIntegrationTest {
                 .content(secondChallenge.requestBody()))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.errorCode").value("BINDING_FAILED"));
+    }
+
+    @Test
+    void staleAuthenticationCannotBindWalletButFreshOneCan() throws Exception {
+        String username = "web3-bind-stale-auth";
+        String password = "web3-bind-password";
+        String userId = createLocalUser(
+                username,
+                "web3-bind-stale-auth@example.invalid",
+                password
+        ).getId();
+
+        String staleAccessToken = tokenIssuanceFacade.sign(
+                tokenSessionTransactionService.create(
+                        userId,
+                        Instant.now().minusSeconds(601),
+                        null
+                )
+        ).accessToken();
+
+        ECKeyPair keyPair = Keys.createEcKeyPair();
+        String walletAddress = "0x" + Keys.getAddress(keyPair.getPublicKey());
+        SignedChallenge challenge = requestSignedChallenge(walletAddress, keyPair);
+
+        mockMvc.perform(post("/api/auth/web3/bind")
+                        .header("Authorization", "Bearer " + staleAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(challenge.requestBody()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("RECENT_AUTH_REQUIRED"));
+
+        assertThat(loginMethodRepository.findByUserIdAndAuthProvider(
+                userId,
+                UserLoginMethod.AuthProvider.WEB3
+        )).isEmpty();
+
+        String freshAccessToken = tokenIssuanceFacade.sign(
+                tokenSessionTransactionService.create(
+                        userId,
+                        Instant.now(),
+                        null
+                )
+        ).accessToken();
+
+        mockMvc.perform(post("/api/auth/web3/bind")
+                        .header("Authorization", "Bearer " + freshAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(challenge.requestBody()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.errorCode").value("SUCCESS"));
+
+        assertThat(loginMethodRepository.findByUserIdAndAuthProvider(
+                userId,
+                UserLoginMethod.AuthProvider.WEB3
+        )).get().extracting(UserLoginMethod::getProviderUserId)
+                .isEqualTo(walletAddress);
     }
 
     private UserEntity createLocalUser(

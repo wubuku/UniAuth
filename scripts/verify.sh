@@ -19,6 +19,8 @@ VERIFICATION_ARTIFACTS_SUCCESS_PRESERVED=false
 export TESTCONTAINERS_RYUK_DISABLED="${TESTCONTAINERS_RYUK_DISABLED:-true}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmjs.org/}"
+HEALTH_DIR="$SOURCE_PROJECT_DIR/.local/uniauth/health"
+export APPLICATION_READINESS_METRICS_FILE="${APPLICATION_READINESS_METRICS_FILE:-$HEALTH_DIR/readiness.tsv}"
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}localhost,127.0.0.1,::1"
 export no_proxy="${no_proxy:+${no_proxy},}localhost,127.0.0.1,::1"
 
@@ -32,7 +34,7 @@ source_fingerprint() {
         while IFS= read -r -d '' path; do
             printf 'untracked:%s\0' "$path"
             shasum -a 256 "./$path"
-        done < <(git ls-files --others --exclude-standard -z | sort -z)
+        done < <(git ls-files --others --exclude-standard -z | LC_ALL=C sort -z)
     ) | shasum -a 256 | awk '{print $1}'
 }
 
@@ -43,7 +45,7 @@ write_source_file_list() {
             if [ -e "$path" ] || [ -L "$path" ]; then
                 printf '%s\0' "$path"
             fi
-        done < <(git ls-files -co --exclude-standard -z | sort -z)
+        done < <(git ls-files -co --exclude-standard -z | LC_ALL=C sort -z)
     )
 }
 
@@ -156,10 +158,36 @@ capture_root_dependency_reports() {
     done
 }
 
+record_health_status() {
+    local exit_code="$1"
+
+    mkdir -p "$HEALTH_DIR" 2>/dev/null || {
+        echo "ERROR: cannot create health directory $HEALTH_DIR" >&2
+        return 1
+    }
+    if ! "${PYTHON_BIN:-python3}" "$SOURCE_PROJECT_DIR/scripts/health-snapshot.py" \
+            --record-gate \
+            --project-dir "$PROJECT_DIR" \
+            --output-dir "$HEALTH_DIR" \
+            --exit-code "$exit_code" \
+            --run-id "$RUN_ID" \
+            --source-fingerprint "${SOURCE_FINGERPRINT:-unavailable}" \
+            --surefire-dir "$ROOT_SUREFIRE_REPORTS_SNAPSHOT" \
+            --backend-csv "$HEALTH_DIR/backend-jacoco.csv" >/dev/null; then
+        echo "ERROR: failed to record health gate status" >&2
+        return 1
+    fi
+}
+
 cleanup() {
     local exit_code="$1"
     trap - EXIT INT TERM
     set +e
+    if ! record_health_status "$exit_code"; then
+        if [ "$exit_code" -eq 0 ]; then
+            exit_code=1
+        fi
+    fi
     if verification_artifacts_need_preservation \
             "$VERIFICATION_ARTIFACTS_ENABLED" \
             "$VERIFICATION_ARTIFACTS_SUCCESS_PRESERVED" \
@@ -205,8 +233,42 @@ if ! docker info >/dev/null 2>&1; then
     echo "ERROR: Docker is unavailable" >&2
     exit 1
 fi
+chrome_is_available() {
+    local candidate
+    local version_output
+    local rejected=""
+
+    if [ "$(uname -s)" = "Darwin" ] \
+            && { [ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ] \
+                || [ -x "$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]; }; then
+        return 0
+    fi
+    for candidate in google-chrome google-chrome-stable chrome; do
+        command -v "$candidate" >/dev/null 2>&1 || continue
+        version_output=""
+        if version_output="$("$candidate" --version 2>/dev/null)" \
+                && printf '%s' "$version_output" | grep -qi 'google chrome'; then
+            return 0
+        fi
+        # Collect candidates instead of printing per-candidate noise; a single
+        # Chromium binary is only reported once the whole list has failed.
+        rejected="${rejected}  - $candidate: ${version_output:-no --version output}"$'\n'
+    done
+    if [ -n "$rejected" ]; then
+        echo "ERROR: PATH candidates are not Google Chrome; Playwright channel 'chrome' requires the real Google Chrome build:" >&2
+        printf '%s' "$rejected" >&2
+    fi
+    return 1
+}
+if ! chrome_is_available; then
+    echo "ERROR: frontend/playwright.config.ts pins channel 'chrome', but Google Chrome is not installed." >&2
+    echo "Install Google Chrome, or run: (cd frontend && npx playwright install chrome)" >&2
+    exit 1
+fi
 
 SOURCE_FINGERPRINT="$(source_fingerprint)"
+mkdir -p "$HEALTH_DIR" 2>/dev/null || true
+: >"$APPLICATION_READINESS_METRICS_FILE" 2>/dev/null || true
 write_source_file_list >"$SOURCE_FILE_LIST"
 mkdir -p "$PROJECT_DIR"
 rsync -a \
@@ -241,11 +303,32 @@ bash -n \
     start-with-frontend.sh \
     scripts/*.sh \
     scripts/email-login-e2e/*.sh \
+    scripts/lib/*.sh \
     reference/email-service/start.sh \
-    reference/email-service/scripts/*.sh
+    reference/email-service/scripts/*.sh \
+    reference/email-service/scripts/lib/*.sh
 bash scripts/test-verification-artifacts-guard.sh
 bash scripts/test-supply-chain-guards.sh
 bash scripts/test-sensitive-artifact-scan.sh
+"$PYTHON_BIN" scripts/check-test-rot.py
+bash scripts/test-test-rot-guard.sh
+"$PYTHON_BIN" scripts/check-readiness-parity.py
+bash scripts/test-readiness-parity.sh
+bash scripts/test-mutation-baseline.sh
+bash scripts/test-health-snapshot.sh
+bash scripts/test-coverage-ratchet.sh
+"$PYTHON_BIN" - <<'PY'
+from pathlib import Path
+
+files = sorted(
+    path
+    for root in (Path("scripts"), Path("python-resource-server"))
+    for path in root.rglob("*.py")
+)
+for path in files:
+    compile(path.read_text(encoding="utf-8"), str(path), "exec")
+print(f"Python compile check passed for {len(files)} file(s)")
+PY
 
 echo "Verification 2/15: frontend clean dependency install"
 (
@@ -284,6 +367,9 @@ capture_root_dependency_reports
 echo "Verification 7/15: Java integration tests"
 mvn test
 capture_root_surefire_reports
+"$VERIFIED_PYTHON_BIN" scripts/coverage-ratchet.py --backend-only
+mkdir -p "$HEALTH_DIR" 2>/dev/null || true
+cp "$PROJECT_DIR/target/site/jacoco/jacoco.csv" "$HEALTH_DIR/backend-jacoco.csv" 2>/dev/null || true
 
 echo "Verification 8/15: reference email-service verification"
 EMAIL_SERVICE_ARTIFACTS_DIR=""
@@ -291,6 +377,7 @@ if [ "$VERIFICATION_ARTIFACTS_ENABLED" = "true" ]; then
     EMAIL_SERVICE_ARTIFACTS_DIR="$VERIFICATION_ARTIFACTS_DIR/$RUN_ID/email-service"
 fi
 EMAIL_SERVICE_VERIFICATION_ARTIFACTS_DIR="$EMAIL_SERVICE_ARTIFACTS_DIR" \
+    EMAIL_SERVICE_HEALTH_DIR="$HEALTH_DIR" \
     reference/email-service/scripts/verify.sh
 if [ "$VERIFICATION_ARTIFACTS_ENABLED" = "true" ]; then
     email_status_file="$(
@@ -330,13 +417,15 @@ scripts/test-http-e2e.sh
 scripts/test-flyway-baseline-guard.sh
 scripts/test-auth-backup-restore-rehearsal.sh
 
-echo "Verification 10/15: frontend lint, typecheck, and production build"
+echo "Verification 10/15: frontend lint, typecheck, unit tests, and production build"
 (
     cd frontend
     npm run lint
     npx tsc --noEmit
+    npm run test:unit:coverage
     npm run build
 )
+"$VERIFIED_PYTHON_BIN" scripts/coverage-ratchet.py --frontend-only
 [ -f "$FRONTEND_BUILD_DIR/index.html" ] \
     || { echo "ERROR: frontend build output is missing: $FRONTEND_BUILD_DIR/index.html" >&2; exit 1; }
 

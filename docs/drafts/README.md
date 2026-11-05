@@ -29,6 +29,12 @@
 | [HARDENING_IMPLEMENTATION_PLAN.md](HARDENING_IMPLEMENTATION_PLAN.md) | Reference | 历史风险路线图；加固阶段已结束，不再驱动活动批次 |
 | [NEXT_HARDENING_IMPLEMENTATION_PLAN.md](NEXT_HARDENING_IMPLEMENTATION_PLAN.md) | Historical | 既有测试优先批次和验收记录；不再驱动开放循环 |
 
+## 测试与验收
+
+| 文档 | 状态 | 用途 |
+|------|------|------|
+| [TEST_HARDENING_IMPLEMENTATION.md](TEST_HARDENING_IMPLEMENTATION.md) | Reference | 2026-11-04 测试与验收底座盘点、缺口、实施切片、供应链决策和真实门禁数字；第 8 节记录 2026-11-05 第二批（Vitest 组件单测、确定性同步、覆盖盲区收敛）；第 9 节记录第三批（页面/路由测试、跨端 wire 契约、TEST_MAP、确定性清扫与 flaky 复跑入口）；第 10 节记录第四批（JaCoCo/Vitest 覆盖率报告、失败关闭补强、Vitest 单例隔离、`navigateTo` 接缝与定时 flaky job）；第 11 节记录第五批（Maven 随机顺序、Playwright 乱序、覆盖率棘轮、作用域 PIT、access-token 直接单测、CI 生产/HTTP 探测扩展与 `CustomUserDetailsService` 可达性证明）；第 12 节记录第六批（PostgreSQL 就绪抖动根因与自适应修复、测试腐化守卫、`docs/TESTING.md`、变异测试基线与每周 CI、两次完整门禁）；第 13 节记录第七批（7 处固定等待改为确定性等待并清空基线、邮件组件就绪 helper 统一、`scripts/verify-fast.sh`、最慢用例分析、根与邮件门禁复跑）；第 14 节记录第八批（就绪脚本标记化一致性守卫、组件应用启动有界轮询、前端并发可观测证据、邮件侧作用域 PIT 基线与 `CustomUserDetailsService` 复查）；第 15 节记录第九批（共享函数 shadow-definition 规则、前端 401/refresh 事件序列交错断言、90s/60s 就绪预算实测校准、`scripts/health-snapshot.py` 与新增脚本负向自测）；第 16 节记录第十批（前端运行时 JSON 报告口径、STALE 语义、shadow 写法变体、跨标签刷新契约确认、反向审计与门禁复跑）；第 17 节记录第十一批（独立审计 12 条逐条核实、Web3 source/global 容量 shell E2E、CSP 生产边界断言与响应头过滤器顺序修复、覆盖率/变异/腐化守卫缺键失败关闭、Chrome 预检与组件门禁记录）；第 18 节记录第十二批（组件记录新鲜度与组件门禁指纹校验、变异类级字段必填、Flyway 期望版本由迁移目录推导、Chrome 品牌身份预检、200/302 关键响应头单值断言）；第 19 节记录第十三批（根/组件变异守卫顶层与 `classes` 失败关闭、Flyway 行数过滤 repeatable/baseline、组件 mtime 与指纹同文件集、组件记录缺失为 MISSING、302 五头同构与 Chrome 预检噪声） |
+
 ## 邮箱与密码
 
 | 文档 | 状态 | 说明 |

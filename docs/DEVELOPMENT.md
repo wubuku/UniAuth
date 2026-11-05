@@ -24,6 +24,23 @@
 
 ## 无启动构建
 
+日常重构的快速反馈入口（编译 + 后端 `mvn test` + 前端 lint/tsc/Vitest，实测约
+126s，不含任何 E2E，不能替代完整门禁）：
+
+```bash
+PYTHON_BIN=python3 scripts/verify-fast.sh
+```
+
+修改 PostgreSQL 就绪 helper（根或邮件组件任一副本）时追加：
+
+```bash
+python3 scripts/check-readiness-parity.py
+bash scripts/test-readiness-parity.sh
+```
+
+两份 helper 只有 `BEGIN/END SHARED POSTGRES READINESS` 标记内必须逐行一致；组件
+专有行为写到标记外。完整门禁阶段 1 会自动执行这两条。
+
 后端编译与 Maven 测试生命周期：
 
 ```bash
@@ -145,7 +162,8 @@ export http_proxy=http://127.0.0.1:<port>
 1. 找到 controller 对应的 service/repository/entity。
 2. 检查请求是否落入 `/api/auth/**` 公开链或 `/api/**` 资源服务器链。
 3. 检查 cookie、CORS、JWT 和 schema 的跨模块影响。
-4. 补测试后运行 [验证指南](VERIFICATION.md) 中的检查。
+4. 补测试后运行 [验证指南](VERIFICATION.md) 中的检查；测试放哪、用哪种类型、
+   夹具和禁止项见 [测试约定](TESTING.md)。
 
 ### 前端
 

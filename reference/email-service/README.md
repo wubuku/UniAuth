@@ -377,7 +377,8 @@ scripts/verify.sh
 
 统一入口执行：
 
-- clean compile/test-compile 和完整 Maven 测试。
+- shell 语法检查、`scripts/test-application-readiness.sh`（固定“超时不是启动失败
+  成立”的语义）和完整 Maven 测试。
 - runtime guard 配置拒绝矩阵。
 - 真实 JAR + HTTP + disposable PostgreSQL Shell E2E。
 - dirty schema、V2 坏数据、V3 生命周期规范化和 forward-fix Flyway guard。
@@ -388,6 +389,19 @@ scripts/verify.sh
 - 根统一门槛通过仓库外的 `EMAIL_SERVICE_VERIFICATION_ARTIFACTS_DIR` 收集本快照的
   Surefire XML 和退出状态，并在邮件阶段返回后立即检查；artifact 写失败、缺少
   报告或非零子状态都必须失败关闭。
+
+作用域变异探针（不在统一入口内，需要 JDK 21；本机约 6 秒）：
+
+```bash
+cd reference/email-service
+JAVA_HOME=/path/to/jdk-21 \
+  mvn -Pmutation-testing test-compile org.pitest:pitest-maven:mutationCoverage
+python3 scripts/check-mutation-baseline.py
+```
+
+它只覆盖 `EmailApiKeyFilter`、`EmailResponseSecurityFilter`、`EmailRateLimiter`；
+当前基线 39 mutants / 31 killed / 0 no-coverage。`EmailService` 的主要保护在
+ApplicationContext/GreenMail E2E，纳入探针只会得到低覆盖的假低分，因此不在作用域内。
 
 ApplicationContext/PostgreSQL/SMTP 覆盖：
 

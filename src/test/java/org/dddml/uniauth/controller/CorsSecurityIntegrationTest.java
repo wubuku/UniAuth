@@ -81,6 +81,25 @@ class CorsSecurityIntegrationTest extends PostgreSqlIntegrationTest {
                 .andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN));
     }
 
+    @ParameterizedTest
+    @CsvSource({
+            "/api/auth/login",
+            "/oauth2/jwks",
+            "/api/user",
+            "/oauth2/authorization/github"
+    })
+    void preflightWithMethodOutsideTheAllowlistIsRejected(String path)
+            throws Exception {
+        mockMvc.perform(options(path)
+                        .header(HttpHeaders.ORIGIN, ALLOWED_ORIGIN)
+                        .header(
+                                HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD,
+                                "PATCH"
+                        ))
+                .andExpect(status().isForbidden())
+                .andExpect(header().doesNotExist(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN));
+    }
+
     @Test
     void actualUnauthorizedApiResponseStillCarriesAllowedCorsHeaders() throws Exception {
         mockMvc.perform(get("/api/user")

@@ -6,6 +6,10 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/postgres-readiness.sh
+source "$PROJECT_DIR/scripts/lib/postgres-readiness.sh"
+# shellcheck source=lib/application-readiness.sh
+source "$PROJECT_DIR/scripts/lib/application-readiness.sh"
 BACKUP_SCRIPT="$PROJECT_DIR/scripts/backup-postgres.sh"
 APPLICATION_JAR="${EMAIL_SERVICE_JAR_PATH:-$PROJECT_DIR/target/email-service-1.0.0.jar}"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/email-backup-restore.XXXXXX")"
@@ -197,19 +201,11 @@ start_application() {
 }
 
 wait_for_application() {
-    for _ in $(seq 1 90); do
-        if curl -fsS \
-            -H "X-Email-Service-Key: $API_KEY" \
-            "http://127.0.0.1:${SERVER_PORT}/api/email/health" \
-            >/dev/null 2>&1; then
-            return
-        fi
-        if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
-            fail "application exited before becoming ready"
-        fi
-        sleep 1
-    done
-    fail "application did not become ready"
+    wait_for_application_health \
+        "$APP_PID" "$APP_LOG" \
+        "http://127.0.0.1:${SERVER_PORT}/api/email/health" \
+        "$API_KEY" \
+        || fail "application did not become ready"
 }
 
 stop_application() {
@@ -278,7 +274,8 @@ fi
     || fail "email service application JAR is unavailable: $APPLICATION_JAR"
 
 echo "Backup/restore rehearsal: starting disposable PostgreSQL"
-docker run -d --rm \
+# No --rm: a crashed container must keep its logs until the EXIT trap removes it.
+docker run -d \
     --name "$CONTAINER_NAME" \
     -v "$TEMP_DIR:$TEMP_DIR" \
     -e "POSTGRES_DB=postgres" \
@@ -291,23 +288,10 @@ DATABASE_PORT="$(
         | awk -F: 'NR == 1 {print $NF}'
 )"
 
-for _ in $(seq 1 60); do
-    if PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
-        -h 127.0.0.1 \
-        -p "$DATABASE_PORT" \
-        -U "$DATABASE_USER" \
-        -d postgres >/dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-done
-if ! PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
-    -h 127.0.0.1 \
-    -p "$DATABASE_PORT" \
-    -U "$DATABASE_USER" \
-    -d postgres >/dev/null 2>&1; then
-    fail "disposable PostgreSQL did not become ready"
-fi
+wait_for_disposable_postgres \
+    "$CONTAINER_NAME" "$DATABASE_PORT" "$DATABASE_USER" \
+    "$DATABASE_PASSWORD" postgres \
+    || fail "disposable PostgreSQL did not become ready"
 
 mkdir -m 700 "$PG_CLIENT_DIR"
 cat >"$PG_DUMP_WRAPPER" <<EOF

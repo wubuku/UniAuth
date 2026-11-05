@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "entries": [
+    "reference/email-service/src/test/java/org/dddml/email/config/EmailServiceRuntimeGuardTest.java|no-assertion|void acceptsDedicatedLoopbackTestDatabase() {",
+    "reference/email-service/src/test/java/org/dddml/email/config/EmailServiceRuntimeGuardTest.java|no-assertion|void acceptsExplicitSharedUniAuthDatabaseLayout() {",
+    "reference/email-service/src/test/java/org/dddml/email/config/EmailServiceRuntimeGuardTest.java|no-assertion|void acceptsIpv6SmtpHostToken() {",
+    "reference/email-service/src/test/java/org/dddml/email/config/EmailServiceRuntimeGuardTest.java|no-assertion|void acceptsProductionImplicitSslWithServerIdentityVerification() {",
+    "src/test/java/org/dddml/uniauth/config/AuthCookieSecurityGuardTest.java|no-assertion|void allowsInsecureCookiesOutsideProduction() {",
+    "src/test/java/org/dddml/uniauth/config/AuthCookieSecurityGuardTest.java|no-assertion|void allowsSecureProductionCookies() {",
+    "src/test/java/org/dddml/uniauth/config/ProductionConfigurationGuardTest.java|no-assertion|void acceptsAnExplicitProductionConfiguration() {",
+    "src/test/java/org/dddml/uniauth/config/ProductionConfigurationGuardTest.java|no-assertion|void ignoresNonProductionProfiles() {",
+    "src/test/java/org/dddml/uniauth/service/RecentAuthenticationServiceTest.java|no-assertion|void authenticationInsideFutureSkewIsAccepted() {",
+    "src/test/java/org/dddml/uniauth/service/RecentAuthenticationServiceTest.java|no-assertion|void authenticationJustInsideMaxAgeIsAccepted() {",
+    "src/test/java/org/dddml/uniauth/service/RecentAuthenticationServiceTest.java|no-assertion|void currentTimeIsAccepted() {"
+  ]
+}

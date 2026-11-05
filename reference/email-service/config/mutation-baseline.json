@@ -1,0 +1,24 @@
+{
+  "classes": {
+    "org.dddml.email.config.EmailApiKeyFilter": {
+      "generated": 18,
+      "killed": 13,
+      "noCoverage": 0
+    },
+    "org.dddml.email.config.EmailResponseSecurityFilter": {
+      "generated": 6,
+      "killed": 6,
+      "noCoverage": 0
+    },
+    "org.dddml.email.service.EmailRateLimiter": {
+      "generated": 15,
+      "killed": 12,
+      "noCoverage": 0
+    }
+  },
+  "generated": 39,
+  "killed": 31,
+  "mutationScore": 79.49,
+  "noCoverage": 0,
+  "version": 1
+}

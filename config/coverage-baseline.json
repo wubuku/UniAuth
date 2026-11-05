@@ -1,0 +1,15 @@
+{
+  "backend": {
+    "branch": 68.66,
+    "line": 86.0
+  },
+  "frontend": {
+    "branch": 30.66,
+    "line": 31.9
+  },
+  "tolerancePercentagePoints": {
+    "backend": 1.0,
+    "frontend": 2.0
+  },
+  "version": 1
+}

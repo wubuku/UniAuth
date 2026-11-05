@@ -1,15 +1,121 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
-  <suppress until="2026-09-01Z">
+  <!--
+    Bounded exceptions added on 2026-11-05 because the fixed Spring Framework
+    6.2.x release is not published yet (Maven Central returns 404 for 6.2.20).
+    Upgrading to Spring Framework 7.0.x would require Spring Boot 4 and is out
+    of scope for this maintenance slice. Every entry records an owner,
+    unreachability evidence for this component, and a fixed UTC review
+    deadline. Delete each entry as soon as a fixed Boot 3.5.x patch is adopted.
+
+    Apache Tomcat 10.1.57 -> 10.1.61 (CVE-2026-66299) was upgraded instead of
+    suppressed. The email service is servlet Spring MVC on embedded Tomcat with
+    no WebFlux, RSocket, SSE, XSLT or user-supplied SpEL surfaces.
+  -->
+  <suppress until="2027-01-31Z">
     <notes><![CDATA[
-      CVE-2026-66299 affects only Apache Tomcat's WebSocket chat example web
-      application. The email service uses embedded Tomcat and does not package
-      or deploy Tomcat's examples webapp; its build dependency tree contains no
-      examples application. Tomcat 10.1.58 is not published as of 2026-08-09.
-      Remove this suppression and upgrade when a fixed 10.1.x is available.
-      Owner: UniAuth maintainers.
+      Owner: UniAuth maintainers. Spring Framework 6.2.20 is not published
+      (Maven Central 404 on 2026-11-05). The email service has no XSLT view
+      resolver or XSLT templates, so XsltView-driven SSRF/RCE is unreachable.
+      Remove after adopting a fixed Spring Boot 3.5.x patch.
     ]]></notes>
-    <packageUrl regex="true">^pkg:maven/org\.apache\.tomcat\.embed/tomcat-embed-(?:core|websocket)@10\.1\.57$</packageUrl>
-    <cve>CVE-2026-66299</cve>
+    <vulnerabilityName>CVE-2026-47884</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-01-31Z">
+    <notes><![CDATA[
+      Owner: UniAuth maintainers. The component uses spring-boot-starter-web
+      (servlet Spring MVC); spring-webflux is absent from the runtime classpath
+      and no reactive PartEvent limits are used. Remove this entry after
+      adopting a fixed Spring Boot 3.5.x patch.
+    ]]></notes>
+    <vulnerabilityName>CVE-2026-47885</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-01-31Z">
+    <notes><![CDATA[
+      Owner: UniAuth maintainers. No user-supplied SpEL is evaluated: there is
+      no SpelExpressionParser/ExpressionParser usage and Thymeleaf templates are
+      authored statically. The power-operator DoS needs expression input the
+      component never accepts. Remove after upgrading.
+    ]]></notes>
+    <vulnerabilityName>CVE-2026-47886</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-01-31Z">
+    <notes><![CDATA[
+      Owner: UniAuth maintainers. RSocket is not a dependency and no RSocket
+      endpoints exist, so a malformed SETUP frame cannot reach this component.
+      Remove this entry after adopting a fixed Spring Boot 3.5.x patch.
+    ]]></notes>
+    <vulnerabilityName>CVE-2026-47888</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-01-31Z">
+    <notes><![CDATA[
+      Owner: UniAuth maintainers. The component runs servlet Spring MVC on
+      embedded Tomcat, not WebFlux on the Jetty 12 reactive adapter, so the
+      WebFlux cookie sameSite serialization defect is not reachable. Remove
+      after adopting a fixed Spring Boot 3.5.x patch.
+    ]]></notes>
+    <vulnerabilityName>CVE-2026-47889</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-01-31Z">
+    <notes><![CDATA[
+      Owner: UniAuth maintainers. No Server-Sent Events endpoints exist
+      (no SseEmitter or streaming view fragments), so the SSE stream
+      corruption defect has no reachable path. Remove after adopting a fixed
+      Spring Boot 3.5.x patch.
+    ]]></notes>
+    <vulnerabilityName>CVE-2026-47890</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-01-31Z">
+    <notes><![CDATA[
+      Owner: UniAuth maintainers. The Aalto XML processor is absent and the
+      component is servlet Spring MVC, not WebFlux, so this maxInMemorySize
+      bypass is unreachable. Remove after adopting a fixed Spring Boot 3.5.x
+      patch.
+    ]]></notes>
+    <vulnerabilityName>CVE-2026-47891</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-01-31Z">
+    <notes><![CDATA[
+      Owner: UniAuth maintainers. Functional WebFlux endpoints deployed next to
+      DispatcherServlet do not exist in this component, so the pre-flight
+      header predicate bypass is unreachable. Remove after adopting a fixed
+      Spring Boot 3.5.x patch.
+    ]]></notes>
+    <vulnerabilityName>CVE-2026-47892</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-01-31Z">
+    <notes><![CDATA[
+      Owner: UniAuth maintainers. WebFlux WebSocket support is not on the
+      classpath and no WebSocket endpoints are exposed, so header leakage in
+      exception reasons cannot occur. Remove after adopting a fixed Spring
+      Boot 3.5.x patch.
+    ]]></notes>
+    <vulnerabilityName>CVE-2026-47893</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-01-31Z">
+    <notes><![CDATA[
+      Owner: UniAuth maintainers. No @ModelAttribute command objects,
+      WebDataBinder or InitBinder customization exist, so user-supplied property
+      paths are never bound onto a target object; the data-binding DoS path is
+      absent. Remove after adopting a fixed Spring Boot 3.5.x patch.
+    ]]></notes>
+    <vulnerabilityName>CVE-2026-59282</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-01-31Z">
+    <notes><![CDATA[
+      Owner: UniAuth maintainers. The SpEL expression compiler is not used with
+      SimpleEvaluationContext on user input, and no SpEL evaluation surfaces
+      exist; the safety-guard bypass is unreachable. Remove after adopting a
+      fixed Spring Boot 3.5.x patch.
+    ]]></notes>
+    <vulnerabilityName>CVE-2026-59283</vulnerabilityName>
+  </suppress>
+  <suppress until="2027-01-31Z">
+    <notes><![CDATA[
+      Owner: UniAuth maintainers. No functional MVC endpoint uses Server-Sent
+      Events, so the functional-web-framework SSE corruption is unreachable.
+      Remove this entry after adopting a fixed Spring Boot 3.5.x patch.
+    ]]></notes>
+    <vulnerabilityName>CVE-2026-59313</vulnerabilityName>
   </suppress>
 </suppressions>

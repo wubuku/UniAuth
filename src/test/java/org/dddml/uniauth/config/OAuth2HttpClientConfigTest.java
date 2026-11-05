@@ -161,10 +161,15 @@ class OAuth2HttpClientConfigTest {
         try (ServerSocket serverSocket = new ServerSocket(0)) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
             Future<?> server = executor.submit(() -> {
-                try (var ignored = serverSocket.accept()) {
-                    Thread.sleep(5_000);
-                } catch (InterruptedException exception) {
-                    Thread.currentThread().interrupt();
+                try (var socket = serverSocket.accept()) {
+                    // Deterministic slow response: hold the connection open until
+                    // the client aborts at its read timeout (EOF or reset).
+                    socket.setSoTimeout(5_000);
+                    while (socket.getInputStream().read() != -1) {
+                        // Consume request bytes; EOF means the client closed.
+                    }
+                } catch (java.net.SocketTimeoutException exception) {
+                    // Safety cap: the client never aborted within the budget.
                 } catch (Exception ignored) {
                     // Client timeout and socket close are expected in this fixture.
                 }
@@ -200,10 +205,15 @@ class OAuth2HttpClientConfigTest {
         try (ServerSocket serverSocket = new ServerSocket(0)) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
             Future<?> server = executor.submit(() -> {
-                try (var ignored = serverSocket.accept()) {
-                    Thread.sleep(5_000);
-                } catch (InterruptedException exception) {
-                    Thread.currentThread().interrupt();
+                try (var socket = serverSocket.accept()) {
+                    // Deterministic slow response: hold the connection open until
+                    // the client aborts at its read timeout (EOF or reset).
+                    socket.setSoTimeout(5_000);
+                    while (socket.getInputStream().read() != -1) {
+                        // Consume request bytes; EOF means the client closed.
+                    }
+                } catch (java.net.SocketTimeoutException exception) {
+                    // Safety cap: the client never aborted within the budget.
                 } catch (Exception ignored) {
                     // Client timeout and socket close are expected in this fixture.
                 }

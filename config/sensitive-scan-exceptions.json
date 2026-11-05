@@ -1,4 +1,12 @@
 {
   "version": 1,
-  "exceptions": []
+  "exceptions": [
+    {
+      "id": "aws-official-example-key-in-ses-draft",
+      "fingerprint": "cd15ae576b8b4082ab9de6ff81d9787f2437a9029700fec8e76bfbcff6ce396e",
+      "owner": "UniAuth maintainers",
+      "reason": "docs/drafts/AWS邮件发送服务配置.md uses the placeholder credential pair published in the public AWS SES documentation to illustrate SMTP credential setup. It is a documentation example, never a live credential; the exception is keyed to that exact matched value, so any different real key in the same file still fails the scan.",
+      "expires": "2027-01-31"
+    }
+  ]
 }

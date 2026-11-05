@@ -6,6 +6,8 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib/postgres-readiness.sh
+source "$PROJECT_DIR/scripts/lib/postgres-readiness.sh"
 SCRIPT_DIR="$PROJECT_DIR/scripts"
 FINGERPRINT_SQL="$SCRIPT_DIR/sql/uniauth-schema-fingerprint.sql"
 LOGIN_METHOD_PREFLIGHT_SQL="$SCRIPT_DIR/sql/v2-login-method-preflight.sql"
@@ -278,8 +280,24 @@ acquire_baseline_lock() {
                     ) THEN 'LOCK_ACQUIRED'
                     WHEN EXISTS (
                         SELECT 1
-                        FROM pg_stat_activity activity
-                        WHERE activity.application_name = '$BASELINE_LOCK_APP_NAME'
+                        FROM pg_locks lock_entry
+                        JOIN pg_stat_activity activity
+                          ON activity.pid = lock_entry.pid
+                        WHERE lock_entry.locktype = 'advisory'
+                          AND lock_entry.granted
+                          AND lock_entry.database = (
+                              SELECT oid FROM pg_database
+                              WHERE datname = current_database()
+                          )
+                          AND lock_entry.classid::bigint
+                              = (((${SHARED_SCHEMA_LOCK_KEY})::bigint >> 32)
+                                 & 4294967295)
+                          AND lock_entry.objid::bigint
+                              = ((${SHARED_SCHEMA_LOCK_KEY})::bigint
+                                 & 4294967295)
+                          AND lock_entry.objsubid = 1
+                          AND activity.application_name
+                              <> '$BASELINE_LOCK_APP_NAME'
                     ) THEN 'LOCK_BUSY'
                     ELSE 'LOCK_PENDING'
                 END;
@@ -415,7 +433,8 @@ if [ -z "$SOURCE_DUMP" ]; then
     exit 1
 fi
 
-docker run -d --rm \
+# No --rm: a crashed container must keep its logs until the EXIT trap removes it.
+docker run -d \
     --name "$CONTAINER_NAME" \
     -e "POSTGRES_DB=$REHEARSAL_DATABASE" \
     -e "POSTGRES_USER=$REHEARSAL_USER" \
@@ -427,24 +446,16 @@ REHEARSAL_PORT="$(
     docker port "$CONTAINER_NAME" 5432/tcp \
         | awk -F: 'NR == 1 {print $NF}'
 )"
-for _ in $(seq 1 60); do
-    if PGPASSWORD="$REHEARSAL_PASSWORD" pg_isready \
-        -h 127.0.0.1 \
-        -p "$REHEARSAL_PORT" \
-        -U "$REHEARSAL_USER" \
-        -d "$REHEARSAL_DATABASE" >/dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-done
-if ! PGPASSWORD="$REHEARSAL_PASSWORD" pg_isready \
-    -h 127.0.0.1 \
-    -p "$REHEARSAL_PORT" \
-    -U "$REHEARSAL_USER" \
-    -d "$REHEARSAL_DATABASE" >/dev/null 2>&1; then
-    echo "ERROR: rehearsal PostgreSQL container did not become ready" >&2
-    exit 1
-fi
+wait_for_disposable_postgres \
+    "$CONTAINER_NAME" \
+    "$REHEARSAL_PORT" \
+    "$REHEARSAL_USER" \
+    "$REHEARSAL_PASSWORD" \
+    "$REHEARSAL_DATABASE" \
+    || {
+        echo "ERROR: rehearsal PostgreSQL container did not become ready" >&2
+        exit 1
+    }
 
 PGPASSWORD="$REHEARSAL_PASSWORD" psql \
     -X -q -v ON_ERROR_STOP=1 \

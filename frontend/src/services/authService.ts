@@ -142,6 +142,13 @@ export class AuthService {
 
   /**
    * 刷新JWT Token
+   *
+   * 跨标签契约（1–2 次刷新）：`observedMarker` 在调用时读取，而锁内的
+   * `currentMarker` 在获得 Web Lock 后才读取。若另一个标签已完成刷新，本标签
+   * 会看到 marker 已变化并直接返回，总计 1 次；若本标签的 401 续作在锁释放后
+   * 才执行，则它读到的是新 marker 并会再刷新一次，总计 2 次。因此“1–2 次”是
+   * marker 检查 + 调度时机的设计结果，上限由一次 per-tab in-flight 合并保证。
+   * E2E 按真实契约断言 1–2 次，而不是把 1 次写成期望。
    */
   static refreshToken(
     observedMarker = localStorage.getItem(AUTH_SESSION_MARKER)

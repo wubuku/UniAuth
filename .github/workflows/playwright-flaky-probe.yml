@@ -1,0 +1,180 @@
+name: Playwright flaky probe
+
+# Scheduled flake detection only. This workflow is deliberately separate from
+# verification.yml: a probe failure never changes the required PR/push gate,
+# it just surfaces a flaky run in the Actions tab and uploads the evidence.
+on:
+  schedule:
+    # Every Monday at 03:00 UTC (11:00 Asia/Shanghai).
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: 'Number of Mock Playwright repetitions'
+        required: false
+        default: '5'
+      workers:
+        description: 'Playwright workers for each repetition'
+        required: false
+        default: '3'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: playwright-flaky-probe
+  cancel-in-progress: false
+
+jobs:
+  stress-playwright:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20.19'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          npm ci --registry=https://registry.npmjs.org/
+          npx playwright install --with-deps chrome
+
+      - name: Run repeated Mock Playwright suite
+        env:
+          PLAYWRIGHT_LOG_DIR: ${{ runner.temp }}/uniauth-playwright-stress
+          PLAYWRIGHT_WORKERS: ${{ github.event.inputs.workers || '3' }}
+        run: scripts/stress-playwright.sh "${{ github.event.inputs.iterations || '5' }}"
+
+      - name: Upload stress logs and failure traces
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-flaky-probe-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/uniauth-playwright-stress
+            frontend/test-results
+          if-no-files-found: warn
+          retention-days: 14
+
+  shuffled-playwright:
+    # Order-independence probe. Playwright has no --shuffle flag, so the script
+    # lists, shuffles, and replays the suite through --test-list with one
+    # worker. Three fixed seeds keep runs reproducible while still varying the
+    # execution order across files.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20.19'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          npm ci --registry=https://registry.npmjs.org/
+          npx playwright install --with-deps chrome
+
+      - name: Run shuffled Mock Playwright suite
+        run: |
+          for seed in 20261105 20261106 20261107; do
+            PLAYWRIGHT_SHUFFLE_SEED="$seed" PLAYWRIGHT_WORKERS=1 \
+              scripts/test-playwright-shuffled.sh
+          done
+
+      - name: Upload shuffled-run failure traces
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-shuffled-probe-${{ github.run_id }}
+          path: frontend/test-results
+          if-no-files-found: warn
+          retention-days: 14
+
+  production-playwright:
+    # The production suite exercises the real built bundle (diagnostics routes
+    # stripped, no localStorage access token). Mock Playwright cannot catch a
+    # production-only build regression, so this runs as a separate probe.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20.19'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          npm ci --registry=https://registry.npmjs.org/
+          npx playwright install --with-deps chrome
+
+      - name: Build the production bundle
+        working-directory: frontend
+        run: npm run build
+
+      - name: Run production Playwright suite
+        working-directory: frontend
+        run: npm run test:e2e:production
+
+      - name: Upload production Playwright traces
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-production-probe-${{ github.run_id }}
+          path: |
+            frontend/test-results
+            frontend/playwright-report
+          if-no-files-found: warn
+          retention-days: 14
+
+  shell-http-e2e:
+    # Real HTTP/PostgreSQL end-to-end probe. It starts disposable PostgreSQL
+    # containers, the reference email service, and start.sh. Docker, Java 17,
+    # Maven and Python 3 are all preinstalled on ubuntu-latest; the PostgreSQL
+    # client is installed explicitly because the harness uses psql/pg_isready.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20.19'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install PostgreSQL client and jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client jq
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci --registry=https://registry.npmjs.org/
+
+      - name: Run HTTP E2E harness
+        run: scripts/test-http-e2e.sh

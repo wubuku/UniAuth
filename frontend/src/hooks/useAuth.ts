@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { User } from '../types';
 import { AuthService } from '../services/authService';
+import { navigateTo } from '../utils/navigation';
 
 
 
@@ -49,7 +50,7 @@ export function useAuth() {
     console.log('Authentication state cleared, navigating to login...');
 
     // 直接导航到登录页面，避免页面刷新可能带来的缓存问题
-    window.location.href = '/login';
+    navigateTo('/login');
   }, []);
 
   // 检查认证状态
@@ -157,7 +158,7 @@ export function useAuth() {
   const oauthLogin = (provider: 'google' | 'github' | 'x') => {  // ✅ X API v2：提供者名改为 'x'
     const loginUrl = AuthService.getLoginUrl(provider);
     // 重定向到OAuth2提供商
-    window.location.href = loginUrl;
+    navigateTo(loginUrl);
   };
 
   // 本地用户登录

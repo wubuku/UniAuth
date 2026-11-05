@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { AuthService } from '../services/authService';
 import { useAuth } from '../hooks/useAuth';
+import { navigateTo } from '../utils/navigation';
 import { TokenRefreshResult } from '../types';
 
 interface LoginMethod {
@@ -52,7 +53,7 @@ export default function TestPage() {
     try {
       // 重定向到OAuth2授权端点
       const bindUrl = AuthService.getBindUrl(provider as 'google' | 'github' | 'x');
-      window.location.href = bindUrl;
+      navigateTo(bindUrl);
     } catch (error) {
       setBindingMessage({
         type: 'error',

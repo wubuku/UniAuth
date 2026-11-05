@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { AuthService } from '../services/authService';
+import { navigateTo } from '../utils/navigation';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import {
   DiagnosticsHomeLinks,
@@ -14,7 +15,7 @@ export default function HomePage() {
 
   const handlePasswordChanged = () => {
     AuthService.clearLocalAuthentication();
-    window.location.href = '/login?passwordChanged=true';
+    navigateTo('/login?passwordChanged=true');
   };
 
   return (

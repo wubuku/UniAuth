@@ -12,7 +12,10 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: true,
   retries: 0,
-  reporter: 'line',
+  reporter: [
+    ['line'],
+    ['json', { outputFile: 'reports/playwright-production.json' }],
+  ],
   use: {
     baseURL,
     trace: 'retain-on-failure',

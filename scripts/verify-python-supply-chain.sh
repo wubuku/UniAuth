@@ -82,6 +82,7 @@ cp "$PROJECT_DIR/python-resource-server/requirements-tools.lock" \
     "$TOOLS_VENV/bin/pip-compile" \
         --allow-unsafe \
         --generate-hashes \
+        --no-header \
         --quiet \
         --output-file=python-resource-server/requirements.lock \
         --strip-extras \
@@ -89,6 +90,7 @@ cp "$PROJECT_DIR/python-resource-server/requirements-tools.lock" \
     "$TOOLS_VENV/bin/pip-compile" \
         --allow-unsafe \
         --generate-hashes \
+        --no-header \
         --quiet \
         --output-file=python-resource-server/requirements-tools.lock \
         --strip-extras \

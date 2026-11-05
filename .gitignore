@@ -17,8 +17,10 @@ ao-cli-non-repl/tests/_temp_.md
 ao-cli-non-repl/tests/tmp_*.sh
 node_modules
 frontend/test-results/
+frontend/reports/
 frontend/playwright-report/
 frontend/blob-report/
+frontend/coverage/
 src/main/resources/static/assets/index-*.js
 src/main/resources/static/assets/index-*.css
 src/main/resources/static/index.html

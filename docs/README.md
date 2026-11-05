@@ -1,6 +1,6 @@
 # UniAuth 文档导航
 
-> 当前文档基线：2026-09-12
+> 当前文档基线：2026-11-05
 > 本页是项目文档的主入口。代码、配置与本文冲突时，以当前代码和配置为准。
 > `docs/Perplexity/` 和 `docs/drafts/` 中包含大量历史方案，不应直接当作运行手册。
 
@@ -14,6 +14,8 @@
 | [配置基线](CONFIGURATION.md) | Live | 端口、profile、数据库、外部服务和密钥 |
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |
 | [验证指南](VERIFICATION.md) | Live | 可执行检查、当前基线和未覆盖风险 |
+| [测试约定](TESTING.md) | Live | 新增测试放哪、Testcontainers/夹具纪律、禁止 sleep/固定端口、wire 契约三处同步、覆盖率棘轮、PIT 与测试腐化守卫 |
+| [行为→测试映射](TEST_MAP.md) | Live | 改某个模块时查哪些测试保护它、哪些行为只有 Playwright 覆盖、确定性约束、覆盖率报告命令与 flaky 复跑入口 |
 | [运维基线](OPERATIONS.md) | Live | 生产 guard、readiness、备份恢复、紧急密钥轮换和供应链门禁 |
 | [邮箱登录浏览器 E2E](EMAIL_LOGIN_BROWSER_E2E.md) | Live | 真实 PostgreSQL/UniAuth/Vite/Python/邮件 stub 的注册、登录、回跳与跨域 Bearer 复现 |
 | [加固阶段最终收尾计划](drafts/FINAL_HARDENING_EXIT_PLAN.md) | Reference | Completed；保存 F1-F5、统一门禁和阶段末 3/3 检查的退出记录 |
@@ -56,8 +58,17 @@
 - 已建立 PostgreSQL Java 集成测试、真实 HTTP Shell E2E、Mock Playwright 和
   Python 离线 JWT/JWKS/邮件 stub 契约测试；另有真实五服务邮箱登录 Playwright
   套件，验证资源域无认证 Cookie 且跨 origin 请求使用 Bearer header。ESLint、
-  Maven/npm/Python 供应链审计、候选构建敏感扫描和 15 阶段统一验证入口已纳入门禁；
-  2026-08-12 的 F5 及初始化管理员/登录后改密完整门禁已 15/15 通过。
+  Maven/npm/Python 供应链审计、候选构建敏感扫描和 15 阶段统一验证入口已纳入门禁。
+  2026-11-05 测试底座第十三批（根/组件变异守卫顶层与 `classes` 失败关闭、Flyway
+  行数只统计 versioned SQL、组件 mtime 与指纹同文件集、组件记录缺失为 MISSING、
+  302 五头单值断言；根门禁 15/15、后端 422、前端运行时 29+31+2、组件 154）后，根门禁
+  `scripts/verify.sh` 与邮件组件门禁同时通过；数字、覆盖率与残余风险见
+  [验证指南](VERIFICATION.md)，测试分层与约定见 [测试约定](TESTING.md)，行为与测试
+  对应关系见 [测试映射](TEST_MAP.md)。门禁之后可运行
+  `python3 scripts/health-snapshot.py` 一次查看各层状态（表格 + 被忽略目录的 JSON，
+  其中组件行读取 `email-last-verify.json` 的 154/154 运行时记录，并校验记录是否
+  仍对应当前组件源码；记录缺失为 MISSING 而非 N/A）。
+  快速入口只跑编译/后端测试/前端 lint/tsc/Vitest（实测 126s），不产生交付证据。
 - 2026-09-12 定向修复 refresh 无效凭据错误分类：格式错误、过期、签名无效以及
   claims 不合法的 refresh token 返回 `401`，只有数据库或服务端基础设施失败返回
   `503 TOKEN_REFRESH_UNAVAILABLE`；当前证据见 [验证指南](VERIFICATION.md)。

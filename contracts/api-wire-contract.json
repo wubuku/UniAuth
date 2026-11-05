@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "description": "Machine-readable wire contract shared by the Spring Boot API test and the frontend TypeScript type test. Update this file together with the DTOs and frontend types.",
+  "endpoints": {
+    "GET /api/user": {
+      "status": 200,
+      "requiredFields": [
+        "authenticated",
+        "provider",
+        "userId",
+        "userName",
+        "userEmail",
+        "userAvatar",
+        "hasLocalPassword",
+        "providerInfo"
+      ],
+      "fieldTypes": {
+        "authenticated": "boolean",
+        "provider": "string",
+        "userId": "string",
+        "userName": "string",
+        "userEmail": "string",
+        "userAvatar": "string|null",
+        "hasLocalPassword": "boolean",
+        "providerInfo": "object"
+      },
+      "frontendType": "User"
+    },
+    "POST /api/auth/login": {
+      "status": 200,
+      "requiredFields": [
+        "user",
+        "message",
+        "authenticated",
+        "accessTokenExpiresIn",
+        "refreshTokenExpiresIn",
+        "tokenType"
+      ],
+      "optionalFields": [
+        "accessToken"
+      ],
+      "userFields": [
+        "id",
+        "username",
+        "email",
+        "displayName",
+        "avatarUrl",
+        "authorities",
+        "provider",
+        "hasLocalPassword"
+      ]
+    },
+    "POST /api/auth/refresh": {
+      "status": 200,
+      "requiredFields": [
+        "message",
+        "accessTokenExpiresIn",
+        "refreshTokenExpiresIn",
+        "tokenType"
+      ],
+      "optionalFields": [
+        "accessToken"
+      ],
+      "frontendType": "TokenRefreshResult"
+    },
+    "errorBodies": {
+      "refreshCookieMissing": {
+        "status": 401,
+        "body": {
+          "error": "Refresh token not found"
+        }
+      },
+      "refreshRejected": {
+        "status": 401,
+        "body": {
+          "error": "Token refresh failed"
+        }
+      },
+      "refreshUnavailable": {
+        "status": 503,
+        "body": {
+          "error": "TOKEN_REFRESH_UNAVAILABLE"
+        }
+      },
+      "passwordChangedConcurrently": {
+        "status": 409,
+        "body": {
+          "success": false,
+          "error": "PASSWORD_CHANGED_CONCURRENTLY"
+        }
+      },
+      "localPasswordNotConfigured": {
+        "status": 400,
+        "body": {
+          "success": false,
+          "error": "LOCAL_PASSWORD_NOT_CONFIGURED"
+        }
+      }
+    }
+  }
+}

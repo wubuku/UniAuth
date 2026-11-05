@@ -6,6 +6,10 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/postgres-readiness.sh
+source "$PROJECT_DIR/scripts/lib/postgres-readiness.sh"
+# shellcheck source=lib/application-readiness.sh
+source "$PROJECT_DIR/scripts/lib/application-readiness.sh"
 APPLICATION_JAR="${EMAIL_SERVICE_JAR_PATH:-$PROJECT_DIR/target/email-service-1.0.0.jar}"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/email-flyway-guard.XXXXXX")"
 RUN_ID="$(date +%s)-$$"
@@ -194,26 +198,14 @@ start_application() {
 
 wait_for_application() {
     local log_file="$1"
-    for _ in $(seq 1 90); do
-        if [ -n "$APPLICATION_API_KEY" ]; then
-            if curl -fsS \
-                -H "X-Email-Service-Key: $APPLICATION_API_KEY" \
-                "http://127.0.0.1:${SERVER_PORT}/api/email/health" \
-                >/dev/null 2>&1; then
-                return
-            fi
-        elif curl -fsS \
-            "http://127.0.0.1:${SERVER_PORT}/api/email/health" \
-            >/dev/null 2>&1; then
-            return
-        fi
-        if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
+    wait_for_application_health \
+        "$APP_PID" "$log_file" \
+        "http://127.0.0.1:${SERVER_PORT}/api/email/health" \
+        "$APPLICATION_API_KEY" \
+        || {
             tail -80 "$log_file" >&2 || true
-            fail "application exited before becoming ready"
-        fi
-        sleep 1
-    done
-    fail "application did not become ready"
+            fail "application did not become ready"
+        }
 }
 
 expect_startup_failure() {
@@ -223,19 +215,19 @@ expect_startup_failure() {
     local flyway_override="${4:-}"
 
     start_application "$database" "$log_file" "$flyway_target" "$flyway_override"
-    for _ in $(seq 1 60); do
-        if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
-            if wait "$APP_PID"; then
-                fail "invalid Flyway startup exited successfully"
-            fi
-            APP_PID=""
-            return
+    # `wait_for_process_exit` returns 1 when the process is still running at the
+    # budget. That is a failure of the guard, never evidence that startup failed.
+    if wait_for_process_exit "$APP_PID"; then
+        if wait "$APP_PID"; then
+            fail "invalid Flyway startup exited successfully"
         fi
-        sleep 1
-    done
+        APP_PID=""
+        return
+    fi
 
+    tail -80 "$log_file" >&2 || true
     stop_application
-    fail "invalid Flyway startup remained running"
+    fail "invalid Flyway startup remained running past the exit budget"
 }
 
 stop_application() {
@@ -255,7 +247,8 @@ fi
     || fail "email service application JAR is unavailable: $APPLICATION_JAR"
 
 echo "Flyway guard: starting disposable PostgreSQL"
-docker run -d --rm \
+# No --rm: a crashed container must keep its logs until the EXIT trap removes it.
+docker run -d \
     --name "$CONTAINER_NAME" \
     -e "POSTGRES_USER=$DATABASE_USER" \
     -e "POSTGRES_PASSWORD=$DATABASE_PASSWORD" \
@@ -266,23 +259,10 @@ DATABASE_PORT="$(
         | awk -F: 'NR == 1 {print $NF}'
 )"
 
-for _ in $(seq 1 60); do
-    if PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
-        -h 127.0.0.1 \
-        -p "$DATABASE_PORT" \
-        -U "$DATABASE_USER" \
-        -d postgres >/dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-done
-if ! PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
-    -h 127.0.0.1 \
-    -p "$DATABASE_PORT" \
-    -U "$DATABASE_USER" \
-    -d postgres >/dev/null 2>&1; then
-    fail "disposable PostgreSQL did not become ready"
-fi
+wait_for_disposable_postgres \
+    "$CONTAINER_NAME" "$DATABASE_PORT" "$DATABASE_USER" \
+    "$DATABASE_PASSWORD" postgres \
+    || fail "disposable PostgreSQL did not become ready"
 
 DIRTY_DATABASE="email_dirty_schema_test"
 SHARED_DATABASE="uniauth_test"

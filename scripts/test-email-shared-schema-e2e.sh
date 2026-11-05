@@ -6,6 +6,8 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib/postgres-readiness.sh
+source "$PROJECT_DIR/scripts/lib/postgres-readiness.sh"
 EMAIL_PROJECT_DIR="$PROJECT_DIR/reference/email-service"
 UNIAUTH_JAR="${UNIAUTH_JAR_PATH:-$PROJECT_DIR/target/uni-auth-1.0.0.jar}"
 EMAIL_JAR="${EMAIL_SERVICE_JAR_PATH:-$EMAIL_PROJECT_DIR/target/email-service-1.0.0.jar}"
@@ -260,7 +262,8 @@ fi
 [ -r "$EMAIL_JAR" ] || fail "email-service application JAR is unavailable"
 
 echo "Shared-schema E2E: starting disposable PostgreSQL"
-docker run -d --rm \
+# No --rm: a crashed container must keep its logs until the EXIT trap removes it.
+docker run -d \
     --name "$CONTAINER_NAME" \
     -e POSTGRES_DB=postgres \
     -e "POSTGRES_USER=$DATABASE_USER" \
@@ -271,23 +274,13 @@ DATABASE_PORT="$(
     docker port "$CONTAINER_NAME" 5432/tcp \
         | awk -F: 'NR == 1 {print $NF}'
 )"
-for _ in $(seq 1 60); do
-    if PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
-            -h 127.0.0.1 \
-            -p "$DATABASE_PORT" \
-            -U "$DATABASE_USER" \
-            -d postgres >/dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-done
-if ! PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
-        -h 127.0.0.1 \
-        -p "$DATABASE_PORT" \
-        -U "$DATABASE_USER" \
-        -d postgres >/dev/null 2>&1; then
-    fail "disposable PostgreSQL did not become ready"
-fi
+wait_for_disposable_postgres \
+    "$CONTAINER_NAME" \
+    "$DATABASE_PORT" \
+    "$DATABASE_USER" \
+    "$DATABASE_PASSWORD" \
+    postgres \
+    || fail "disposable PostgreSQL did not become ready"
 create_database "$ROOT_FIRST_DATABASE"
 create_database "$EMAIL_FIRST_DATABASE"
 

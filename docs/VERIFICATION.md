@@ -1,7 +1,23 @@
 # UniAuth 验证指南
 
 > 状态：Live
-> 最近基线：2026-08-12；最近定向维护验证：2026-09-12
+> 最近基线：2026-11-05（测试底座第十三批：组件变异守卫顶层对齐、Flyway 行数
+> 过滤 repeatable/baseline、组件 mtime 与指纹同文件集、组件记录缺失失败关闭、
+> 302 五头同构与 Chrome 预检噪声；根门禁 15/15、组件门禁通过，后端 422、
+> 前端运行时 29+31+2、组件 154）；
+> 上一基线：2026-11-05（测试底座第十二批：组件记录新鲜度、变异类级字段失败关闭、
+> Flyway 期望版本推导、Chrome 身份预检与关键响应头单值断言）；
+> 更早基线：2026-11-05（测试底座第十一批：独立审计 12 条逐条修复、Web3 容量
+> shell E2E、CSP 生产边界断言与响应头过滤器顺序）；
+> 更早基线：2026-11-05（测试底座第十批：前端运行时 JSON 报告口径、STALE 判定、
+> shadow 写法变体、跨标签刷新契约确认与反向审计）、
+> 2026-11-05（测试底座第八批：就绪脚本一致性守卫、组件应用启动有界轮询、
+> 前端并发可观测证据与邮件侧作用域 PIT）、
+> 2026-11-05（测试底座第五批：顺序独立性、覆盖率棘轮与变异测试）、
+> 2026-11-05（测试底座第四批：覆盖率度量、失败关闭补强与跳转接缝）、
+> 2026-11-05（测试底座第三批）、2026-11-04（测试与验收底座加固）；
+> 更早基线：2026-08-12；
+> 最近定向维护验证：2026-09-12
 > 本页是项目交付验收的权威规则，区分静态/构建验证与会启动应用的行为验证。
 
 ## 交付验收硬门槛
@@ -232,9 +248,477 @@ L3/L4 前必须确认 profile、隔离数据库、凭据和网络副作用。
 真实 Google/GitHub/X provider 授权仍属于 L4 显式 opt-in，不由上述无副作用自动化门禁
 替代。X scope 变化可能要求既有测试用户重新同意授权；UniAuth 不会因此读取推文。
 
-## 2026-08-12 当前验证基线
+## 2026-11-05 测试底座第三批基线（页面层、跨端契约、映射与确定性）
 
-> 状态：Completed。F1-F5、初始化管理员/登录后改密改进、2026-08-12 的完整 15 阶段
+> 状态：Historical（已被第四批基线取代）。本节记录 `docs/drafts/TEST_HARDENING_IMPLEMENTATION.md` 第 9 节
+> 的验收结果：前端页面/路由层组件测试、`contracts/api-wire-contract.json` 跨端
+> 契约、`docs/TEST_MAP.md` 行为映射、确定性清扫和 `scripts/stress-playwright.sh`
+> flaky 复跑入口。完整 15 阶段门禁实跑通过。该声明不等同于生产发布、容量、
+> 真实 provider、灾备或合规认证完成。
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
+| `mvn test` | 通过 | 335/335；0 failures/errors/skips；较第二批新增 `ApiWireContractIntegrationTest` 3 个（login/`GET /api/user`/refresh wire shape 与 401 错误体） |
+| 根 Maven dependency audit | 通过 | 94 项 dependency evidence，0 阻断；15 条限定 suppression |
+| 前端 `npm ci` / audit | 通过 | 严格 `npm ci`；0 vulnerabilities |
+| `npm run test:unit` | 通过 | 22/22（4 个文件）；新增 `loginPage.test.tsx` 7 个与 `wire-contract.test.ts` 3 个；覆盖登录失败消息、`returnTo` 回跳、错误码映射、验证码输入约束、受保护页 401 守卫、TS 类型与 wire 契约一致性 |
+| `npm run lint` / `npx tsc --noEmit` / `npm run build` | 通过 | ESLint 0 warnings、无 TypeScript 错误、Vite 生产构建成功 |
+| `scripts/test-http-e2e.sh` | 通过 | 17/17；pending 负向断言仍使用 `stop_application` 进程退出屏障 |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 17/17 |
+| Shared-schema process E2E | 通过 | 8/8 |
+| 邮件参考服务门禁 | 通过 | 154 tests；runtime 44/44、HTTP 11/11、Flyway 15/15、backup/restore 10/10 |
+| `npm run test:e2e` | 通过 | 31/31 Mock Playwright；新增 `scripts/stress-playwright.sh` 支持 N 次复跑、worker/burner/grep 参数，试跑 1/1 通过 |
+| `npm run test:e2e:production` | 通过 | 2/2 |
+| 邮箱登录浏览器 E2E | 通过 | 1/1 |
+| Python 资源服务器 | 通过 | 20/20 离线测试 |
+| Python 邮件 stub contract | 通过 | 12/12 |
+| 敏感产物扫描 | 通过 | 720 文件；1 条精确指纹例外覆盖 4 处匹配 |
+| 文档链接/patch hygiene | 通过 | 63 个 Markdown 文件相对链接全部可解析；无空白错误 |
+| `scripts/verify.sh` | 通过 | 15/15，`PASS: complete repository verification gate` |
+
+遗留：仓库仍无 V9+ 迁移（首个 V9 必须同步补指纹/validate/baseline guard）；
+Vitest 同文件共享模块单例，新增用例必须 await；`window.location` 级重定向仍只有
+Playwright 覆盖（见 `docs/TEST_MAP.md`）。
+
+## 2026-11-05 测试底座第十三批基线（第三轮复核收口：守卫失败关闭与证据一致性）
+
+> 状态：Current。本节记录 `docs/drafts/TEST_HARDENING_IMPLEMENTATION.md` 第 19 节
+> 的验收结果：根与组件变异守卫的顶层字段/`classes`/`generated` 语义完全对齐；
+> Flyway 行数只统计 versioned SQL；组件 mtime 与指纹共用同一文件集；组件记录
+> 缺失为 `MISSING`；302 补齐五个关键头单值断言。该声明不等同于生产发布、容量、
+> 真实 provider、灾备或合规认证完成。
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| `scripts/verify.sh` | 通过 | 15/15，`VERIFY_EXIT=0`；`last-verify.json` 记录 `2026-11-05T08:48:21Z`（runId `20261105T082846Z-4365`） |
+| `mvn clean compile test-compile` + `mvn test` | 通过 | 422/422；0 failures/errors/skips |
+| 根变异基线自测 | 通过 | 11/11；新增删除整个 `classes` 段必须失败 |
+| 组件变异基线自测 | 通过 | 11/11；删除顶层字段、整个 `classes` 段、`generated` 下降、类级字段均失败；已接入组件门禁阶段 1 |
+| 健康快照自测 | 通过 | 20/20；含被忽略文件不影响判定、受跟踪 mtime 触发 STALE、记录缺失为 MISSING |
+| 关键响应头单值 | 通过 | `ProductionHttpBoundaryIntegrationTest` 对 200 与 302 均断言 CSP、HSTS、`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy` 为单一值且内容精确 |
+| 组件记录语义 | 通过 | 记录缺失不再 N/A；目录创建/写入失败返回非零并让组件门禁失败 |
+| 组件 mtime/指纹 | 通过 | mtime 与指纹共用 `git ls-files -co --exclude-standard` 文件集；当前树指纹 `8071af0b...` |
+| Flyway 期望版本 | 通过 | 目录 V1–V8；已应用集合相等，行数只统计 `success AND type='SQL' AND version IS NOT NULL`，无失败行 |
+| 覆盖率棘轮 | 通过 | 后端 line 86.0% / branch 68.66%（基线 86.00%/68.66%）；前端 31.9%/30.66%（基线 31.90%/30.66%） |
+| 变异基线 | 通过 | 143/150 killed（95.33%）、3 no-coverage；本次无 live PIT CSV，快照为 N/A（周度探针） |
+| 腐化守卫 | 通过 | 11 条人工复核基线，0 new |
+| 健康快照 | 通过 | `Overall: HEALTHY`；`component-tests OK 154 tests` |
+| 组件门禁（根内 + 独立） | 通过 | 154 tests，0 failures/errors/skips；独立 `EMAIL_VERIFY_EXIT=0`；记录 `email-20261105T083755Z-27855` @ `2026-11-05T08:41:23Z` |
+| Chrome 预检 | 通过 | 全部 PATH 候选失败后只打印一次合并错误；macOS 分支不变 |
+| 敏感扫描 / Markdown | 通过 | 754 文件、4 处例外；64 个 Markdown 相对链接全部可解析 |
+
+决策要点：
+
+- 组件与根变异守卫不再有任何 `get(..., default)`：顶层指标和 `classes` 段缺失即
+  失败，`generated` 下降也失败。任何“删字段弱化守卫”的改动都会先被自测拦住。
+- Flyway 行数过滤与版本集合使用同一谓词；`R__` 与 V0 baseline 被有意排除，
+  失败行检查仍覆盖全表（含 repeatable 失败）。
+- 组件 mtime 不再扫描整个目录（含被忽略的 `.env`/`target`），与指纹共用同一
+  `git ls-files` 清单；git 不可用时两侧都退回年龄规则。
+- 缺少组件记录不再视为“可选层”：没有当前树证据就不能输出 HEALTHY；记录写入
+  失败会让组件门禁非零退出，根门禁随阶段退出码失败。
+
+## 2026-11-05 测试底座第十二批基线（复核残余收口：新鲜度、类级字段、Flyway 推导与头单值）（已被第十三批基线取代）
+
+> 状态：Historical。本节记录 `docs/drafts/TEST_HARDENING_IMPLEMENTATION.md` 第 18 节
+> 的验收结果：组件记录必须与当前树的新鲜度/指纹匹配；变异基线类级字段缺一即
+> 失败；根 HTTP E2E 的 Flyway 期望版本由迁移目录推导；Chrome 预检校验真实
+> Google Chrome 身份；关键安全响应头断言单值。该声明不等同于生产发布、容量、
+> 真实 provider、灾备或合规认证完成。
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| `scripts/verify.sh` | 通过 | 15/15，`VERIFY_EXIT=0`；`last-verify.json` 记录 `2026-11-05T07:39:07Z`（最终复跑） |
+| `mvn clean compile test-compile` + `mvn test` | 通过 | 422/422；0 failures/errors/skips |
+| 关键响应头单值 | 通过 | `ProductionHttpBoundaryIntegrationTest` 对 200/302 断言 CSP、HSTS、`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy` 均为单一值且内容精确 |
+| 组件记录新鲜度 | 通过 | 自测 15–17：30h 旧记录 STALE、指纹不匹配 STALE、指纹匹配且新鲜的记录保持 HEALTHY；真实记录与当前树指纹一致 |
+| 变异类级字段 | 通过 | 自测 9、10：删除类级 `killed`/`noCoverage` 均失败并指名缺失字段；总自测 10/10 |
+| Flyway 期望版本 | 通过 | `test-http-e2e.sh` 从 `src/main/resources/db/migration/postgresql` 推导（当前 V1–V8），断言已应用集合等于目录集合且无失败行；变体自测覆盖 `1/2.1/10` 与忽略 `R__` |
+| 覆盖率棘轮 | 通过 | 后端 line 86.09% / branch 68.78%（基线 86.00/68.66）；前端 31.90% / 30.66%（与基线同值） |
+| 变异基线 | 通过 | 143/150 killed（95.33%）、3 no-coverage（既有 PIT 报告值；门禁只做基线校验） |
+| 腐化守卫 | 通过 | 11 条人工复核基线，0 new |
+| 健康快照 | 通过 | `Overall: HEALTHY`；17 项自测；`component-tests OK 154 tests` |
+| 组件门禁（根内 + 独立） | 通过 | 154 tests，0 failures/errors/skips；独立 `EMAIL_VERIFY_EXIT=0`；记录含 `runId`、`exitCode=0`、`sourceFingerprint`、154 |
+| Chrome 预检 | 通过 | macOS 分支仍按应用路径；PATH 候选必须 `--version` 含 `Google Chrome`，Chromium 明确报错而不静默通过 |
+| 敏感扫描 / Markdown | 通过 | 753 个文件、1 条精确指纹例外覆盖 4 处；64 个 Markdown 全部可解析 |
+
+决策要点：
+
+- 组件记录新鲜度沿用根门禁的 24h 与 mtime 2s 规则，并重算组件门禁自己的
+  `sourceFingerprint`（路径子集与算法一致）；`git` 不可用时退回年龄/时间规则，
+  不会静默放行指纹缺失。组件记录缺失仍为 N/A（可选层），过期/不匹配记为
+  `STALE` 并降级整体结论。
+- 指纹排序统一为 `LC_ALL=C sort -z`：此前依赖环境 locale，Python 字节序重算与
+  组件门禁 shell 结果不一致，会误报 STALE。
+- 变异基线保留“顶层行为不变”，类级 `generated/killed/noCoverage` 全部必填；
+  等价调整仍需显式 `--update`。
+- Flyway 只推导**版本集合**，不解析 SQL 内容；`R__` repeatable 不计入期望版本，
+  但 `success=false` 行会让门禁失败。组件侧仍固定 V1–V5（其 history 契约是逐版本
+  精确断言），这是有意保留，理由见实施记录 §18.7。
+- Chrome 只对 macOS 应用包直接放行，Linux/PATH 场景一律先校验品牌输出。
+
+## 2026-11-05 测试底座第十一批基线（审计逐条修复、容量 E2E 与失败关闭）（已被第十二批基线取代）
+
+> 状态：Historical。本节记录 `docs/drafts/TEST_HARDENING_IMPLEMENTATION.md` 第 17 节
+> 的验收结果：独立审计 12 条逐条核实；新增 Web3 source/global 容量 shell E2E；
+> CSP 在生产边界真实断言并修复响应头过滤器顺序；覆盖率/变异/腐化守卫缺键失败
+> 关闭；Chrome 预检与组件门禁记录。该声明不等同于生产发布、容量、真实 provider、
+> 灾备或合规认证完成。
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| `mvn clean compile test-compile` + `mvn test` | 通过 | 422/422；0 failures/errors/skips |
+| CSP 生产边界 | 通过 | 200 与 302 响应均带精确 `Content-Security-Policy`；过滤器改为 `@Order(HIGHEST_PRECEDENCE)` 后覆盖提前提交的响应 |
+| Web3 challenge 容量 | 通过 | `test-http-e2e.sh` 17/18：source 满 → 429 `WEB3_CHALLENGE_CAPACITY` + `Retry-After: 1`；global 满 → 同样 429；消费后两场景均再次放行；拒绝不泄漏另一桶配额 |
+| 覆盖率棘轮 | 通过 | 后端 86.00%/68.66%，前端 31.90%/30.66%（均与基线同值）；缺 scope/metric 失败关闭，自测 8/8 |
+| 变异基线 | 通过 | 143/150 killed（95.33%）、3 no-coverage；`generated` 下降与必需指标缺失均失败，自测 8/8 |
+| 测试腐化守卫 | 通过 | 11 命中（人工复核的仅验收不抛异常用例）全部在基线、0 new；弱断言规则自测通过 |
+| 邮件参考服务门禁 | 通过 | 154 tests；0 failures/errors/skips；组件门禁独立复跑 `EMAIL_VERIFY_EXIT=0` |
+| 组件门禁记录 | 通过 | `.local/uniauth/health/email-last-verify.json` 可复核 runId/exitCode/Surefire 聚合；快照 `component-tests OK 154 tests` |
+| 健康快照 | 通过 | `Overall: HEALTHY`；组件行 154；自测 14/14（含缺覆盖率指标、记录缺前端指标不回读工作区） |
+| `npm run test:unit` / Mock / 生产 Playwright | 通过 | Vitest 29（5 文件）、Mock 31/31、生产 2/2；运行时合计 62 |
+| 邮箱浏览器 E2E / Python | 通过 | 1/1；Python 资源服务器 20/20、邮件 stub 12/12 |
+| Chrome 预检 | 通过 | `verify.sh` 预检在阶段 1 即检查 `channel: 'chrome'` 可用性，缺失时给出安装提示 |
+| `scripts/verify.sh` | 通过 | 15/15，`VERIFY_EXIT=0`；`last-verify.json` 记录 `2026-11-05T06:47:20Z`（最终复跑） |
+| 文档链接/patch hygiene | 通过 | 64 个 Markdown 文件相对链接全部可解析 |
+| 敏感产物扫描 | 通过 | 753 个文件；1 条精确指纹例外覆盖 4 处匹配（AWS 官方文档示例值），真实凭据仍失败关闭 |
+
+就绪：最后一次门禁应用启动 4.0s/90s、失败退出 2.0s/60s（readiness.tsv）。
+
+新增保护点：Web3 容量真实进程用例、CSP 生产断言与过滤器顺序、三套负向自测
+（coverage ratchet 8 项、mutation 8 项、test-rot 弱断言 4 项夹具）、Chrome 预检、
+组件门禁记录与快照 `component-tests` 行。
+
+重要限制：容量 E2E 只覆盖单实例与 loopback 单来源；`generated` 允许显式
+`--update` 记录等价调整，因此仍需 reviewer 对下调负责；11 条腐化基线是人工
+复核的“仅验证不抛异常”用例，不是缺失断言的新许可。`scripts/verify.sh` 阶段 1
+只执行变异基线的自测与字段校验，不重新运行 PIT；143/150（95.33%）是
+`config/mutation-baseline.json` 所记录的既有 PIT 报告值。组件门禁记录的条件
+判断已修正为 `if python3 ...`：此前反写的 `if ! python3 ...` 在写入成功时仍打印
+`WARNING: failed to write component health record`，属假阴性，当前日志输出
+`Component health record: ...`。
+
+历史基线：第十批及更早的数字仅代表当时状态，见下方被取代的节。第十批的
+752/4 与 Markdown 64、以及 2026-08-12 历史节的 697/0 与 59 均为不同时间/快照
+范围的当时值；当前口径以本节 753/4 与 64 为准。
+
+## 2026-11-05 测试底座第十批基线（运行时报告口径、STALE、shadow 变体与反向审计）（已被第十一批基线取代）
+
+> 状态：Historical。本节记录 `docs/drafts/TEST_HARDENING_IMPLEMENTATION.md` 第 16 节
+> 的验收结果：前端测试数改读 Vitest/Playwright JSON reporter 运行时报告、门禁记录
+> STALE 语义、shadow 写法变体、跨标签 refresh 1–2 契约确认与反向审计。
+> 该声明不等同于生产发布、容量、真实 provider、灾备或合规认证完成。
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| 前端运行时口径 | 通过 | 快照 `frontend-tests OK unit=29 mock=31 prod=2 runtime`；旧声明数 28 已删除；报告缺失/内部计数不一致失败（自测第 7、8 步） |
+| Surefire 内部一致性 | 通过 | `tests` 属性与 `testcase` 元素数逐文件比对；不一致失败（自测第 12 步） |
+| STALE 判定 | 通过 | 记录 >24h 或源码 mtime 晚于记录即标 STALE 并 exit 1；自测第 9、10 步 |
+| shadow 写法变体 | 通过 | `function name {`、`name () {` 均拦截；注释/字符串/heredoc 不误判；自测 11/11 |
+| 跨标签 refresh 契约 | 通过 | 实现确认 1–2 次为设计；单页恰好 1 次，跨标签 `1 ≤ n ≤ 2`；E2E 31/31 |
+| 反向审计 | 通过 | 4 个疑点：2 个修复（记录指标回落、Surefire 内部计数），2 个为声明数根因与 mock/服务端边界；证据见 §16.5 |
+| `mvn clean compile test-compile` + `mvn test` | 通过 | 422/422；0 failures/errors/skips |
+| 覆盖率棘轮 | 通过 | 后端行 86.00/分支 68.66；前端 31.90/30.66（均与基线同值） |
+| 测试腐化守卫 | 通过 | 0 命中、0 新增 |
+| 根 PIT 基线 | 通过 | 150 mutants、143 killed（95.33%）、3 no-coverage；基线未变 |
+| 邮件参考服务门禁 | 通过 | 154 tests；runtime 44/44、HTTP 11/11、Flyway 15/15、backup/restore 10/10；独立复跑 `EMAIL_VERIFY_EXIT=0` |
+| 健康快照 | 通过 | `Overall: HEALTHY`；前端运行时合计 62；自测 12/12 |
+| `scripts/verify.sh` | 通过 | 15/15，`VERIFY_EXIT=0`（记录 `2026-11-05T05:04:30Z`） |
+| 文档链接/patch hygiene | 通过 | 64 个 Markdown 文件相对链接全部可解析 |
+| 敏感产物扫描 | 通过 | 752 个文件；1 条精确指纹例外覆盖 4 处匹配 |
+
+新增保护点：Vitest/Playwright JSON 报告与 `frontend/reports/`、报告内部计数一致性、
+STALE 的年龄与 mtime 双规则、shadow 扫描器、`test-health-snapshot.sh` 12 项、
+`test-readiness-parity.sh` 11 项；记录内指标不再回落到工作区旧报告。
+
+重要限制：STALE 是保守失败关闭（换检出后可能立即 STALE）；shadow 扫描是行级
+启发式而非完整 bash 解析器；跨标签仍允许 1–2 次 refresh，E2E 不能证明服务端只
+轮换一次 cookie。
+
+历史基线：第九批及更早的数字仅代表当时状态，见下方被取代的节。
+
+## 2026-11-05 测试底座第九批基线（守卫绕行口、交错证据、预算校准与健康快照）（已被第十批基线取代）
+
+> 状态：Historical。本节数字只代表第九批当时状态；当前基线见上方第十批基线节。
+> 本节记录 `docs/drafts/TEST_HARDENING_IMPLEMENTATION.md` 第 15 节
+> 的验收结果：一致性守卫增加 shadow-definition 规则、并发断言升级为事件序列交错
+> 证据、就绪预算实测校准、新增健康快照入口与新增脚本负向自测。
+> 该声明不等同于生产发布、容量、真实 provider、灾备或合规认证完成。
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| 一致性守卫绕行口 | 通过 | 共享区 90 行一致、2 个共享函数；同名函数在标记外重定义失败；`scripts/test-readiness-parity.sh` 7/7（含“复制到标记外修改”与缺 END） |
+| 前端交错证据 | 通过 | `security-boundaries.spec.ts` 事件序列断言：单页 `401:user`/`401:login-methods` 均先于唯一 `refresh`；跨标签两个不同 `401:tab-*` 先于首次 refresh；`--repeat-each=5` 10/10 |
+| 交错断言负向探针 | 通过 | 注入“refresh 早于第二个 401”后用例确定性失败；探针代码已移除 |
+| `mvn clean compile test-compile` + `mvn test` | 通过 | 422/422；0 failures/errors/skips |
+| 覆盖率棘轮 | 通过 | 后端行 86.00/分支 68.66（基线同值）；前端 31.90/30.66（基线同值） |
+| 测试腐化守卫 | 通过 | 0 命中、基线 `entries: []` |
+| 根 PIT 基线（最近一次探针产物） | 通过 | 150 mutants、143 killed（95.33%）、3 no-coverage；基线未变 |
+| 邮件参考服务门禁 | 通过 | 154 tests；runtime 44/44、HTTP 11/11、Flyway 15/15、backup/restore 10/10；就绪 `3s(5)`/`4s(5)` |
+| 组件就绪自测 | 通过 | `scripts/test-application-readiness.sh` 6/6（新增 metrics 记录与“写 metrics 失败不得改变成功结果”） |
+| 变异基线守卫自测 | 通过 | `scripts/test-mutation-baseline.sh` 6/6（killed 下降、no-coverage 增长、作用域变化、缺 CSV、缺基线均失败） |
+| 健康快照 | 通过 | `scripts/health-snapshot.py` 输出 `Overall: HEALTHY`；8 层全绿；JSON 写入 `.local/uniauth/health/snapshot.json`；自测 7/7 |
+| `npm run test:e2e` | 通过 | 31/31（10.3s）；生产 2/2（4.5s）；邮箱浏览器 E2E 1/1（6.7s）；Vitest 29/29 |
+| `scripts/verify.sh` | 通过 | 15/15，`PASS: complete repository verification gate`（`VERIFY_EXIT=0`） |
+| 文档链接/patch hygiene | 通过 | 64 个 Markdown 文件相对链接全部可解析；`git diff --check` 无空白错误 |
+| 敏感产物扫描 | 通过 | 752 个文件；1 条精确指纹例外覆盖 AWS 官方文档示例值 4 处匹配，真实凭据仍失败关闭 |
+
+就绪预算校准（本机 macOS / M4 Pro / 14 核 / 64 GB，每次样本新建数据库）：
+顺序冷启动 10 次中位数 3.52s、最大 4.32s；4 个 JVM 并发 12 个样本中位数 5.45s、
+最大 5.69s；守卫启动失败 3 次 ≤1.58s。对应 90s 预算余量 ≥15.8×、60s 预算余量
+38×。方法与局限见 [测试约定](TESTING.md#12-就绪预算校准)。
+
+新增保护点：shadow-definition 规则与自测第 6 步；事件序列交错断言（含时间戳单调
+检查）；就绪 helper 的可选 metrics TSV；`scripts/health-snapshot.py` 与
+`scripts/test-health-snapshot.sh`；`scripts/test-mutation-baseline.sh`；
+`verify.sh` 结束时写入 `last-verify.json`。
+
+重要限制：跨标签页“refresh 恰好一次”不是真实契约——marker 在 refresh 启动时才
+读取，允许第二个标签合法地再次 refresh，因此断言改为“至少一次、每标签最多一次”。
+健康快照的前端测试数是声明数（`vitest list` 28，运行时 29，参数化会展开）；变异层
+在没有实时 PIT CSV 时标为 N/A，不伪造通过。
+
+历史基线：第八批及更早的数字仅代表当时状态，见下方被取代的节。
+
+## 2026-11-05 测试底座第八批基线（就绪一致性守卫、组件启动轮询、并发证据与邮件侧 PIT）（已被第九批基线取代）
+
+> 状态：Historical。本节数字只代表第八批当时状态；当前基线见上方第九批基线节。
+> 本节记录 `docs/drafts/TEST_HARDENING_IMPLEMENTATION.md` 第 14 节
+> 的验收结果：两份就绪脚本的标记化一致性守卫、邮件组件应用启动有界自适应轮询、
+> 前端并发用例可观测证据、邮件侧作用域 PIT 固化与 `CustomUserDetailsService` 复查。
+> 该声明不等同于生产发布、容量、真实 provider、灾备或合规认证完成。
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| `scripts/check-readiness-parity.py` | 通过 | 共享区 90 行逐行一致；自测 `scripts/test-readiness-parity.sh` 7/7（真实仓库、相同区不同文件头、根侧单改、组件侧单改、标记外 helper、标记外 shadow 副本、缺 END） |
+| 邮件组件应用启动就绪 | 通过 | `scripts/test-application-readiness.sh` 4/4：已退出可检测、仍在运行在预算内返回 1（非成功）、真实 HTTP 探测成功、死进程立即失败 |
+| 组件固定轮询清零 | 通过 | 三个 harness 的 `seq 1 90` / `seq 1 60` 全部移除，改走 `lib/application-readiness.sh`；ready 打印 `4s(5 probes)` 等实测进度 |
+| `mvn clean compile test-compile` + `mvn test` | 通过 | 422/422；0 failures/errors/skips |
+| 覆盖率棘轮 | 通过 | 后端行 86.00/分支 68.66（基线已更新为同值）；前端 31.90/30.66 |
+| 前端并发证据 | 通过 | 两个用例 `maxExpiredCallsInFlight >= 2` 通过；临时串行化夹具下该断言首个失败；临时文件已删除 |
+| 邮件侧作用域 PIT | 通过 | 39 mutants、31 killed（79%）、0 no-coverage、PIT 2s（含 Maven 6.34s）；`check-mutation-baseline.py` 通过 |
+| 邮件参考服务门禁 | 通过 | 154 tests；runtime 44/44、HTTP 11/11、Flyway 15/15、backup/restore 10/10；就绪 `4s(5)`/`6s(6)`/`2s(4)` |
+| `npm run test:e2e` | 通过 | 31/31（10.2s）；生产 2/2（4.5s）；邮箱浏览器 E2E 1/1（6.4s） |
+| `scripts/verify.sh` | 通过 | 15/15，`PASS: complete repository verification gate` |
+| 文档链接/patch hygiene | 通过 | 64 个 Markdown 文件相对链接全部可解析；`git diff --check` 无空白错误 |
+
+新增保护点：`scripts/check-readiness-parity.py` + 自测；组件
+`scripts/lib/application-readiness.sh` + `scripts/test-application-readiness.sh`；
+组件 `mutation-testing` profile、`config/mutation-baseline.json` 与
+`scripts/check-mutation-baseline.py`；周度 `mutation-probe.yml` 同时跑根与组件探针。
+
+重要限制：第一次带 `EmailService` 的探针是 145 mutants / 25 killed、112
+no-coverage，那是作用域错误而非弱断言；本底线的 79% 只代表三个纯逻辑安全边界类。
+前端并发断言拦截“应用退化成串行请求”，删 barrier 本身不会让请求串行，不能把它
+描述成“删 barrier 就会失败”。
+
+历史基线：第七批及更早的数字仅代表当时状态，见下方被取代的节。
+
+## 2026-11-05 测试底座第七批基线（固定等待清零、邮件就绪统一、快速反馈入口）（已被第八批基线取代）
+
+> 状态：Historical。本节数字只代表第七批当时状态；当前基线见上方第八批基线节。
+> 本节记录 `docs/drafts/TEST_HARDENING_IMPLEMENTATION.md` 第 13 节
+> 的验收结果：7 处固定等待改为确定性等待、邮件组件就绪 helper 统一、
+> `scripts/verify-fast.sh`、最慢用例分析与根/邮件门禁复跑。
+> 该声明不等同于生产发布、容量、真实 provider、灾备或合规认证完成。
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| `mvn clean compile test-compile` + `mvn test` | 通过 | 422/422；0 failures/errors/skips；改写的 3 个 Java 类包含 `OAuth2HttpClientConfigTest` 18/18、`RestTemplateEmailServiceIntegrationTest`、`PasswordChangeSecurityIntegrationTest` |
+| 测试腐化守卫 | 通过 | 0 命中、基线 `entries: []`；`scripts/test-test-rot-guard.sh` 4/4 |
+| 固定等待改写稳定性 | 通过 | `security-boundaries.spec.ts` 两个并发用例 `--repeat-each=8` 共 16/16 |
+| `scripts/verify-fast.sh` | 通过 | 退出码 0，实测 126s（不含 E2E） |
+| 覆盖率棘轮 | 通过 | 后端行 85.80/分支 68.29（基线 85.64/68.53）；前端 31.90/30.66 |
+| 作用域 PIT 基线 | 通过 | JDK 21 复跑 150 mutants、143 killed、3 no-coverage；`check-mutation-baseline.py` 通过 |
+| 邮件参考服务门禁 | 通过 | 154 tests；runtime 44/44、HTTP 11/11、Flyway 15/15、backup/restore 10/10；就绪 `6s(6)`/`6s(6)`/`4s(5)` |
+| `npm run test:e2e` | 通过 | 31/31（18.5s）；生产 2/2（6.8s）；邮箱浏览器 E2E 1/1（7.1s） |
+| `scripts/verify.sh` | 通过 | 15/15，`PASS: complete repository verification gate` |
+| 文档链接/patch hygiene | 通过 | 64 个 Markdown 文件相对链接全部可解析；`git diff --check` 无空白错误 |
+
+新增保护点：`reference/email-service/scripts/lib/postgres-readiness.sh`（组件内等价
+helper），`reference/email-service` 三个 harness 统一自适应就绪、去掉 `--rm`；
+新增 `scripts/verify-fast.sh` 快速反馈入口；腐化守卫基线清零。
+
+遗留：邮件组件 helper 是根脚本的本地副本（需要手工同步）；快速入口不产生交付
+证据；PIT 仍需 JDK 21 与每周 job；最慢用例的延迟来自真实迁移/并发语义，未做
+压缩。
+
+## 2026-11-05 测试底座第六批基线（就绪抖动、腐化守卫、测试约定与变异工具）（已被第七批基线取代）
+
+> 状态：Historical。本节记录 `docs/drafts/TEST_HARDENING_IMPLEMENTATION.md` 第 12 节
+> 的验收结果：disposable PostgreSQL 就绪抖动的根因与自适应修复、测试腐化守卫、
+> 面向后来者的测试约定、变异测试常规化与两次完整门禁复跑。
+> 该声明不等同于生产发布、容量、真实 provider、灾备或合规认证完成。
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
+| `mvn test` | 通过 | 422/422；0 failures/errors/skips（本批未新增 Java 用例） |
+| 覆盖率棘轮 | 通过 | 两次实跑一致：后端 86.09/68.78 对基线 85.64/68.53；前端 31.90/30.66 对基线一致；容忍 1.0pp/2.0pp |
+| 测试腐化守卫 | 通过 | 7 处历史固定等待已基线化，0 新增；`scripts/test-test-rot-guard.sh` 4 步正负向自测通过 |
+| 作用域 PIT 基线 | 通过 | 150 mutants、143 killed（95.33%）、3 no-coverage；`scripts/check-mutation-baseline.py` 对 `config/mutation-baseline.json` 通过 |
+| PostgreSQL 就绪 | 通过 | 15 个无关容器同时存在时第 1 次 `READY after 4s (5 attempts)`、第 2 次 `READY after 6s (6 attempts)`；必然退出容器在 4s 预算后以 `EXIT=1` 失败关闭并打印状态/日志 |
+| `scripts/test-http-e2e.sh` | 通过 | 17/17 |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 17/17 |
+| Shared-schema process E2E | 通过 | 8/8 |
+| 邮件参考服务门禁 | 通过 | 154 tests；runtime 44/44、HTTP 11/11、Flyway 15/15、backup/restore 10/10 |
+| `npm run test:e2e` / `test:e2e:production` | 通过 | 31/31、2/2 |
+| 邮箱登录浏览器 E2E | 通过 | 1/1 |
+| Python 资源服务器 / 邮件 stub | 通过 | 20/20、12/12 |
+| 文档链接/patch hygiene | 通过 | 全部 Markdown 相对链接可解析；无空白错误 |
+| `scripts/verify.sh` 第 1 次 | 通过 | 15/15，`PASS: complete repository verification gate` |
+| `scripts/verify.sh` 第 2 次（沿用第 1 次产物） | 通过 | 15/15，`PASS: complete repository verification gate` |
+
+新增保护点：共享的 `wait_for_disposable_postgres`（自适应退避 + 超时诊断 + 失败
+关闭）、测试腐化守卫（七类规则 + 基线白名单 + 自我保护自测）、
+[测试约定](TESTING.md)、`config/mutation-baseline.json` 与每周 PIT 探测 job。
+
+遗留：随机顺序仍只跑固定种子；PIT 需要 JDK 21 且仅在每周 job/手动运行；
+覆盖率棘轮只比较百分比、不防止“高覆盖低断言”；`reference/email-service` 自带
+harness 仍未共享新的就绪 helper；`CustomUserDetailsService` 仍是框架可达但应用
+不可达的潜在入口。
+
+## 2026-11-05 测试底座第五批基线（顺序独立性、覆盖率棘轮与变异测试）（已被第六批基线取代）
+
+> 状态：Historical。本节数字只代表第五批当时状态；当前基线见上方第六批基线节。
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
+| `mvn test` | 通过 | 422/422；0 failures/errors/skips；新增 20 个用例 |
+| Maven 随机顺序 | 通过 | 422 tests / 56 classes 以 `runOrder=random` + seed 20261106 全通过；补测前 402 tests 亦通过，未发现顺序依赖 |
+| 后端覆盖率（JaCoCo） | 报告 | 基线行 85.64%、分支 68.53%；门禁实跑行 85.80%、分支 68.29%；无 `check` 阈值 |
+| 覆盖率棘轮（后端） | 通过 | `config/coverage-baseline.json`，容忍 1.0pp；实跑跌幅均 ≤ 0.24pp；人为抬高基线时脚本按预期失败 |
+| 前端 `npm ci` / audit | 通过 | 严格 `npm ci`；0 vulnerabilities |
+| `npm run test:unit:coverage` | 通过 | 29/29（5 个文件）；前端行 31.9%、分支 30.66%，容忍 2.0pp |
+| `npm run lint` / `npx tsc --noEmit` / `npm run build` | 通过 | 0 warnings、无 TypeScript 错误、生产构建成功 |
+| Mock Playwright 乱序 | 通过 | 31/31（`scripts/test-playwright-shuffled.sh`，seed 20261105，1 worker） |
+| 作用域 PIT（3 类） | 通过 | 150 mutants、143 killed（95.3%）、4 个等价存活、3 no-coverage；需 JDK 21 |
+| `scripts/test-http-e2e.sh` | 通过 | 17/17 |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 17/17 |
+| Shared-schema process E2E | 通过 | 8/8 |
+| 邮件参考服务门禁 | 通过 | 154 tests；runtime 44/44、HTTP 11/11、Flyway 15/15、backup/restore 10/10 |
+| `npm run test:e2e` / `test:e2e:production` | 通过 | 31/31、2/2 |
+| 邮箱登录浏览器 E2E | 通过 | 1/1 |
+| Python 资源服务器 / 邮件 stub | 通过 | 20/20、12/12 |
+| 敏感产物扫描 | 通过 | 见下方 verify 实跑输出 |
+| 文档链接/patch hygiene | 通过 | 全部 Markdown 相对链接可解析；无空白错误 |
+| `scripts/verify.sh` | 通过 | 15/15，`PASS: complete repository verification gate` |
+
+新增保护点：`TokenValidationServiceTest` 的 access-token 直接路径（12 个用例）、
+`CustomUserDetailsServiceTest`（4 个）、`Web3SignatureUtilsTest` 的真实签名
+round-trip、`CanonicalEmailServiceTest` 的边界与 `@` 路由。
+
+遗留：随机顺序只跑了固定种子；PIT 需要 JDK 21；覆盖率棘轮只比较百分比、
+不防止“高覆盖低断言”；`CustomUserDetailsService` 仍是框架可达但应用不可达的
+潜在入口；生产 Playwright / Shell HTTP E2E 仅在定时探测中运行，不阻塞 PR。
+
+## 2026-11-05 测试底座第四批基线（覆盖率度量、失败关闭补强与跳转接缝）（已被第五批基线取代）
+
+> 状态：Historical。本节数字只代表第四批当时状态；当前基线见上方第五批基线节。
+> 本节记录实施记录第 10 节的验收结果：JaCoCo/Vitest 覆盖率报告（无阈值）、
+> 按报告补失败关闭与错误映射测试、
+> Vitest 单例隔离、`navigateTo` 可测接缝和 CI 定时 flaky 探测。完整 15 阶段门禁
+> 实跑通过。该声明不等同于生产发布、容量、真实 provider、灾备或合规认证完成。
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| `mvn clean compile test-compile` | 通过 | Java main/test 编译成功；JaCoCo 0.8.13 仅 `prepare-agent` + `report`，无 `check` 阈值 |
+| `mvn test` | 通过 | 402/402；0 failures/errors/skips；新增 67 个失败关闭/错误映射用例 |
+| 后端覆盖率（JaCoCo） | 报告 | 159 类；行 85.6%（3811/4450）、分支 68.5%（1113/1624）、方法 89.3%、类 97.5%；不设门禁 |
+| 根 Maven dependency audit | 通过 | 94 项 dependency evidence，0 阻断；15 条限定 suppression |
+| 前端 `npm ci` / audit | 通过 | 严格 `npm ci`；0 vulnerabilities |
+| `npm run test:unit` | 通过 | 29/29（5 个文件）；新增 7 个（CSRF 3、single-flight 释放 1、`navigateTo` 2、oauthLogin 目标 1） |
+| 前端覆盖率（v8） | 报告 | 语句 32.17%、分支 30.66%、函数 46.42%、行 31.9%；页面组件主要由 Playwright 覆盖；`App.tsx`/`HomePage.tsx` 因虚拟模块被 v8 解析跳过；不设门禁 |
+| `npm run lint` / `npx tsc --noEmit` / `npm run build` | 通过 | ESLint 0 warnings（`coverage/` 已忽略）、无 TypeScript 错误、Vite 生产构建成功 |
+| `scripts/test-http-e2e.sh` | 通过 | 17/17 |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 17/17 |
+| Shared-schema process E2E | 通过 | 8/8 |
+| 邮件参考服务门禁 | 通过 | 154 tests；runtime 44/44、HTTP 11/11、Flyway 15/15、backup/restore 10/10 |
+| `npm run test:e2e` | 通过 | 31/31 Mock Playwright |
+| `npm run test:e2e:production` | 通过 | 2/2 |
+| 邮箱登录浏览器 E2E | 通过 | 1/1 |
+| Python 资源服务器 | 通过 | 20/20 离线测试 |
+| Python 邮件 stub contract | 通过 | 12/12 |
+| 敏感产物扫描 | 通过 | 729 文件；1 条精确指纹例外覆盖 4 处匹配 |
+| 文档链接/patch hygiene | 通过 | 63 个 Markdown 文件相对链接全部可解析；无空白错误 |
+| `scripts/verify.sh` | 通过 | 15/15，`PASS: complete repository verification gate` |
+
+新增保护点：`GlobalExceptionHandler` 的 401/403/503 与 validation 回退、
+`TokenValidationServiceTest` 的 refresh claim 拒绝矩阵、`AuthRateLimiter` 故障关闭、
+`EmailDeliveryOutboxStateService` 投递状态机、`CanonicalEmailService` 边界、
+`Web3SignatureUtils` 失败关闭和 `SpaController` 路由排除。
+
+遗留：`CustomUserDetailsService`/`AuthenticationManager` 仍是无调用方的死代码
+（本批不删除、不补测）；`TokenValidationService` 的 access-token 分支未直接单测；
+覆盖率 report-only，数字下降不会失败门禁；定时 flaky job 只覆盖 Mock Playwright。
+
+## 2026-11-05 前端组件测试底座与覆盖盲区收敛基线（已被第三批基线取代）
+
+> 状态：Historical。本节数字只代表第二批当时状态；当前基线见第五批基线节。
+> 本节记录 `docs/drafts/TEST_HARDENING_IMPLEMENTATION.md` 第 8 节的
+> 验收结果：引入 Vitest + React Testing Library + jsdom 组件级单测、把
+> `test-http-e2e.sh` 的负向观测改为进程退出屏障、补 OAuth2 bind intent 过期/
+> security_version 失效与 CORS 非法方法预检矩阵，并用完整 15 阶段门禁实测数字
+> 取代 2026-11-04 基线。该声明不等同于生产发布、容量、真实 provider、灾备或
+> 合规认证完成。
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
+| `mvn test` | 通过 | 332/332；0 failures/errors/skips；较 2026-11-04 新增 `OAuth2SuccessHandlerIntegrationTest` 2 个（intent `expires_at` 过期、`token_security_version` 变更后旧 intent 拒绝且均不消费）和 `CorsSecurityIntegrationTest` 4 个（四条安全链非法方法预检 403） |
+| 根 Maven dependency audit | 通过 | OWASP Dependency-Check 94 项 dependency evidence；CVSS 7 阻断；15 条 Spring Framework/Security 限定 suppression（2027-01-31Z，见 OPERATIONS） |
+| `npm ci` / `npm audit --audit-level=moderate` | 通过 | 严格 `npm ci`；0 vulnerabilities |
+| `npm run test:unit` | 通过 | 12/12（2 个文件）；Vitest 5.1.0 + jsdom 30.1.3 + React Testing Library 16.3.3；覆盖 refresh 单飞、marker 失效、logout 与 in-flight refresh 顺序、失败后单飞槽释放、`useAuth` 认证状态机 |
+| `npm run lint` / `npx tsc --noEmit` / `npm run build` | 通过 | ESLint 0 warnings、无 TypeScript 错误、Vite 生产构建成功（保留 chunk warning） |
+| `scripts/test-http-e2e.sh` | 通过 | 17/17；pending outbox/challenge 负向断言改到 `stop_application`（终止进程树 + `wait`）之后观测，再显式重启等待 `ACTIVE`，不再使用 `sleep 0.5` |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 17/17；exact schema、V2/V4/V6 预检、PostgreSQL major、确认 token、共享 advisory lock、V2-V6 grouped rollback 与临时凭据清理 |
+| Shared-schema process E2E | 通过 | 8/8；UniAuth-first 与 email-first 两种启动顺序、独立 history、受控 baseline V0、缺失 V6 表拒绝、advisory lock 拒绝、apply 删除与 Session 失效 |
+| 邮件参考服务门禁 | 通过 | 154 tests；Shell runtime 44/44、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；邮件 dependency audit 54 项，12 条限定 suppression |
+| `npm run test:e2e` | 通过 | 31/31 Mock Playwright；跨标签页 logout 保留 60s 用例预算、`bringToFront` 和 worker 侧顺序信号，6 CPU burner + 3 worker 压力复跑 10/10（42.7s）与 12/12（1.3m）；单个 401-retry 用例改为 `expect.poll` 观察重试请求，6 burner 下定向 6/6、完整套件 31/31（34.1s） |
+| `npm run test:e2e:production` | 通过 | 2/2；生产静态构建不含诊断路由/bundle，普通登录不持久化 bearer credential |
+| 邮箱登录浏览器 E2E | 通过 | 1/1；真实 PostgreSQL/UniAuth/Vite/Python/stub 全链路 |
+| Python 资源服务器 | 通过 | 20/20 离线 RSA/JWKS/Flask 测试（PyJWT 2.15.1、Werkzeug 3.1.9；cryptography 例外 2027-02-01） |
+| Python 邮件 stub contract | 通过 | 12/12 |
+| 敏感产物扫描 | 通过 | 完整门禁扫描 714 个文件（新增 4 个前端单测/配置文件）；`config/sensitive-scan-exceptions.json` 只有 1 条精确指纹例外，覆盖 AWS 官方文档示例值 4 处匹配（2027-01-31），真实凭据仍失败关闭 |
+| `scripts/verify.sh` | 通过 | 15/15，以 `PASS: complete repository verification gate` 结束 |
+
+遗留：仓库仍无 V9+ 迁移；首个 V9 出现时必须同步增加 schema 指纹、fresh
+migrate→新版本 + Hibernate `validate` 和 baseline guard 断言。跨标签页用例对
+CPU 预算仍敏感，CI 并行度升高时优先降低 worker 数。
+
+## 2026-11-04 测试与验收底座加固基线（已被 2026-11-05 基线取代）
+
+> 状态：Historical。本节数字只代表 2026-11-04 当时状态；当前基线见第五批基线节。
+> 本节记录 `docs/drafts/TEST_HARDENING_IMPLEMENTATION.md` 的验收结果：
+> 补齐安全不变量测试、治理 flaky/固定等待、修复供应链时间炸弹与依赖审计例外，
+> 并用完整 15 阶段门禁实测数字替换旧基线。该声明不等同于生产发布、容量、
+> 真实 provider、灾备或合规认证完成。
+
+| 检查 | 结果 | 证据 |
+|------|------|------|
+| `mvn clean compile test-compile` | 通过 | Java main/test 编译成功 |
+| `mvn test` | 通过 | 326/326；0 failures/errors/skips；新增 `BearerTokenUtilsTest`(5)、`CsrfProtectionFilterTest`(12)、`SensitiveResponseHeadersFilterTest`(4)、`RecentAuthenticationServiceTest`(8)、`PasswordChangeSecurityIntegrationTest`(4) 以及 Web3 过期 recent-auth 拒绝 |
+| 根 Maven dependency audit | 通过 | OWASP Dependency-Check 94 项 dependency evidence；CVSS 7 阻断；15 条 Spring Framework/Security 限定 suppression（2027-01-31Z，见 OPERATIONS） |
+| `scripts/test-http-e2e.sh` | 通过 | 17/17；真实应用、独立 PostgreSQL 16.13、四条安全链 CORS、refresh/logout、邮件/Web3/JWT/登录方式，以及紧急 signing-key rotation/revoke |
+| `scripts/test-flyway-baseline-guard.sh` | 通过 | 17/17；exact schema、V2/V4/V6 预检、PostgreSQL major、确认 token、共享 advisory lock、V2-V6 grouped rollback 与临时凭据清理 |
+| Shared-schema process E2E | 通过 | 8/8；UniAuth-first 与 email-first 两种启动顺序、独立 history、受控 baseline V0、缺失 V6 表拒绝、advisory lock 拒绝、apply 删除与 Session 失效 |
+| 邮件参考服务门禁 | 通过 | 154 tests；Shell runtime 44/44、HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；邮件 dependency audit 54 项，12 条限定 suppression |
+| `npm ci` / `npm audit --audit-level=moderate` | 通过 | 严格 `npm ci`；0 vulnerabilities（升级 axios 1.21.0、eslint 10.14.0、typescript-eslint 8.72.1、vite 7.3.7，并 `overrides.minimatch=11.0.4`） |
+| `npm run lint` / `npx tsc --noEmit` / `npm run build` | 通过 | ESLint 0 warnings、无 TypeScript 错误、Vite 生产构建成功（保留 chunk warning） |
+| `npm run test:e2e` | 通过 | 31/31 Mock Playwright；连续 3 次整套复跑均 31/31；跨标签页 logout 用 Web Lock 交接证明迟到 refresh 不能恢复认证 |
+| `npm run test:e2e:production` | 通过 | 2/2；生产静态构建不含诊断路由/bundle，普通登录不持久化 bearer credential |
+| 邮箱登录浏览器 E2E | 通过 | 1/1；真实 PostgreSQL/UniAuth/Vite/Python/stub 全链路 |
+| Python 资源服务器 | 通过 | 20/20 离线 RSA/JWKS/Flask 测试（PyJWT 2.15.1、Werkzeug 3.1.9；cryptography 例外 2027-02-01） |
+| Python 邮件 stub contract | 通过 | 12/12 |
+| 敏感产物扫描 | 通过 | 完整门禁扫描 710 个文件（仓库源码 + 候选构建产物）；1 条指向 AWS 官方文档示例 access key 的精确例外（2027-01-31），真实凭据仍失败关闭 |
+| `scripts/verify.sh` | 通过 | 15/15，以 `PASS: complete repository verification gate` 结束 |
+
+## 2026-08-12 验证基线（已被 2026-11-05 基线取代）
+
+> 状态：Historical。本节数字和供应链到期日只代表 2026-08-12 当时状态；
+> 当前基线见“2026-11-05 测试底座第五批基线”。F1-F5、初始化管理员/登录后改密改进、2026-08-12 的完整 15 阶段
 > 组合门禁，以及阶段末连续三轮无修改检查均已完成。
 > 覆盖 H0.1-H0.3、H1.1-H1.3、Batch A、Batch B1、Batch B2a、
 > Batch B2b、邮件服务边界、邮箱 challenge 投递接受/原子消费、敏感响应、API key
@@ -284,7 +768,7 @@ disposable PostgreSQL、临时 RSA key 和 dummy OAuth。脚本在测试序列�
 - 本地注册/登录、JWT claims、cookie/header 优先级和持久化。
 - refresh rotation 与 access/refresh type confusion。
 - 本地签名 Web3 登录、challenge handle、domain/chain/完整 message 字段 tamper、
-  并发 replay、source/global capacity、原子消费和钱包绑定。
+  并发 replay、原子消费和钱包绑定。
 - 登录方式 primary/delete/最后方式拒绝，以及真实并发 mutation 的 `200/409` 和最终
   “至少一个登录方式、恰好一个 primary”不变量。
 - 邮箱注册、canonical identity、opaque handle、HMAC challenge、唯一 active

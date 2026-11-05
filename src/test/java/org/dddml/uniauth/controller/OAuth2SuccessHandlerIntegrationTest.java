@@ -32,6 +32,7 @@ import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockHttpSession;
@@ -54,6 +55,7 @@ import org.springframework.security.web.FilterChainProxy;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.net.http.HttpConnectTimeoutException;
 import java.net.URLEncoder;
@@ -128,6 +130,9 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @SpyBean
     private AuthRateLimiter authRateLimiter;
@@ -384,6 +389,90 @@ class OAuth2SuccessHandlerIntegrationTest extends PostgreSqlIntegrationTest {
                 UserLoginMethod.AuthProvider.GITHUB,
                 providerSubject
         )).get().extracting(method -> method.getUser().getId()).isEqualTo(localUser.getId());
+    }
+
+    @Test
+    void expiredBindingIntentIsRejectedWithoutConsumption() throws Exception {
+        UserDto localUser = registerLocalUser("oauth-bind-expired");
+        String providerSubject = "github-bind-expired-" + UUID.randomUUID();
+        BindingCallback binding = prepareBindingCallback(
+                accessToken(localUser),
+                "github"
+        );
+        Instant expiredAt = Instant.now().minusSeconds(5);
+        assertThat(jdbcTemplate.update(
+                """
+                UPDATE oauth2_binding_intents
+                SET created_at = ?, expires_at = ?
+                WHERE user_id = ?
+                  AND consumed_at IS NULL
+                """,
+                Timestamp.from(expiredAt.minusSeconds(15)),
+                Timestamp.from(expiredAt),
+                localUser.getId()
+        )).isEqualTo(1);
+
+        JsonNode response = executeJsonCallback(
+                authentication("github", providerSubject),
+                binding.state(),
+                binding.session()
+        );
+
+        assertThat(response.path("authenticated").asBoolean()).isFalse();
+        assertThat(response.path("error").asText()).isEqualTo("oauth2_processing_failed");
+        assertThat(unconsumedIntentCount(localUser.getId())).isEqualTo(1);
+        assertThat(loginMethodRepository.findByAuthProviderAndProviderUserId(
+                UserLoginMethod.AuthProvider.GITHUB,
+                providerSubject
+        )).isEmpty();
+    }
+
+    @Test
+    void bindingIntentIsRejectedAfterUserSecurityVersionChanges() throws Exception {
+        UserDto localUser = registerLocalUser("oauth-bind-version-change");
+        String providerSubject =
+                "github-bind-version-change-" + UUID.randomUUID();
+        BindingCallback binding = prepareBindingCallback(
+                accessToken(localUser),
+                "github"
+        );
+        assertThat(jdbcTemplate.update(
+                """
+                UPDATE users
+                SET token_security_version = token_security_version + 1
+                WHERE id = ?
+                """,
+                localUser.getId()
+        )).isEqualTo(1);
+
+        JsonNode response = executeJsonCallback(
+                authentication("github", providerSubject),
+                binding.state(),
+                binding.session()
+        );
+
+        assertThat(response.path("authenticated").asBoolean()).isFalse();
+        assertThat(response.path("error").asText()).isEqualTo("oauth2_processing_failed");
+        assertThat(unconsumedIntentCount(localUser.getId())).isEqualTo(1);
+        assertThat(loginMethodRepository.findByAuthProviderAndProviderUserId(
+                UserLoginMethod.AuthProvider.GITHUB,
+                providerSubject
+        )).isEmpty();
+    }
+
+    private int unconsumedIntentCount(String userId) {
+        Integer count = jdbcTemplate.queryForObject(
+                """
+                SELECT count(*)
+                FROM oauth2_binding_intents
+                WHERE user_id = ?
+                  AND consumed_at IS NULL
+                """,
+                Integer.class,
+                userId
+        );
+        assertThat(count).isNotNull();
+        return count;
     }
 
     @Test

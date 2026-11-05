@@ -27,7 +27,9 @@
         <maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
         <dependency-check-maven.version>12.2.2</dependency-check-maven.version>
         <dependency-check.fail-build-on-cvss>7</dependency-check.fail-build-on-cvss>
-        <tomcat.version>10.1.57</tomcat.version>
+        <!-- Coverage is report-only: no jacoco:check execution or thresholds. -->
+        <jacoco.version>0.8.13</jacoco.version>
+        <tomcat.version>10.1.61</tomcat.version>
         <log4j2.version>2.26.1</log4j2.version>
         <jackson-bom.version>2.21.5</jackson-bom.version>
         <postgresql.version>42.7.13</postgresql.version>
@@ -35,7 +37,7 @@
         <bouncycastle.version>1.85</bouncycastle.version>
         <nimbus-jose-jwt.version>9.47</nimbus-jose-jwt.version>
         <commons-lang3.version>3.20.0</commons-lang3.version>
-        <swagger-ui.version>5.32.11</swagger-ui.version>
+        <swagger-ui.version>5.34.1</swagger-ui.version>
         <web3j.version>4.11.0</web3j.version>
     </properties>
 
@@ -359,6 +361,29 @@
                 </configuration>
             </plugin>
             <plugin>
+                <!-- Report-only coverage measurement. The report goal is bound to
+                     the test phase and there is intentionally no check goal, so
+                     coverage never fails the build. -->
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <executions>
+                    <execution>
+                        <id>prepare-jacoco-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>jacoco-report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <groupId>org.flywaydb</groupId>
                 <artifactId>flyway-maven-plugin</artifactId>
                 <version>${flyway.version}</version>
@@ -372,4 +397,58 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+            Explicitly scoped mutation testing. This profile is opt-in only:
+            `mvn test`, `mvn verify` and scripts/verify.sh never activate it.
+            Run it manually against the security-critical classes:
+
+              mvn -Pmutation-testing test-compile org.pitest:pitest-maven:mutationCoverage
+
+            The target classes and their tests are pinned so the run stays
+            small enough to be useful during review instead of becoming a
+            repository-wide mutation campaign.
+        -->
+        <profile>
+            <id>mutation-testing</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-maven</artifactId>
+                        <version>1.17.2</version>
+                        <dependencies>
+                            <dependency>
+                                <groupId>org.pitest</groupId>
+                                <artifactId>pitest-junit5-plugin</artifactId>
+                                <version>1.2.3</version>
+                            </dependency>
+                        </dependencies>
+                        <configuration>
+                            <targetClasses>
+                                <param>org.dddml.uniauth.service.TokenValidationService</param>
+                                <param>org.dddml.uniauth.service.CanonicalEmailService</param>
+                                <param>org.dddml.uniauth.util.Web3SignatureUtils</param>
+                            </targetClasses>
+                            <targetTests>
+                                <param>org.dddml.uniauth.service.TokenValidationServiceTest</param>
+                                <param>org.dddml.uniauth.service.CanonicalEmailServiceTest</param>
+                                <param>org.dddml.uniauth.util.Web3SignatureUtilsTest</param>
+                            </targetTests>
+                            <outputFormats>
+                                <param>HTML</param>
+                                <param>CSV</param>
+                            </outputFormats>
+                            <reportsDirectory>${project.build.directory}/pit-reports</reportsDirectory>
+                            <timestampedReports>false</timestampedReports>
+                            <threads>2</threads>
+                            <timeoutConstant>60</timeoutConstant>
+                            <timeoutFactor>1.5</timeoutFactor>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

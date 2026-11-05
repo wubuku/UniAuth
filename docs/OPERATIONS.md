@@ -115,21 +115,32 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 文档相对链接、源码指纹和 patch hygiene。
 
 Maven dependency suppression 必须有 owner、理由和 UTC 到期日；到期、报告缺失、
-扫描网络失败或审计命令未执行都会失败关闭。当前唯一 suppression 针对未打包的
-Tomcat examples-only CVE，到期日为 2026-09-01；到期前应升级到发布的修复版本并删除
-suppression。
+扫描网络失败或审计命令未执行都会失败关闭。2026-11-04 已把 Tomcat 从 10.1.57
+升级到 10.1.61（包含 `CVE-2026-66299` 修复）并删除原过期条目。当前唯一的活动
+suppression 是 2026-11-05 披露的 Spring Framework / Spring Security
+CVSS >= 7 advisory：根工程 15 条（spring-core 12、spring-security 3），
+邮件组件 12 条（spring-core），各自按包和版本范围精确匹配。
+对应修复版本 6.2.20 / 6.5.12 尚未发布，每条都记录 owner、不可达证据和
+`until="2027-01-31Z"`。上游发布兼容修复版本后必须升级并删除这些条目，不得续期
+成长期豁免。`until` 只接受 xsd:date（`YYYY-MM-DDZ`）；写入完整时间戳会让整份
+suppression 文件解析失败。`swagger-ui` 已升级到 5.34.1（内嵌 DOMPurify 3.4.17，
+真实修复 `CVE-2026-116803` / `CVE-2026-116804`）。
 
 Python audit 当前只允许 `cryptography 48.0.1` 的 `PYSEC-2026-3552`、
-`PYSEC-2026-3553` 和 `PYSEC-2026-3554`。当前资源服务器不使用对应
-PKCS#7/S/MIME 解密或 X.509 chain/name-constraint 路径；例外必须继续精确匹配
-包版本与 advisory，并于 2026-10-01 UTC 前升级、替换或重新评估。
+`PYSEC-2026-3553` 和 `PYSEC-2026-3554`，到期日为 `2027-02-01` UTC。当前资源
+服务器不使用对应 PKCS#7/S/MIME 解密或 X.509 chain/name-constraint 路径；例外
+必须继续精确匹配包版本与 advisory。2026-11-04 已把 `PyJWT` 升级到 2.15.1、
+`Werkzeug` 升级到 3.1.9，新披露的 advisory 不再依赖例外。`cryptography` 49/50
+的 PyPI 发布物没有 Intel macOS wheel，本地 hash 校验安装无法完成；在 Linux
+CI/发布环境升级到 50.x 后必须删除这三个例外。
 
 敏感扫描例外位于 `config/sensitive-scan-exceptions.json`。例外必须按 finding
 fingerprint 精确匹配并包含 owner、充分理由和未来到期日；当前没有例外。
 
-Swagger UI 的当前 Maven WebJar 仍可带来未达到 CVSS 7 阻断线的 DOMPurify medium
-公告。生产已关闭 Swagger/OpenAPI，统一门禁仍保留该风险可见性；可用的兼容修复版本
-发布后应升级，不得通过无期限 suppression 隐藏。
+Swagger UI 的 Maven WebJar 已升级到 5.34.1，内嵌 DOMPurify 3.4.17 已修复
+`CVE-2026-116803` / `CVE-2026-116804`；生产仍关闭 Swagger/OpenAPI，升级是为了
+让统一门禁不再依赖 suppression。后续再出现 medium 公告时同样优先升级兼容版本，
+不得通过无期限 suppression 隐藏。
 
 ## 变更后的验证
 

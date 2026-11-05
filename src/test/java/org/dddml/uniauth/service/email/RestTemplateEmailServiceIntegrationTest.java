@@ -15,7 +15,9 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,6 +31,7 @@ class RestTemplateEmailServiceIntegrationTest {
 
     private static final AtomicReference<String> LAST_API_KEY = new AtomicReference<>();
     private static final AtomicReference<String> LAST_REQUEST_BODY = new AtomicReference<>();
+    private static volatile CountDownLatch slowResponseGate = new CountDownLatch(0);
     private static final HttpServer SERVER = startServer();
 
     @jakarta.annotation.Resource
@@ -75,13 +78,18 @@ class RestTemplateEmailServiceIntegrationTest {
 
     @Test
     void readTimeoutKeepsTheExistingFailedResultSemantics() {
-        EmailSendResult result = emailService.sendSimpleEmail(
-            "slow@example.test",
-            "Slow",
-            "<p>Slow</p>"
-        );
+        slowResponseGate = new CountDownLatch(1);
+        try {
+            EmailSendResult result = emailService.sendSimpleEmail(
+                "slow@example.test",
+                "Slow",
+                "<p>Slow</p>"
+            );
 
-        assertThat(result).isEqualTo(EmailSendResult.FAILED);
+            assertThat(result).isEqualTo(EmailSendResult.FAILED);
+        } finally {
+            slowResponseGate.countDown();
+        }
     }
 
     @Test
@@ -153,8 +161,15 @@ class RestTemplateEmailServiceIntegrationTest {
                 capture(exchange);
                 String body = LAST_REQUEST_BODY.get();
                 if (body != null && body.contains("slow@example.test")) {
+                    // The test releases the gate only after the client has
+                    // observed its 150ms read timeout, so the handler cannot
+                    // answer before the timeout regardless of machine speed.
                     try {
-                        Thread.sleep(500);
+                        if (!slowResponseGate.await(5, TimeUnit.SECONDS)) {
+                            throw new IllegalStateException(
+                                "slowResponseGate was not released by the test"
+                            );
+                        }
                     } catch (InterruptedException exception) {
                         Thread.currentThread().interrupt();
                     }

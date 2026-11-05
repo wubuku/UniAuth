@@ -6,6 +6,8 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib/postgres-readiness.sh
+source "$PROJECT_DIR/scripts/lib/postgres-readiness.sh"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uniauth-backup-restore.XXXXXX")"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 CONTAINER_NAME="uniauth-backup-restore-${RUN_ID}"
@@ -55,7 +57,8 @@ db_value() {
 }
 
 echo "1/6 Start PostgreSQL 16.13 and migrate the source database"
-docker run -d --rm \
+# No --rm: a crashed container must keep its logs until the EXIT trap removes it.
+docker run -d \
     --name "$CONTAINER_NAME" \
     -e "POSTGRES_DB=$SOURCE_DATABASE" \
     -e "POSTGRES_USER=$DATABASE_USER" \
@@ -66,21 +69,12 @@ DATABASE_PORT="$(
     docker port "$CONTAINER_NAME" 5432/tcp \
         | awk -F: 'NR == 1 {print $NF}'
 )"
-for _ in $(seq 1 60); do
-    if PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
-            -h 127.0.0.1 \
-            -p "$DATABASE_PORT" \
-            -U "$DATABASE_USER" \
-            -d "$SOURCE_DATABASE" >/dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-done
-PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
-    -h 127.0.0.1 \
-    -p "$DATABASE_PORT" \
-    -U "$DATABASE_USER" \
-    -d "$SOURCE_DATABASE" >/dev/null 2>&1 \
+wait_for_disposable_postgres \
+    "$CONTAINER_NAME" \
+    "$DATABASE_PORT" \
+    "$DATABASE_USER" \
+    "$DATABASE_PASSWORD" \
+    "$SOURCE_DATABASE" \
     || fail "disposable PostgreSQL did not become ready"
 
 {

@@ -8,6 +8,9 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MIGRATION_DIR="$PROJECT_DIR/src/main/resources/db/migration/postgresql"
+# shellcheck source=scripts/lib/postgres-readiness.sh
+source "$PROJECT_DIR/scripts/lib/postgres-readiness.sh"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uniauth-http-e2e.XXXXXX")"
 RUN_ID="$(date +%s)-$$"
 CONTAINER_NAME="uniauth-http-e2e-${RUN_ID}"
@@ -158,6 +161,8 @@ EMAIL_SERVICE_URL="http://127.0.0.1:${EMAIL_SERVICE_PORT}"
 EMAIL_STUB_URL="http://127.0.0.1:${EMAIL_STUB_PORT}"
 ACTIVE_EMAIL_SERVICE_URL="$EMAIL_SERVICE_URL"
 EMAIL_DELIVERY_WORKER_ENABLED_VALUE=true
+WEB3_MAX_ACTIVE_SOURCE_VALUE=10
+WEB3_MAX_ACTIVE_GLOBAL_VALUE=1000
 
 db_value() {
     local sql="$1"
@@ -168,6 +173,34 @@ db_value() {
         -U "$DATABASE_USER" \
         -d "$DATABASE_NAME" \
         -c "$sql"
+}
+
+sort_versions() {
+    LC_ALL=C sort -t. -k1,1n -k2,2n -k3,3n
+}
+
+# Expected Flyway versions are derived from the migration directory so a new
+# V9 is expected automatically and a missing/unapplied migration still fails.
+flyway_expected_versions() {
+    local directory="$1"
+    find "$directory" -maxdepth 1 -type f -name 'V*__*.sql' -print \
+        | sed -E 's#.*/V([0-9]+(_[0-9]+)*)__.*$#\1#' \
+        | tr '_' '.' \
+        | sort_versions
+}
+
+self_test_flyway_version_derivation() {
+    local directory="$TEMP_DIR/flyway-version-self-test"
+    mkdir -p "$directory"
+    : >"$directory/V1__first.sql"
+    : >"$directory/V10__tenth.sql"
+    : >"$directory/V2_1__minor.sql"
+    : >"$directory/R__repeatable.sql"
+    local expected actual
+    expected=$'1\n2.1\n10'
+    actual="$(flyway_expected_versions "$directory")"
+    [ "$actual" = "$expected" ] \
+        || fail "Flyway version derivation returned [$actual] instead of [$expected]"
 }
 
 email_service_db_value() {
@@ -437,7 +470,8 @@ start_email_service() {
         mvn -q -DskipTests package
     )
 
-    docker run -d --rm \
+    # No --rm: a crashed container must keep its logs until the EXIT trap removes it.
+    docker run -d \
         --name "$EMAIL_SERVICE_CONTAINER_NAME" \
         -e "POSTGRES_DB=$EMAIL_SERVICE_DATABASE_NAME" \
         -e "POSTGRES_USER=$EMAIL_SERVICE_DATABASE_USER" \
@@ -449,23 +483,13 @@ start_email_service() {
             | awk -F: 'NR == 1 {print $NF}'
     )"
 
-    for _ in $(seq 1 60); do
-        if PGPASSWORD="$EMAIL_SERVICE_DATABASE_PASSWORD" pg_isready \
-            -h 127.0.0.1 \
-            -p "$EMAIL_SERVICE_DATABASE_PORT" \
-            -U "$EMAIL_SERVICE_DATABASE_USER" \
-            -d "$EMAIL_SERVICE_DATABASE_NAME" >/dev/null 2>&1; then
-            break
-        fi
-        sleep 1
-    done
-    if ! PGPASSWORD="$EMAIL_SERVICE_DATABASE_PASSWORD" pg_isready \
-        -h 127.0.0.1 \
-        -p "$EMAIL_SERVICE_DATABASE_PORT" \
-        -U "$EMAIL_SERVICE_DATABASE_USER" \
-        -d "$EMAIL_SERVICE_DATABASE_NAME" >/dev/null 2>&1; then
-        fail "reference email service PostgreSQL did not become ready"
-    fi
+    wait_for_disposable_postgres \
+        "$EMAIL_SERVICE_CONTAINER_NAME" \
+        "$EMAIL_SERVICE_DATABASE_PORT" \
+        "$EMAIL_SERVICE_DATABASE_USER" \
+        "$EMAIL_SERVICE_DATABASE_PASSWORD" \
+        "$EMAIL_SERVICE_DATABASE_NAME" \
+        || fail "reference email service PostgreSQL did not become ready"
 
     (
         export SPRING_PROFILES_ACTIVE=dev
@@ -572,6 +596,8 @@ start_application() {
         export APP_EMAIL_DELIVERY_DEADLINE_SECONDS=120
         export APP_FRONTEND_URL="$BASE_URL"
         export APP_WEB3_DOMAIN="127.0.0.1:${SERVER_PORT}"
+        export WEB3_MAX_ACTIVE_SOURCE="$WEB3_MAX_ACTIVE_SOURCE_VALUE"
+        export WEB3_MAX_ACTIVE_GLOBAL="$WEB3_MAX_ACTIVE_GLOBAL_VALUE"
         export INTROSPECTION_CLIENT_ID
         export INTROSPECTION_CLIENT_SECRET
         exec "$PROJECT_DIR/start.sh"
@@ -689,8 +715,25 @@ NODE
     )
 }
 
+reset_web3_capacity_state() {
+    db_value "
+        DELETE FROM web3_nonces;
+        DELETE FROM web3_challenge_counters;
+    " >/dev/null
+}
+
+get_web3_nonce() {
+    local address="$1"
+    local body_file="$2"
+    local headers_file="$3"
+    curl -sS -D "$headers_file" -o "$body_file" -w '%{http_code}' \
+        "${BASE_URL}/api/auth/web3/nonce/${address}"
+}
+
 echo "HTTP E2E: starting disposable PostgreSQL"
-docker run -d --rm \
+self_test_flyway_version_derivation
+# No --rm: a crashed container must keep its logs until the EXIT trap removes it.
+docker run -d \
     --name "$CONTAINER_NAME" \
     -e "POSTGRES_DB=$DATABASE_NAME" \
     -e "POSTGRES_USER=$DATABASE_USER" \
@@ -703,23 +746,13 @@ DATABASE_PORT="$(
         | awk -F: 'NR == 1 {print $NF}'
 )"
 
-for _ in $(seq 1 60); do
-    if PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
-        -h 127.0.0.1 \
-        -p "$DATABASE_PORT" \
-        -U "$DATABASE_USER" \
-        -d "$DATABASE_NAME" >/dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-done
-if ! PGPASSWORD="$DATABASE_PASSWORD" pg_isready \
-    -h 127.0.0.1 \
-    -p "$DATABASE_PORT" \
-    -U "$DATABASE_USER" \
-    -d "$DATABASE_NAME" >/dev/null 2>&1; then
-    fail "disposable PostgreSQL did not become ready"
-fi
+wait_for_disposable_postgres \
+    "$CONTAINER_NAME" \
+    "$DATABASE_PORT" \
+    "$DATABASE_USER" \
+    "$DATABASE_PASSWORD" \
+    "$DATABASE_NAME" \
+    || fail "disposable PostgreSQL did not become ready"
 
 echo "HTTP E2E: starting the reference email REST service"
 start_email_service
@@ -728,7 +761,7 @@ echo "HTTP E2E: starting the real application through start.sh"
 start_application
 wait_for_application
 
-echo "1/17 Verify Flyway-owned PostgreSQL startup"
+echo "1/18 Verify Flyway-owned PostgreSQL startup"
 [ "$(db_value "
     SELECT count(*)
     FROM uniauth_flyway_schema_history
@@ -982,7 +1015,7 @@ expect_db_rejection "
     COMMIT;
 " "database accepted an invalid provider login-method shape"
 
-echo "2/17 Verify one CORS policy across every security filter chain"
+echo "2/18 Verify one CORS policy across every security filter chain"
 for cors_case in \
         "/api/auth/login POST" \
         "/oauth2/jwks GET" \
@@ -993,7 +1026,7 @@ for cors_case in \
     assert_cors_preflight "$cors_path" "$cors_method" "https://evil.example" "403"
 done
 
-echo "3/17 Verify fail-closed HTTP security boundaries"
+echo "3/18 Verify fail-closed HTTP security boundaries"
 [ "$(request_status GET /api/user)" = "401" ] \
     || fail "anonymous current-user request did not return 401"
 [ "$(request_status GET /api/auth/check-user)" = "403" ] \
@@ -1009,7 +1042,7 @@ jwks_response="$(curl -sS "${BASE_URL}/oauth2/jwks")"
 [ "$(jq -er '.keys[0].alg' <<<"$jwks_response")" = "RS256" ] \
     || fail "JWKS did not expose RS256"
 
-echo "4/17 Register and authenticate a local account"
+echo "4/18 Register and authenticate a local account"
 bootstrap_admin_user_id="$(db_value "
     SELECT u.id
     FROM users u
@@ -1322,7 +1355,7 @@ db_value "
     WHERE user_id = '$local_user_id';
 " >/dev/null
 
-echo "5/17 Verify protected APIs, persistence, and JWT contracts"
+echo "5/18 Verify protected APIs, persistence, and JWT contracts"
 current_user="$(
     curl -sS \
         -H "Authorization: Bearer $access_token" \
@@ -1402,7 +1435,7 @@ introspection="$(introspect_token "$access_token")"
       AND last_used_at IS NOT NULL;
 ")" = "1" ] || fail "successful login did not persist last_used_at"
 
-echo "6/17 Restart the application without replaying migrations or losing data"
+echo "6/18 Restart the application without replaying migrations or losing data"
 stop_application
 start_application
 wait_for_application
@@ -1424,7 +1457,7 @@ restarted_user="$(
 [ "$(jq -er '.userId' <<<"$restarted_user")" = "$local_user_id" ] \
     || fail "the pre-restart access token did not work after restart"
 
-echo "7/17 Refresh tokens and reject token type confusion"
+echo "7/18 Refresh tokens and reject token type confusion"
 refresh_headers="$TEMP_DIR/refresh-headers.txt"
 refresh_response="$(
     curl -sS -D "$refresh_headers" -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
@@ -1492,7 +1525,7 @@ access_as_refresh_status="$(
 [ "$access_as_refresh_status" = "401" ] \
     || fail "access token was accepted as a refresh token"
 
-echo "8/17 Authenticate a new Web3 account and reject message tampering"
+echo "8/18 Authenticate a new Web3 account and reject message tampering"
 web3_wallet="$(create_wallet)"
 web3_address="$(jq -er '.address' <<<"$web3_wallet")"
 web3_challenge="$(signed_challenge "$web3_wallet")"
@@ -1599,7 +1632,7 @@ repeat_web3_login="$(post_json /api/auth/web3/verify "$repeat_web3_challenge")"
 [ "$(jq -er '.isNewUser' <<<"$repeat_web3_login")" = "false" ] \
     || fail "repeat Web3 login was incorrectly marked as new"
 
-echo "9/17 Verify header/cookie identity precedence"
+echo "9/18 Verify header/cookie identity precedence"
 conflicting_identity_status="$(
     curl -sS -o "$TEMP_DIR/conflicting-identity.json" -w '%{http_code}' \
         -H "Authorization: Bearer $web3_access_token" \
@@ -1631,7 +1664,7 @@ manual_cookie_identity="$(
 [ "$(jq -er '.userId' <<<"$manual_cookie_identity")" = "$local_user_id" ] \
     || fail "cookie-only authentication selected the wrong identity"
 
-echo "10/17 Bind and manage a Web3 login method for the local account"
+echo "10/18 Bind and manage a Web3 login method for the local account"
 binding_wallet="$(create_wallet)"
 binding_challenge="$(signed_challenge "$binding_wallet")"
 missing_binding_token_status="$(
@@ -1876,7 +1909,7 @@ delete_last_status="$(
 [ "$delete_last_status" = "400" ] \
     || fail "the last login method could be deleted"
 
-echo "11/17 Run the email registration and password-reset HTTP flow"
+echo "11/18 Run the email registration and password-reset HTTP flow"
 email_flow_address="shell-email-${RUN_ID}@example.invalid"
 if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     BASE_URL="$BASE_URL" \
@@ -1920,7 +1953,7 @@ fi
       AND status = 'PENDING';
 ")" = "2" ] || fail "reference email service did not persist rendered template content"
 
-echo "12/17 Run registration and password-reset rejection contracts"
+echo "12/18 Run registration and password-reset rejection contracts"
 if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     BASE_URL="$BASE_URL" \
     EMAIL_EXISTS="$email_flow_address" \
@@ -1930,7 +1963,7 @@ if ! DISPOSABLE_TEST_ENVIRONMENT=true \
     fail "registration/password-reset rejection contract subflow failed"
 fi
 
-echo "13/17 Verify durable email delivery recovery and terminal failure"
+echo "13/18 Verify durable email delivery recovery and terminal failure"
 stop_application
 start_email_stub
 ACTIVE_EMAIL_SERVICE_URL="$EMAIL_STUB_URL"
@@ -1966,7 +1999,11 @@ pending_response="$(
             '{email: $email, purpose: "REGISTRATION"}')"
 )"
 pending_handle="$(jq -er '.challengeHandle' <<<"$pending_response")"
-sleep 0.5
+# Deterministic negative observation: stop_application() terminates the process
+# tree and waits for exit, so no scheduler can act after this barrier. Taking the
+# assertions after shutdown removes the old 0.5s wall-clock guess while still
+# catching any synchronous (erroneous) delivery performed during the request.
+stop_application
 [ "$(db_value "
     SELECT delivery_status || ':' || usage_status
     FROM email_verification_codes
@@ -1980,7 +2017,6 @@ sleep 0.5
 ")" = "PENDING:0" ] \
     || fail "worker-disabled outbox was processed unexpectedly"
 
-stop_application
 EMAIL_DELIVERY_WORKER_ENABLED_VALUE=true
 start_application
 wait_for_application
@@ -2060,7 +2096,7 @@ for delivery_case in rejected rate-limited; do
         || fail "$delivery_case delivery did not exhaust the retry budget"
 done
 
-echo "14/17 Exhaust an invalid email verification retry budget"
+echo "14/18 Exhaust an invalid email verification retry budget"
 retry_email="shell-retry-${RUN_ID}@example.invalid"
 retry_send_payload="$(
     jq -cn \
@@ -2119,7 +2155,7 @@ done
 ")" = "INVALIDATED" ] \
     || fail "exhausted email verification challenge remained usable"
 
-echo "15/17 Verify logout cookie clearing"
+echo "15/18 Verify logout cookie clearing"
 logout_headers="$TEMP_DIR/logout-headers.txt"
 logout_response="$(
     curl -sS -D "$logout_headers" \
@@ -2161,7 +2197,7 @@ revoked_introspection="$(introspect_token "$new_access_token")"
       AND revoke_reason = 'LOGOUT';
 ")" -ge "1" ] || fail "logout did not persist token-family revocation"
 
-echo "16/17 Rehearse emergency signing-key rotation and revocation"
+echo "16/18 Rehearse emergency signing-key rotation and revocation"
 rm -f "$COOKIE_JAR"
 bootstrap_csrf
 login_local_session
@@ -2198,11 +2234,150 @@ rm -f "$retired_key_file"
 [ ! -e "$retired_key_file" ] \
     || fail "retired signing key fixture was not destroyed"
 
-echo "17/17 Verify final database invariants"
+echo "17/18 Enforce Web3 challenge source and global capacity, and release on consume"
+
+# Source bucket: one active challenge from this connection is allowed; a
+# second wallet must be rejected even though the global bucket has room.
+stop_application
+reset_web3_capacity_state
+WEB3_MAX_ACTIVE_SOURCE_VALUE=1
+WEB3_MAX_ACTIVE_GLOBAL_VALUE=10
+start_application
+wait_for_application
+
+source_wallet="$(create_wallet)"
+source_address="$(jq -er '.address' <<<"$source_wallet")"
+source_challenge="$(signed_challenge "$source_wallet")"
+[ "$(db_value "
+    SELECT active_count
+    FROM web3_challenge_counters
+    WHERE bucket_key = 'global';
+")" = "1" ] \
+    || fail "source-capacity fixture did not reserve exactly one global slot"
+[ "$(db_value "
+    SELECT COALESCE(SUM(active_count), 0)
+    FROM web3_challenge_counters
+    WHERE bucket_key LIKE 'source:%';
+")" = "1" ] || fail "source-capacity fixture did not reserve a source slot"
+
+blocked_wallet="$(create_wallet)"
+blocked_address="$(jq -er '.address' <<<"$blocked_wallet")"
+blocked_status="$(get_web3_nonce \
+    "$blocked_address" \
+    "$TEMP_DIR/web3-source-capacity.json" \
+    "$TEMP_DIR/web3-source-capacity.headers")"
+[ "$blocked_status" = "429" ] \
+    || fail "a second challenge from the same source was not rejected (status $blocked_status)"
+[ "$(jq -er '.error' "$TEMP_DIR/web3-source-capacity.json")" \
+    = "WEB3_CHALLENGE_CAPACITY" ] \
+    || fail "source capacity rejection did not use WEB3_CHALLENGE_CAPACITY"
+grep -Eqi '^Retry-After: 1' "$TEMP_DIR/web3-source-capacity.headers" \
+    || fail "source capacity rejection did not send Retry-After: 1"
+[ "$(db_value "
+    SELECT active_count
+    FROM web3_challenge_counters
+    WHERE bucket_key = 'global';
+")" = "1" ] || fail "a rejected source reservation leaked a global slot"
+
+source_login="$(post_json /api/auth/web3/verify "$source_challenge")"
+[ -n "$(jq -er '.userId' <<<"$source_login")" ] \
+    || fail "the reserved source challenge could not be consumed"
+released_status="$(get_web3_nonce \
+    "$blocked_address" \
+    "$TEMP_DIR/web3-source-released.json" \
+    "$TEMP_DIR/web3-source-released.headers")"
+[ "$released_status" = "200" ] \
+    || fail "source capacity was not released after consuming the challenge (status $released_status)"
+released_payload="$(resign_web3_challenge \
+    "$blocked_wallet" \
+    "$(jq -er '.message' "$TEMP_DIR/web3-source-released.json")" \
+    "$(jq -er '.nonce' "$TEMP_DIR/web3-source-released.json")" \
+    "$(jq -er '.challengeHandle' "$TEMP_DIR/web3-source-released.json")")"
+released_login="$(post_json /api/auth/web3/verify "$released_payload")"
+[ -n "$(jq -er '.userId' <<<"$released_login")" ] \
+    || fail "the released source challenge could not be consumed"
+
+# Global bucket: one active challenge across all sources. The second wallet is
+# rejected while the source bucket still has free slots.
+stop_application
+reset_web3_capacity_state
+WEB3_MAX_ACTIVE_SOURCE_VALUE=10
+WEB3_MAX_ACTIVE_GLOBAL_VALUE=1
+start_application
+wait_for_application
+
+global_wallet="$(create_wallet)"
+global_challenge="$(signed_challenge "$global_wallet")"
+[ "$(db_value "
+    SELECT active_count
+    FROM web3_challenge_counters
+    WHERE bucket_key = 'global';
+")" = "1" ] \
+    || fail "global-capacity fixture did not reserve the single global slot"
+[ "$(db_value "
+    SELECT COALESCE(SUM(active_count), 0)
+    FROM web3_challenge_counters
+    WHERE bucket_key LIKE 'source:%';
+")" = "1" ] || fail "global-capacity fixture did not reserve a source slot"
+
+global_blocked_wallet="$(create_wallet)"
+global_blocked_address="$(jq -er '.address' <<<"$global_blocked_wallet")"
+global_blocked_status="$(get_web3_nonce \
+    "$global_blocked_address" \
+    "$TEMP_DIR/web3-global-capacity.json" \
+    "$TEMP_DIR/web3-global-capacity.headers")"
+[ "$global_blocked_status" = "429" ] \
+    || fail "a second challenge with a full global bucket was not rejected (status $global_blocked_status)"
+[ "$(jq -er '.error' "$TEMP_DIR/web3-global-capacity.json")" \
+    = "WEB3_CHALLENGE_CAPACITY" ] \
+    || fail "global capacity rejection did not use WEB3_CHALLENGE_CAPACITY"
+grep -Eqi '^Retry-After: 1' "$TEMP_DIR/web3-global-capacity.headers" \
+    || fail "global capacity rejection did not send Retry-After: 1"
+[ "$(db_value "
+    SELECT COALESCE(SUM(active_count), 0)
+    FROM web3_challenge_counters
+    WHERE bucket_key LIKE 'source:%';
+")" = "1" ] || fail "a rejected global reservation leaked a source slot"
+
+global_login="$(post_json /api/auth/web3/verify "$global_challenge")"
+[ -n "$(jq -er '.userId' <<<"$global_login")" ] \
+    || fail "the reserved global challenge could not be consumed"
+global_released_status="$(get_web3_nonce \
+    "$global_blocked_address" \
+    "$TEMP_DIR/web3-global-released.json" \
+    "$TEMP_DIR/web3-global-released.headers")"
+[ "$global_released_status" = "200" ] \
+    || fail "global capacity was not released after consuming the challenge (status $global_released_status)"
+global_released_payload="$(resign_web3_challenge \
+    "$global_blocked_wallet" \
+    "$(jq -er '.message' "$TEMP_DIR/web3-global-released.json")" \
+    "$(jq -er '.nonce' "$TEMP_DIR/web3-global-released.json")" \
+    "$(jq -er '.challengeHandle' "$TEMP_DIR/web3-global-released.json")")"
+global_released_login="$(post_json /api/auth/web3/verify "$global_released_payload")"
+[ -n "$(jq -er '.userId' <<<"$global_released_login")" ] \
+    || fail "the released global challenge could not be consumed"
+
+echo "18/18 Verify final database invariants"
 [ "$(db_value "SELECT current_database();")" = "$DATABASE_NAME" ] \
     || fail "the E2E harness connected to an unexpected database"
-[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history;")" = "8" ] \
-    || fail "Flyway history contained unexpected rows after application restarts"
+expected_flyway_versions="$(flyway_expected_versions "$MIGRATION_DIR")"
+[ -n "$expected_flyway_versions" ] \
+    || fail "no versioned Flyway migrations were found under $MIGRATION_DIR"
+expected_flyway_count="$(printf '%s\n' "$expected_flyway_versions" | wc -l | tr -d ' ')"
+applied_flyway_versions="$(db_value "
+    SELECT version
+    FROM uniauth_flyway_schema_history
+    WHERE success AND type = 'SQL' AND version IS NOT NULL;
+" | sort_versions)"
+[ "$applied_flyway_versions" = "$expected_flyway_versions" ] \
+    || fail "applied Flyway versions do not match $MIGRATION_DIR (applied [$applied_flyway_versions], expected [$expected_flyway_versions])"
+# Count only the same versioned SQL rows the set assertion above compares.
+# Repeatables (version IS NULL) and the V0 baseline must not trip this check,
+# while a duplicated or missing versioned migration still fails.
+[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history WHERE success AND type = 'SQL' AND version IS NOT NULL;")" = "$expected_flyway_count" ] \
+    || fail "Flyway versioned history row count does not match the migration directory"
+[ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history WHERE NOT success;")" = "0" ] \
+    || fail "Flyway history contained failed migrations"
 active_web3_challenges="$(db_value "
     SELECT count(*)
     FROM web3_nonces

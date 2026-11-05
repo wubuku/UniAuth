@@ -398,8 +398,10 @@ public class LoginMethodService {
                         "User has no local password"
                 ));
         String expectedHash = loginMethod.getLocalPasswordHash();
-        if (expectedHash == null
-                || !passwordEncoder.matches(currentPassword, expectedHash)) {
+        if (expectedHash == null) {
+            throw new IllegalStateException("User has no local password");
+        }
+        if (!passwordEncoder.matches(currentPassword, expectedHash)) {
             throw new BadCredentialsException("Current password is invalid");
         }
 

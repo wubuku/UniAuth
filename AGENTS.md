@@ -9,7 +9,11 @@
 - `docs/ARCHITECTURE.md`: 当前模块、安全链、身份和 JWT 模型。
 - `docs/CONFIGURATION.md`: 端口、profile、数据库、回调、CORS 和密钥基线。
 - `docs/DEVELOPMENT.md`: 安全构建、启动前检查和日常工作流。
-- `docs/VERIFICATION.md`: 权威交付门槛、验证层级、2026-08-12 基线和测试缺口。
+- `docs/VERIFICATION.md`: 权威交付门槛、验证层级、当前基线和测试缺口。
+- `docs/TEST_MAP.md`: 行为 → 测试映射、仅 Playwright 覆盖的行为、确定性约束和
+  flaky 复跑入口；修改模块前先查该表。
+- `docs/TESTING.md`: 测试分层与存放位置、夹具纪律、禁止固定等待、覆盖/变异/
+  腐化守卫、共享脚本一致性规则、就绪预算校准与健康快照入口。
 - `docs/OPERATIONS.md`: 生产 guard、readiness、备份恢复、紧急密钥轮换和供应链门禁。
 - `docs/EMAIL_LOGIN_BROWSER_E2E.md`: 真实邮箱注册/登录、前端回跳、跨 origin
   Python API Bearer 访问和独立服务脚本。
@@ -25,6 +29,15 @@
 - `docs/drafts/F4_SUPPLY_CHAIN_PRODUCTION_OPERATIONS_HARDENING_IMPLEMENTATION.md`:
   已完成 F4 的供应链、生产配置、密钥、readiness 和运维门禁证据。
 - `docs/drafts/NEXT_HARDENING_IMPLEMENTATION_PLAN.md`: 历史批次执行记录；不再驱动开放循环。
+- `docs/drafts/TEST_HARDENING_IMPLEMENTATION.md`: 2026-11-04 测试与验收底座加固的
+  范围、决策、证据和残余风险；§15 是第九批（守卫绕行口、交错证据、预算校准、
+  健康快照、负向自测）的实施记录，§16 是第十批（运行时报告口径、STALE、shadow
+  写法变体、跨标签契约确认与反向审计）的实施记录，§17 是第十一批（独立审计 12
+  条逐条核实、容量 E2E、CSP 生产断言与过滤器顺序、缺键失败关闭、组件门禁记录），
+  §18 是第十二批（组件记录新鲜度与指纹、变异类级字段必填、Flyway 期望版本推导、
+  Chrome 身份预检、响应头单值断言）的实施记录，§19 是第十三批（组件变异守卫顶层
+  对齐、Flyway 行数过滤、组件 mtime/指纹同文件集、记录缺失失败关闭、302 五头同构）
+  的实施记录。
 - `docs/archive/database/README.md`: 旧 SQL 的历史归档和当前替代路径。
 - `reference/email-service/README.md`: 外部邮件 REST 服务的独立参考实现、Flyway 和 E2E。
 
@@ -384,9 +397,13 @@ Vite 会清空并重建 Spring Boot 静态资源目录。当前构建成功，�
 cd frontend
 npm run lint
 npx tsc --noEmit
+npm run test:unit:coverage
 npm run build
 npm run test:e2e
 ```
+
+组件级单测使用独立 `frontend/vitest.config.ts`，只收集 `tests/unit/**`；
+不要把 Playwright 用例放入该目录，也不要为单测修改生产构建或 Playwright 配置。
 
 登录方式 id 的前端类型已统一为 UUID string。跨端修改时仍要核对真实 JSON，
 并同步 service、types、页面、Playwright 和 Shell contract。
@@ -399,12 +416,28 @@ npm run test:e2e
 快速分层验证：
 
 ```bash
+PYTHON_BIN=python3 scripts/verify-fast.sh   # 编译 + 后端测试 + 前端 lint/tsc/单测，无 E2E
 mvn clean compile test-compile
 mvn test
-cd frontend && npm run lint && npx tsc --noEmit && npm run build && npm run test:e2e
+cd frontend && npm run lint && npx tsc --noEmit && npm run test:unit:coverage && npm run build && npm run test:e2e
+python3 scripts/coverage-ratchet.py
+python3 scripts/check-test-rot.py
+bash scripts/test-test-rot-guard.sh
+bash scripts/test-coverage-ratchet.sh
+python3 scripts/check-readiness-parity.py
+bash scripts/test-readiness-parity.sh
+mvn test -Dsurefire.runOrder=random -Dsurefire.runOrder.random.seed=20261105
+scripts/test-playwright-shuffled.sh
+JAVA_HOME=/path/to/jdk-21 mvn -Pmutation-testing test-compile \
+  org.pitest:pitest-maven:mutationCoverage
+python3 scripts/check-mutation-baseline.py
+(cd reference/email-service && JAVA_HOME=/path/to/jdk-21 mvn -Pmutation-testing \
+  test-compile org.pitest:pitest-maven:mutationCoverage)
+python3 reference/email-service/scripts/check-mutation-baseline.py
 bash -n build-frontend.sh start.sh start-with-frontend.sh scripts/*.sh \
-  scripts/email-login-e2e/*.sh \
-  reference/email-service/start.sh reference/email-service/scripts/*.sh
+  scripts/email-login-e2e/*.sh scripts/lib/*.sh \
+  reference/email-service/start.sh reference/email-service/scripts/*.sh \
+  reference/email-service/scripts/lib/*.sh
 python3 -c 'from pathlib import Path; [compile(p.read_text(), str(p), "exec") for root in ("python-resource-server", "scripts") for p in Path(root).glob("*.py")]'
 (cd python-resource-server && python3 -m unittest -v test_app.py)
 PYTHON_BIN=python3 scripts/test-email-login-browser-e2e.sh
@@ -417,22 +450,154 @@ PYTHON_BIN=python3 scripts/test-email-login-browser-e2e.sh
 PYTHON_BIN=python3 scripts/verify.sh
 ```
 
-当前加固完成基线（2026-08-12；F1-F5、初始化管理员/登录后改密、完整统一门禁和阶段末连续三轮检查均已完成）：
+当前加固完成基线（2026-11-05 测试底座第十三批：根/组件变异守卫顶层与 `classes`
+失败关闭、Flyway 行数只统计 versioned SQL、组件 mtime 与指纹同文件集、组件记录
+缺失为 MISSING、302 五头单值断言；取代同日第十二批及更早基线）：
 
-- 当前根统一门禁：Maven 270 tests、shared-schema process E2E 4/4、
-  HTTP 17/17、Flyway baseline guard 17/17、Mock Playwright 31/31、
-  生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、Python 资源服务器 20/20、邮件 REST stub
-  contract 12/12；前端严格 `npm ci`、audit、lint、typecheck、build、文档链接和
-  patch hygiene 均通过；完整 `scripts/verify.sh` 15/15 以
-  `PASS: complete repository verification gate` 结束。
+- 当前根统一门禁：Maven 422 tests、前端 Vitest 组件单测 29 tests（5 个文件）、
+  shared-schema process E2E 8/8、HTTP 18/18（含 Web3 source/global 容量与释放）、
+  Flyway baseline guard 17/17、Mock Playwright 31/31、生产 Playwright 2/2、真实邮箱登录浏览器 E2E 1/1、
+  Python 资源服务器 20/20、邮件 REST stub contract 12/12；前端严格 `npm ci`、
+  audit（0 vulnerabilities）、lint、typecheck、`npm run test:unit:coverage`、build、
+  文档链接和 patch hygiene 均通过；完整 `scripts/verify.sh` 15/15 以
+  `PASS: complete repository verification gate` 结束。预检在阶段 1 即检查
+  `channel: 'chrome'` 所需的真实 Google Chrome：PATH 候选必须 `--version` 输出含
+  `Google Chrome`，Chromium 等发行版不会被放行，且只有全部候选失败后才打印一次
+  合并错误；macOS 仍按应用路径检查。
+- 根 HTTP E2E 的 Flyway 期望版本从 `src/main/resources/db/migration/postgresql`
+  的 `V*__*.sql` 推导（`R__` 不计入），断言已应用成功集合等于目录集合且无失败行。
+  行数统计只覆盖 `success AND type='SQL' AND version IS NOT NULL`，所以 `R__` 与
+  V0 baseline 不会假失败；新增 V9 自动纳入，脚本自带 `1/2.1/10` 推导自测。
+- 邮件组件门禁写入 `.local/uniauth/health/email-last-verify.json`（runId、
+  exitCode、passed、sourceFingerprint、Surefire 聚合），根门禁调用组件门禁时把
+  该目录指向根健康目录，因此 154/154 有独立可复核记录，不依赖文档自述。记录
+  缺失在快照中为 `MISSING`（必需层，Overall 降级）；目录创建或写入失败会让组件
+  门禁非零退出。组件 mtime 与指纹共用 `git ls-files -co --exclude-standard`
+  文件集，被忽略的 `.env`/`target` 不会触发 STALE。
+- disposable PostgreSQL 就绪统一走 `scripts/lib/postgres-readiness.sh`：
+  0.25s→2s 封顶自适应退避、预算默认 60s（`POSTGRES_READY_TIMEOUT_SECONDS` 可覆盖）、
+  超时打印 `pg_isready`/容器状态/日志尾部并失败关闭。禁止再手写 `for + sleep`；
+  历史 12s 与 60s 预算不一致的假失败即来自后者。
+- 邮件参考组件有组件内等价 helper
+  `reference/email-service/scripts/lib/postgres-readiness.sh`（组件 verify 只快照本
+  目录，不能 source 仓库根脚本）；三个 harness 已统一。两份副本的共享代码区用
+  `# === BEGIN/END SHARED POSTGRES READINESS ===` 标记，只允许标记外存在差异；
+  `scripts/check-readiness-parity.py` 做规范化比对（仅忽略 CRLF 与行尾空白），
+  并额外检查“共享区函数名不得在标记外重复定义”：把共享函数复制到标记外再改，
+  会以 `redefined outside the markers` 失败；标记外不同名的组件专有辅助函数不误伤。
+  `scripts/test-readiness-parity.sh` 十一项自测覆盖单边改动、缺标记、复制到标记外
+  修改、合法组件 helper，以及 `function name {` / `name () {` 变体与注释、字符串、
+  heredoc 不误判，二者接入 `verify.sh` 阶段 1。组件专有行为写到标记外，
+  例如 `reference/email-service/scripts/lib/application-readiness.sh`。
+- 邮件组件应用启动就绪用有界自适应轮询：`wait_for_application_health` 默认 90s，
+  每 5s 打印进度，进程提前退出立即失败；`wait_for_process_exit` 默认 60s，只有进程
+  真的退出才返回 0，超时返回 1。`expect_startup_failure` 拿到 1 时打印日志尾部并
+  失败，绝不把“等超时”当成“期待失败成立”；语义自测在组件
+  `scripts/test-application-readiness.sh`（六项，含 metrics 写入和不可写路径不改变
+  成功结果）。预算 90s/60s 有本机实测依据：顺序冷启动 10 样本中位 3.52s/最大
+  4.32s，4 并发 JVM×3 轮 12 样本中位 5.45s/最大 5.69s，守卫失败退出 1.50–1.58s；
+  相对最大值余量 20.8×/15.8×/38×，方法与局限见 `docs/TESTING.md` §12。
+- 前端并发用例（重复 401 合并刷新、跨标签 cookie 轮换）除 barrier 外还统计同时在途
+  401 并断言最大并发 ≥ 2，且该断言排在行为断言之前；删 barrier 不会让请求串行
+  （两个独立 `useEffect` 在挂载时并发发出），它拦截的是应用退化成串行请求。
+  第九批升级为事件序列证据：记录 `401:<label>`/`refresh` 的单调时间戳，断言两个 401
+  都出现在第一次 refresh 之前，并断言时间戳非递减。单页契约是 refresh 恰好一次；
+  跨标签按真实实现允许 1–2 次（B 在 refresh 启动时才读 marker，A 完成后可能合法再刷），
+  因此断言“至少 1、每标签最多 1（≤2）”，不写与实现不符的 `=== 1`。
+- 健康快照入口 `python3 scripts/health-snapshot.py`：汇总门禁、后端/前端测试数量、
+  覆盖率棘轮、变异基线、腐化命中、组件门禁记录与就绪耗时，输出人类可读表格，JSON 写入
+  `.local/uniauth/health/snapshot.json`（已 ignored）。前端测试数只读 Vitest /
+  Playwright JSON reporter 的运行时报告（`frontend/reports/`）；门禁记录存在时
+  只认记录指标，缺失即 MISSING，不回读工作区旧报告；报告缺失或报告内部
+  总数与记录数不一致即失败，不回落到 `vitest list` 的声明值（旧口径 28，运行时
+  29）。覆盖率基线缺 scope/metric 直接失败，不再按 0.0 静默放宽。组件门禁写入
+  `.local/uniauth/health/email-last-verify.json`，快照显示 `component-tests`
+  的 Surefire 总数，并校验 `recordedAt`（24h）、组件源码 mtime 与按组件门禁同一
+  路径子集重算的 `sourceFingerprint`；过期/不匹配即为 STALE。`verify.sh` 结束时
+  以 `--record-gate` 写 `last-verify.json`；记录超过 24h 或源码 mtime 晚于记录
+  时间会显式标为 STALE 并 exit 1。自测 `scripts/test-health-snapshot.sh` 十七项，
+  覆盖空仓库、覆盖率退化、Surefire 失败与内部计数不一致、Vitest 报告缺失与不一致、
+  记录缺前端指标时不回读工作区、覆盖率基线缺指标、记录自相矛盾、记录过期、
+  源码 mtime 晚于记录、缺变异基线、组件记录过期/指纹不匹配等“失败会误判为成功”
+  的路径。
+- 覆盖率棘轮 `scripts/coverage-ratchet.py`：缺 scope 或 `line`/`branch` 指标即
+  失败，`--update` 对缺失指标输出 `baseline unset ->` 作为显式迁移；自测
+  `scripts/test-coverage-ratchet.sh` 8 项。
+- 测试代码腐化守卫：`scripts/check-test-rot.py` + `config/test-rot-baseline.json`，
+  拦截 `.skip`/`.only`、`@Disabled`、恒真断言、无断言 `@Test`、空测试、固定等待和
+  `TODO/FIXME`；第七批已把历史 7 处固定等待改为确定性写法。第十一批收紧
+  `no-assertion`：`assertDoesNotThrow` 与 `assertThatCode(...).doesNotThrowAnyException()`
+  不再算断言；仓库现有 11 条“仅验证不抛异常”的守卫用例作为人工复核条目写入基线，
+  新增同类命中直接失败。`--update` 是显式登记步骤，接入 `verify.sh` 阶段 1。
+- 快速反馈入口 `scripts/verify-fast.sh` 只跑后端编译 + `mvn test` + 前端
+  lint/tsc/Vitest（实测 126s），不产生交付证据；交付前仍必须跑 `scripts/verify.sh`。
+- 测试约定见 `docs/TESTING.md`：分层与存放位置、Testcontainers/夹具纪律、
+  禁止 sleep/固定端口、wire 契约三处同步、覆盖率棘轮、PIT、腐化守卫。
+- 顺序独立性：Maven 随机顺序（`mvn test -Dsurefire.runOrder=random`）与
+  Playwright 乱序（`scripts/test-playwright-shuffled.sh`，list→shuffle→`--test-list`）
+  均未发现顺序依赖；两者是探针，不进入主门禁。
+- 覆盖率棘轮：`config/coverage-baseline.json` + `scripts/coverage-ratchet.py`，
+  后端容忍 1.0pp、前端 2.0pp；`verify.sh` 阶段 7/10 自动检查。绝对覆盖率仍
+  report-only，但**相对基线下跌超过容忍值会失败**；显式更新基线用
+  `--update`，调低还需 `--allow-lower`。
+- 作用域变异测试已常规化：`config/mutation-baseline.json` +
+  `scripts/check-mutation-baseline.py`，固定跑
+  `TokenValidationService`、`CanonicalEmailService`、`Web3SignatureUtils`；
+  当前 150 mutants、143 killed（95.33%）、3 no-coverage。**PIT 1.17.2 需要 JDK 21**；
+  JDK 25 会报 `Unsupported class file major version 69` 并产生全 `NO_COVERAGE` 的
+  假结果。顶层指标与 `classes` 段均为必需，类级 `generated`/`killed`/`noCoverage`
+  缺一失败，`generated` 下降同样失败（第十二/十三批）；根与组件脚本语义一致，
+  两侧都有负向自测（11/11）。`.github/workflows/mutation-probe.yml` 每周四 04:00 UTC 运行，独立于
+  主流水线。
+- 邮件参考服务另有作用域 PIT：组件 `pom.xml` 的 `mutation-testing` profile 只覆盖
+  `EmailApiKeyFilter`、`EmailResponseSecurityFilter`、`EmailRateLimiter`；实测
+  39 mutants / 31 killed（79.5%）、0 no-coverage、PIT 约 2 秒、含 Maven 启动约
+  6 秒。基线 `reference/email-service/config/mutation-baseline.json` + 组件内
+  `scripts/check-mutation-baseline.py`（同一类级必填/`generated` 下降规则），同一
+  周度 workflow 追加运行。`EmailService`
+  主要靠 ApplicationContext/GreenMail E2E 保护，纳入会得到 145/25 的错误低分，
+  不在作用域内。
+- `CustomUserDetailsService` 结论修正为“框架可达、应用不可达”：Spring Security
+  把它注册进全局 `AuthenticationManager`，但没有任何应用调用方；保留 bean 并补
+  `CustomUserDetailsServiceTest`，不得无声删除。第八批复查仍无
+  `authenticationManager.authenticate(...)` 调用方，代码位置与装配未变。
+- 跨标签页 logout 用例保留 60s 预算和全部断言；在 6 CPU burner + 3 worker 下
+  压力复跑 10/10（42.7s）与 12/12（1.3m），失败模式是超预算而非断言失败。
+- 跨端 wire shape 由 `contracts/api-wire-contract.json` 固定，
+  `ApiWireContractIntegrationTest` 与 `frontend/tests/unit/wire-contract.test.ts`
+  同时消费；新增/改名字段必须同步 JSON、DTO 和 TS 类型。
+- `docs/TEST_MAP.md` 是行为 → 测试映射；修改模块前先查表。Flaky 复跑使用
+  `./scripts/stress-playwright.sh [N]`（可选 `PLAYWRIGHT_WORKERS`、
+  `CPU_BURNERS`、`PLAYWRIGHT_GREP`）；`.github/workflows/playwright-flaky-probe.yml`
+  每周定时运行同一脚本并上传 trace，独立于 `verification.yml` 的成功语义。
+- 覆盖率仅报告、不设绝对阈值：后端 `mvn test` 生成 `target/site/jacoco/`（JaCoCo
+  `prepare-agent` + `test` 阶段 `report`，无 `check`）；前端
+  `npm run test:unit:coverage` 生成 `frontend/coverage/`（v8）。
+  `frontend/coverage/` 已 ignored 并从 ESLint 排除。防腐化由棘轮完成：相对基线
+  下跌超过容忍值会让门禁失败；复查入口是 `docs/TEST_MAP.md` §9.2 和实施记录。
+- 前端全页跳转必须经 `frontend/src/utils/navigation.ts::navigateTo`，不得直接赋值
+  `window.location.href`；Vitest 用注入 location / mock 断言目标，真实导航仍由
+  Playwright 覆盖。
 - 当前邮件参考服务：154 tests，0 failures/errors/skips；Shell runtime 44/44、
   HTTP 11/11、Flyway guard 15/15、backup/restore rehearsal 10/10；组件门禁以
   `PASS: email service verification gate` 结束。
 - 根/邮件 OWASP Dependency-Check 分别扫描 94/54 项 dependency evidence。
-  Python `cryptography 48.0.1` 的 `PYSEC-2026-3552`、`PYSEC-2026-3553` 和
-  `PYSEC-2026-3554` 是唯一已批准漏洞例外，均于 2026-10-01 UTC 到期；门禁要求
-  advisory、包版本、owner、理由、不可达证据和到期日精确匹配。
+  Tomcat 已从 10.1.57 升级到 10.1.61、`swagger-ui` 已从 5.32.11 升级到 5.34.1，
+  原过期 suppression 已删除。当前活动 Maven suppression 只有 2026-11-05 披露的
+  Spring Framework/Security 限定例外（根 15 条、邮件 12 条，修复版本
+  6.2.20/6.5.12 未发布，`until="2027-01-31Z"`）；到期即失败关闭，上游修复版本
+  发布后必须升级并删除。Python `cryptography 48.0.1` 的
+  `PYSEC-2026-3552`、`PYSEC-2026-3553` 和 `PYSEC-2026-3554` 是唯一已批准漏洞
+  例外，到期日已重新评估为 2027-02-01 UTC；门禁要求 advisory、包版本、owner、
+  理由、不可达证据和到期日精确匹配。`PyJWT` 已升级到 2.15.1、`Werkzeug` 到
+  3.1.9，新披露 advisory 不再依赖例外。
+- 敏感产物扫描：完整门禁扫描 753 个文件（仓库源码 + 候选构建产物）；
+  `config/sensitive-scan-exceptions.json` 只有 1 条指向 AWS 官方文档示例
+  access key 的精确指纹例外（2027-01-31，覆盖 4 处匹配），真实凭据仍失败关闭。
+- 仓库当前没有 V9+ 迁移；首个 V9 出现时必须同步增加 exact schema 指纹、
+  fresh migrate→新版本 + Hibernate `validate` 和 baseline guard 断言。
 - 以下 2026-08-08 条目保留为加固增量历史，不替代上述当前基线。
+- 2026-08-12 基线（Maven 270 tests、shared-schema 4/4）已被上一条取代，保留为历史。
 - 邮件参考服务初始纳入基线：94 tests，0 failures/errors/skips；另有 runtime guard 15/15、
   Shell HTTP 8/8 和 Flyway guard 8/8。
 - 2026-08-08 SMTP transport 加固增量：邮件参考服务 101 tests，
@@ -532,7 +697,7 @@ PYTHON_BIN=python3 scripts/verify.sh
 - Flyway baseline guard：17/17。
 - Mock Playwright：31/31；生产 Playwright：2/2；真实邮箱登录浏览器 E2E：1/1。
 - Python 资源服务器：20/20；邮件 REST stub contract：12/12。
-- 前端 ESLint、TypeScript 和生产构建通过。
+- 前端 ESLint、TypeScript、Vitest 组件单测（12/12）和生产构建通过。
 - 最终加固 F1-F5 每批只执行固定范围验收和完整门禁，不分别执行连续三轮无修改检查；
   F1-F5 全部实现并通过各自验收后，再独立执行一次阶段末连续三轮检查。无问题轮次只
   记录在当次工作报告，不为留痕修改仓库文件。
@@ -609,7 +774,8 @@ PYTHON_BIN=python3 scripts/verify.sh
 - 集成测试尽可能覆盖 HTTP、安全链和持久化边界；不得只靠单元测试或代码 review 报告完成。
 - 并发修复优先数据库约束、条件更新、乐观锁或 CAS，禁止把悲观锁当默认方案；
   不要为了形式上的“乐观锁”自动增加 JPA `@Version`。
-- 触达前端时至少通过 `npx tsc --noEmit`、生产构建和覆盖核心改动的 Mock 浏览器测试。
+- 触达前端时至少通过 `npx tsc --noEmit`、`npm run test:unit`、生产构建和覆盖核心改动的
+  Mock 浏览器测试。
 - 触达 Python 资源服务器时必须通过离线 RSA/JWKS/Flask 测试，真实 JWKS 网络验证只能显式 opt in。
 - 需要启动服务时，只能使用显式 profile 和隔离可丢弃数据库；联调不能替代两端各自的自动化验证。
 - 不把可自动化的首轮验收转交给用户；“已完成”必须有可复现的测试证据。
@@ -656,9 +822,10 @@ PYTHON_BIN=python3 scripts/verify.sh
   关闭。prod guard 要求非 placeholder、独立的 client secret。
 - 当前 RSA 运维只实现单 active key 的紧急 cutover：更换 key/kid 后旧 token 立即
   失效并要求重认证；双 key 无感 rollover 是加固后需求，不能恢复 retired key 模拟。
-- 当前 Maven 阻断 CVSS 7+；唯一 Tomcat examples-only suppression 于
-  2026-09-01 到期。Swagger UI WebJar 的 DOMPurify medium 公告仍可见但 prod
-  Swagger 已关闭，兼容修复版本发布后应升级。
+- 当前 Maven 阻断 CVSS 7+；Tomcat 已升级到 10.1.61，`swagger-ui` 已升级到
+  5.34.1（内嵌 DOMPurify 3.4.17，真实修复 `CVE-2026-116803`/`CVE-2026-116804`）。
+  仍保留 15 条 Spring Framework/Security 限定 suppression：修复版本 6.2.20/6.5.12
+  尚未发布，`until="2027-01-31Z"`，到期即失败关闭。
 
 这些条目是工作提示，不代替针对当前任务的代码阅读和测试。
 

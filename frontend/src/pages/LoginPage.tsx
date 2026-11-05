@@ -5,6 +5,7 @@ import { AuthService } from '../services/authService';
 import Web3LoginButton from '../components/Web3LoginButton';
 import { ForgotPasswordModal } from '../components/ForgotPasswordModal';
 import { resolveLoginReturnPath } from '../utils/loginReturnPath';
+import { navigateTo } from '../utils/navigation';
 
 interface VerificationModalProps {
   email: string;
@@ -301,7 +302,7 @@ export default function LoginPage() {
           provider: 'local' as const
         };
         localStorage.setItem('auth_user', JSON.stringify(userData));
-        window.location.href = loginReturnPath;
+        navigateTo(loginReturnPath);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : '验证码验证失败';

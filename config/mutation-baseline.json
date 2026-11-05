@@ -1,0 +1,24 @@
+{
+  "classes": {
+    "org.dddml.uniauth.service.CanonicalEmailService": {
+      "generated": 45,
+      "killed": 41,
+      "noCoverage": 0
+    },
+    "org.dddml.uniauth.service.TokenValidationService": {
+      "generated": 72,
+      "killed": 70,
+      "noCoverage": 2
+    },
+    "org.dddml.uniauth.util.Web3SignatureUtils": {
+      "generated": 33,
+      "killed": 32,
+      "noCoverage": 1
+    }
+  },
+  "generated": 150,
+  "killed": 143,
+  "mutationScore": 95.33,
+  "noCoverage": 3,
+  "version": 1
+}

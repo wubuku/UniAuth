@@ -9,10 +9,13 @@ PROJECT_DIR="$TEMP_DIR/project"
 APPLICATION_JAR="$TEMP_DIR/email-service-1.0.0.jar"
 UNIAUTH_MIGRATIONS_DIR="$TEMP_DIR/uniauth-migrations"
 RUN_ID="email-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+EMAIL_SERVICE_HEALTH_DIR="${EMAIL_SERVICE_HEALTH_DIR:-$REPOSITORY_ROOT/.local/uniauth/health}"
 EMAIL_SERVICE_VERIFICATION_ARTIFACTS_DIR="${EMAIL_SERVICE_VERIFICATION_ARTIFACTS_DIR:-}"
 EMAIL_SERVICE_VERIFICATION_ARTIFACTS_ENABLED=false
 EMAIL_SERVICE_VERIFICATION_ARTIFACTS_SUCCESS_PRESERVED=false
 export TESTCONTAINERS_RYUK_DISABLED="${TESTCONTAINERS_RYUK_DISABLED:-true}"
+export APPLICATION_READINESS_METRICS_FILE="${APPLICATION_READINESS_METRICS_FILE:-$REPOSITORY_ROOT/.local/uniauth/health/readiness.tsv}"
+mkdir -p "$(dirname "$APPLICATION_READINESS_METRICS_FILE")" 2>/dev/null || true
 
 source "$REPOSITORY_ROOT/scripts/verification-artifacts-guard.sh"
 
@@ -24,7 +27,7 @@ source_fingerprint() {
             scripts/check-dependency-audit-report.py \
             scripts/check-dependency-suppressions.py \
             src/main/resources/db/migration/postgresql \
-            | sort -z \
+            | LC_ALL=C sort -z \
             | xargs -0 shasum -a 256 \
             | shasum -a 256 \
             | awk '{print $1}'
@@ -60,10 +63,91 @@ preserve_verification_artifacts() {
     echo "Email verification artifacts: $artifacts_run_dir"
 }
 
+record_component_health_status() {
+    local exit_code="$1"
+    local output_file="$EMAIL_SERVICE_HEALTH_DIR/email-last-verify.json"
+
+    mkdir -p "$EMAIL_SERVICE_HEALTH_DIR" 2>/dev/null || {
+        echo "ERROR: cannot create component health directory $EMAIL_SERVICE_HEALTH_DIR" >&2
+        return 1
+    }
+    if python3 - \
+            "$PROJECT_DIR/target/surefire-reports" \
+            "$output_file" \
+            "$RUN_ID" \
+            "$exit_code" \
+            "${SOURCE_FINGERPRINT:-unavailable}" <<'PY'
+import json
+import os
+import sys
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+from pathlib import Path
+
+reports_dir, output_file, run_id, exit_code, fingerprint = sys.argv[1:6]
+totals = None
+reports = Path(reports_dir)
+report_files = sorted(reports.glob("TEST-*.xml")) if reports.is_dir() else []
+if report_files:
+    total = failures = errors = skipped = records = 0
+    consistent = True
+    for report in report_files:
+        try:
+            root = ET.parse(report).getroot()
+        except ET.ParseError:
+            consistent = False
+            break
+        total += int(root.get("tests", 0))
+        failures += int(root.get("failures", 0))
+        errors += int(root.get("errors", 0))
+        skipped += int(root.get("skipped", 0))
+        records += len(root.findall("testcase"))
+    else:
+        totals = {
+            "declared": total,
+            "failures": failures,
+            "errors": errors,
+            "skipped": skipped,
+            "records": records,
+            "total": records,
+            "inconsistent": records != total,
+            "reportFiles": len(report_files),
+        }
+    if not consistent:
+        totals = None
+
+payload = {
+    "version": 1,
+    "recordedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "runId": run_id,
+    "exitCode": int(exit_code),
+    "passed": int(exit_code) == 0,
+    "sourceFingerprint": fingerprint,
+    "metrics": {"componentTests": totals},
+}
+temporary = output_file + ".tmp"
+with open(temporary, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+os.replace(temporary, output_file)
+PY
+    then
+        echo "Component health record: $output_file"
+    else
+        echo "ERROR: failed to write component health record" >&2
+        return 1
+    fi
+}
+
 cleanup() {
     local exit_code="$1"
     trap - EXIT INT TERM
     set +e
+    if ! record_component_health_status "$exit_code"; then
+        if [ "$exit_code" -eq 0 ]; then
+            exit_code=1
+        fi
+    fi
     if verification_artifacts_need_preservation \
             "$EMAIL_SERVICE_VERIFICATION_ARTIFACTS_ENABLED" \
             "$EMAIL_SERVICE_VERIFICATION_ARTIFACTS_SUCCESS_PRESERVED" \
@@ -128,7 +212,9 @@ if [ "$(source_fingerprint)" != "$SOURCE_FINGERPRINT" ]; then
 fi
 
 echo "Email verification 1/7: shell syntax"
-bash -n "$PROJECT_DIR/start.sh" "$PROJECT_DIR"/scripts/*.sh
+bash -n "$PROJECT_DIR/start.sh" "$PROJECT_DIR"/scripts/*.sh "$PROJECT_DIR"/scripts/lib/*.sh
+"$PROJECT_DIR/scripts/test-application-readiness.sh"
+"$PROJECT_DIR/scripts/test-mutation-baseline.sh"
 
 echo "Email verification 2/7: compilation and ApplicationContext tests"
 (

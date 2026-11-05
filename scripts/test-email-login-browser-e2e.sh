@@ -5,6 +5,8 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib/postgres-readiness.sh
+source "$PROJECT_DIR/scripts/lib/postgres-readiness.sh"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uniauth-email-browser-e2e.XXXXXX")"
 RUN_ID="$(date +%s)-$$"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
@@ -149,21 +151,15 @@ POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
     "$PROJECT_DIR/scripts/email-login-e2e/start-postgres.sh" \
     >"$POSTGRES_LOG" 2>&1 &
 POSTGRES_PID=$!
-for _ in $(seq 1 60); do
-    if PGPASSWORD="$POSTGRES_PASSWORD" pg_isready \
-            -h 127.0.0.1 \
-            -p "$POSTGRES_PORT" \
-            -U "$POSTGRES_USER" \
-            -d "$POSTGRES_DATABASE" >/dev/null 2>&1; then
-        break
-    fi
-    sleep 0.2
-done
-PGPASSWORD="$POSTGRES_PASSWORD" pg_isready \
-    -h 127.0.0.1 \
-    -p "$POSTGRES_PORT" \
-    -U "$POSTGRES_USER" \
-    -d "$POSTGRES_DATABASE" >/dev/null 2>&1 \
+# Poll with the same bounded adaptive budget as start-postgres.sh. The previous
+# copy of this loop used 60 * 0.2s = 12s, which silently contradicted the 60s
+# budget inside the child script and produced false failures on a loaded host.
+wait_for_disposable_postgres \
+    "$POSTGRES_CONTAINER_NAME" \
+    "$POSTGRES_PORT" \
+    "$POSTGRES_USER" \
+    "$POSTGRES_PASSWORD" \
+    "$POSTGRES_DATABASE" \
     || fail "PostgreSQL did not become ready"
 
 echo "Email browser E2E 2/6: start no-delivery email stub"

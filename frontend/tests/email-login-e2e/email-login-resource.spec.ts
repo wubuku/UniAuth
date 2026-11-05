@@ -15,31 +15,41 @@ function requiredEnvironment(name: string): string {
 }
 
 async function waitForVerificationCode(recipient: string): Promise<string> {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    try {
-      const lines = (await readFile(captureFile, 'utf8'))
-        .split('\n')
-        .filter(Boolean)
-        .reverse();
-      for (const line of lines) {
-        const message = JSON.parse(line);
-        const code = message.variables?.verificationCode;
-        if (
-          message.to === recipient
-          && message.templateName === 'email/email-verify'
-          && typeof code === 'string'
-          && /^\d{6}$/.test(code)
-        ) {
-          return code;
+  let capturedCode = '';
+  await expect
+    .poll(
+      async () => {
+        try {
+          const lines = (await readFile(captureFile, 'utf8'))
+            .split('\n')
+            .filter(Boolean)
+            .reverse();
+          for (const line of lines) {
+            const message = JSON.parse(line);
+            const code = message.variables?.verificationCode;
+            if (
+              message.to === recipient
+              && message.templateName === 'email/email-verify'
+              && typeof code === 'string'
+              && /^\d{6}$/.test(code)
+            ) {
+              capturedCode = code;
+              return capturedCode;
+            }
+          }
+        } catch {
+          // The capture file can be empty while the real backend request is in flight.
         }
-      }
-    } catch {
-      // The capture file can be empty while the real backend request is in flight.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error('verification code was not captured');
+        return '';
+      },
+      {
+        message: 'verification code was not captured',
+        timeout: 30_000,
+        intervals: [100, 250, 500, 1_000],
+      },
+    )
+    .toMatch(/^\d{6}$/);
+  return capturedCode;
 }
 
 async function requestProtectedResource(

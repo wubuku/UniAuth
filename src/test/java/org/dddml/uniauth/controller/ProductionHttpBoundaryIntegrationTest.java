@@ -117,6 +117,28 @@ class ProductionHttpBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
         assertThat(csrfResponse.headers().firstValue(
                 "Strict-Transport-Security"
         )).contains("max-age=31536000; includeSubDomains");
+        // The filter is discovered as a @Component, not registered by a test
+        // configuration. Asserting the header on a real servlet response
+        // (including the 302 below) proves the Boot auto-registration is live.
+        assertThat(csrfResponse.headers().firstValue("Content-Security-Policy"))
+                .contains("default-src 'self'; frame-ancestors 'none'; "
+                        + "object-src 'none'; base-uri 'self'");
+        // `setHeader` replaces an earlier value and this filter runs before the
+        // security chain. If SecurityConfig later adds `.headers(...)` writers
+        // for the same names they append a second value instead of replacing,
+        // so assert exactly one value per critical header: a future double-write
+        // must fail here rather than ship ambiguous headers.
+        assertThat(csrfResponse.headers().allValues("Content-Security-Policy"))
+                .containsExactly("default-src 'self'; frame-ancestors 'none'; "
+                        + "object-src 'none'; base-uri 'self'");
+        assertThat(csrfResponse.headers().allValues("Strict-Transport-Security"))
+                .containsExactly("max-age=31536000; includeSubDomains");
+        assertThat(csrfResponse.headers().allValues("X-Content-Type-Options"))
+                .containsExactly("nosniff");
+        assertThat(csrfResponse.headers().allValues("X-Frame-Options"))
+                .containsExactly("DENY");
+        assertThat(csrfResponse.headers().allValues("Referrer-Policy"))
+                .containsExactly("no-referrer");
         assertThat(csrfResponse.headers().allValues("Set-Cookie"))
                 .anySatisfy(cookie -> assertThat(cookie)
                         .startsWith("__Host-JSESSIONID=")
@@ -135,6 +157,23 @@ class ProductionHttpBoundaryIntegrationTest extends PostgreSqlIntegrationTest {
         );
 
         assertThat(redirectResponse.statusCode()).isEqualTo(302);
+        assertThat(redirectResponse.headers().firstValue("Content-Security-Policy"))
+                .contains("default-src 'self'; frame-ancestors 'none'; "
+                        + "object-src 'none'; base-uri 'self'");
+        assertThat(redirectResponse.headers().allValues("Content-Security-Policy"))
+                .containsExactly("default-src 'self'; frame-ancestors 'none'; "
+                        + "object-src 'none'; base-uri 'self'");
+        assertThat(redirectResponse.headers().allValues("Strict-Transport-Security"))
+                .containsExactly("max-age=31536000; includeSubDomains");
+        assertThat(redirectResponse.headers().allValues("X-Content-Type-Options"))
+                .containsExactly("nosniff");
+        // The redirect path is where the filter order defect hid: a 302 committed
+        // by the security chain used to skip these headers entirely. Assert the
+        // same single-value contract as the 200 response.
+        assertThat(redirectResponse.headers().allValues("X-Frame-Options"))
+                .containsExactly("DENY");
+        assertThat(redirectResponse.headers().allValues("Referrer-Policy"))
+                .containsExactly("no-referrer");
         String location = redirectResponse.headers()
                 .firstValue("Location")
                 .orElseThrow();

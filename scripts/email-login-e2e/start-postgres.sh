@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/postgres-readiness.sh
+source "$SCRIPT_DIR/../lib/postgres-readiness.sh"
+
 for variable_name in \
         E2E_POSTGRES_CONTAINER_NAME \
         POSTGRES_PORT \
@@ -37,7 +41,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-docker run -d --rm \
+# The container is not started with --rm so a crashed PostgreSQL still has logs
+# to inspect; the EXIT trap removes it in every path.
+docker run -d \
     --name "$E2E_POSTGRES_CONTAINER_NAME" \
     -e "POSTGRES_DB=$POSTGRES_DATABASE" \
     -e "POSTGRES_USER=$POSTGRES_USER" \
@@ -45,23 +51,12 @@ docker run -d --rm \
     -p "127.0.0.1:${POSTGRES_PORT}:5432" \
     postgres:16.13 >/dev/null
 
-for _ in $(seq 1 60); do
-    if PGPASSWORD="$POSTGRES_PASSWORD" pg_isready \
-            -h 127.0.0.1 \
-            -p "$POSTGRES_PORT" \
-            -U "$POSTGRES_USER" \
-            -d "$POSTGRES_DATABASE" >/dev/null 2>&1; then
-        echo "READY PostgreSQL 127.0.0.1:${POSTGRES_PORT}"
-        break
-    fi
-    sleep 1
-done
-
-if ! PGPASSWORD="$POSTGRES_PASSWORD" pg_isready \
-        -h 127.0.0.1 \
-        -p "$POSTGRES_PORT" \
-        -U "$POSTGRES_USER" \
-        -d "$POSTGRES_DATABASE" >/dev/null 2>&1; then
+if ! wait_for_disposable_postgres \
+        "$E2E_POSTGRES_CONTAINER_NAME" \
+        "$POSTGRES_PORT" \
+        "$POSTGRES_USER" \
+        "$POSTGRES_PASSWORD" \
+        "$POSTGRES_DATABASE"; then
     echo "ERROR: PostgreSQL did not become ready" >&2
     exit 1
 fi

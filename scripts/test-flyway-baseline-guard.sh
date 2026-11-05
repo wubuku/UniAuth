@@ -7,6 +7,8 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib/postgres-readiness.sh
+source "$PROJECT_DIR/scripts/lib/postgres-readiness.sh"
 BASELINE_SCRIPT="$PROJECT_DIR/scripts/flyway-baseline-existing.sh"
 MIGRATION_FILE="$PROJECT_DIR/src/main/resources/db/migration/postgresql/V1__baseline_uniauth_auth_schema.sql"
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/uniauth-baseline-guard.XXXXXX")"
@@ -48,17 +50,13 @@ container_port() {
 
 wait_for_postgres() {
     local port="$1"
-    for _ in $(seq 1 60); do
-        if PGPASSWORD="$SOURCE_PASSWORD" pg_isready \
-            -h 127.0.0.1 \
-            -p "$port" \
-            -U "$SOURCE_USER" \
-            -d postgres >/dev/null 2>&1; then
-            return
-        fi
-        sleep 1
-    done
-    fail "PostgreSQL on port $port did not become ready"
+    wait_for_disposable_postgres \
+        "$SOURCE_CONTAINER" \
+        "$port" \
+        "$SOURCE_USER" \
+        "$SOURCE_PASSWORD" \
+        postgres \
+        || fail "PostgreSQL on port $port did not become ready"
 }
 
 source_psql() {
@@ -133,7 +131,8 @@ expect_guard_failure() {
 }
 
 echo "Flyway baseline guard E2E: starting PostgreSQL 16 source"
-docker run -d --rm \
+# No --rm: a crashed container must keep its logs until the EXIT trap removes it.
+docker run -d \
     --name "$SOURCE_CONTAINER" \
     -e "POSTGRES_USER=$SOURCE_USER" \
     -e "POSTGRES_PASSWORD=$SOURCE_PASSWORD" \
