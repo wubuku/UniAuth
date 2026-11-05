@@ -79,7 +79,7 @@
 
 | 行为 | 保护测试 | 层级 |
 |------|----------|------|
-| fresh migrate V1→V8、Hibernate `validate`、约束/索引、append-only；期望版本由迁移目录推导，行数只统计 versioned SQL | `database/FlywayMigrationIntegrationTest`、`scripts/test-http-e2e.sh`（第十二/十三批：集合推导 + repeatable/baseline 排除） | integration + shell |
+| fresh migrate V1→V8、Hibernate `validate`、约束/索引、append-only；期望版本由迁移目录推导，行数只统计 versioned SQL | `database/FlywayMigrationIntegrationTest`、`scripts/test-http-e2e.sh`（第十二/十三批：集合推导 + 只排除 `version IS NULL`） | integration + shell |
 | existing schema baseline、临时 Flyway 配置隔离、guard 失败矩阵 | `database/FlywayExistingSchemaBaselineIntegrationTest`、`scripts/test-flyway-baseline-guard.sh` | integration + shell |
 | checksum drift、失败恢复、V2-V6 grouped rollback | `database/FlywayFailureRecoveryIntegrationTest`、`scripts/test-flyway-baseline-guard.sh` | integration + shell |
 | 登录方式并发 bind/delete/set-primary 409、至少一个登录方式 | `controller/LoginMethodConcurrencyIntegrationTest`、`scripts/test-http-e2e.sh` | integration + shell |
@@ -91,8 +91,9 @@
 > + Hibernate `validate`、相关 preflight 和 baseline guard 用例；不得只加 SQL。
 > `scripts/test-http-e2e.sh` 的期望版本自第十二批起从迁移目录推导，V9 无需改该脚本
 > 的计数；第十三批起行数统计只覆盖 `success AND type='SQL' AND version IS NOT NULL`，
-> 因此新增 `R__` 或 V0 baseline 不会假失败，漏应用、重复或失败版本仍会由集合与
-> 行数断言拦住。
+> 实际只排除 `version IS NULL`（`R__`）。V0 也不会被选中，但
+> `baseline-on-migrate=false` 使其不可达，不能写成主动排除。漏应用、重复或失败
+> 版本仍会由集合与行数断言拦住。
 
 ## 7. 前端
 

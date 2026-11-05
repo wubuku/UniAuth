@@ -3,6 +3,59 @@
 本文件是面向后续编程代理的仓库级长期记忆。它记录当前代码的真实结构、稳定约定和高风险操作边界。
 当本文与代码冲突时，以当前代码和配置为准；`README.md`、`docs/Perplexity/`、`docs/drafts/` 中有较多历史方案和过时端口。
 
+## Current State — Start Here（2026-11-05）
+
+> 代码基线提交：`ca98bcd`（`test(hardening): 加固测试底座并统一失败关闭语义`）。
+> 本文件所在的文档收尾提交会再前进一次，以 `git log -1 --format='%h %s'` 为准；
+> 交付前应满足 `git status` 干净且 `HEAD == origin/main`。
+
+### 直接执行的命令与预期结果
+
+| 目的 | 命令 | 预期 |
+|------|------|------|
+| 交付门禁 | `scripts/verify.sh` | 15/15，`VERIFY_EXIT=0`，末尾 `PASS: complete repository verification gate` |
+| 快速非交付反馈（约 2 分钟） | `PYTHON_BIN=python3 scripts/verify-fast.sh`（需先 `cd frontend && npm ci`） | 4/4，`PASS: fast feedback gate`；不替代交付门禁 |
+| 组件门禁 | `cd reference/email-service && scripts/verify.sh` | 154/154，0 failures/errors/skips，`EMAIL_VERIFY_EXIT=0` |
+| 健康快照 | `python3 scripts/health-snapshot.py` | `Overall: HEALTHY`，`component-tests OK 154 tests` |
+
+当前基线数字：后端 422/422；前端 unit 29、mock 31、production 2；组件 154；
+覆盖率后端 line 86.0% / branch 68.66%，前端 31.9% / 30.66%；变异 143/150
+（95.33%，3 no-coverage）；腐化基线 11 条人工复核命中。
+
+### 基线文件位置
+
+- `config/coverage-baseline.json`：后端/前端覆盖率棘轮。
+- `config/mutation-baseline.json`：根 PIT 变异基线。
+- `config/test-rot-baseline.json`：腐化守卫 11 条人工基线。
+- `contracts/api-wire-contract.json`：跨端 wire 契约唯一事实。
+- `reference/email-service/config/mutation-baseline.json`：组件 PIT 变异基线。
+
+### 改代码前的硬规则
+
+- **wire 契约三处同步**：任何 API 响应字段改动必须同时改
+  `contracts/api-wire-contract.json`、后端 DTO 与
+  `ApiWireContractIntegrationTest`、前端 TS 类型与 `wire-contract.test.ts`。
+- **新增迁移同步精确期望**：根侧新增 V9 会改变 `reset-disposable-social-identities.sh`
+  等脚本的精确 V1–V8 history 断言；组件侧新增 V6 会改变组件 V1–V5 精确 history、
+  shared-schema/peer 与备份恢复期望。HTTP E2E 的版本集合会自动推导，但迁移专项
+  断言（如 V6 索引/challenge 列）仍需人工补。
+- **降基线必须显式 opt-in**：覆盖率用
+  `python3 scripts/coverage-ratchet.py --update`（调低还需 `--allow-lower`）；
+  变异用 `python3 scripts/check-mutation-baseline.py --update`；腐化用
+  `python3 scripts/check-test-rot.py --update`。默认门禁不接受静默下调。
+- **组件与根的就绪 helper 共享区受 parity 守卫约束**：修改
+  `scripts/lib/postgres-readiness.sh` 或组件同名文件时必须保持共享区逐字节一致，
+  运行 `scripts/test-readiness-parity.sh`。
+- **PIT 必须使用 JDK 21**：PIT 1.17.2 在 JDK 25 会报
+  `Unsupported class file major version 69` 并产生全 `NO_COVERAGE` 假结果。
+
+### 已知残余与不可达边界
+
+- PIT 探针是周度独立 workflow，不在每次 `verify.sh` 内；日常只校验已记录基线。
+- 健康快照在无 git 的源码包环境退化为 24h 年龄规则，无法校验源码指纹/mtime。
+- 跨标签 logout 后迟到 refresh 的契约是 1–2 次轮换；E2E 不能证明服务端只轮换一次。
+- Python 资源服务器只做离线 JWKS 签名校验，无法实时感知 UniAuth 的 token 撤销。
+
 ## Documentation Map
 
 - `docs/README.md`: 文档体系主入口和生命周期分类。

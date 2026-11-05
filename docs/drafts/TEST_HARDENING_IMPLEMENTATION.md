@@ -4,7 +4,20 @@
 > 决策、证据和残余风险。它不替代 [验证指南](../VERIFICATION.md)。
 >
 > 约束：未修改已发布的 Flyway V1-V8；未写 `blacksheep_dev` 或任何共享库；
-> 未读取 `.env`；未执行真实 OAuth/邮件供应商调用；未执行任何 git 写操作。
+> 未读取 `.env`；未执行真实 OAuth/邮件供应商调用。各批次写作时未执行 git
+> 写操作；最终收尾已由用户明确授权提交（代码基线 `ca98bcd`）。
+
+## 0. 当前结论与入口（先读这里）
+
+- **当前可执行状态**：见 [AGENTS.md 顶部 Current State 入口](../../AGENTS.md)。
+  该处列出基线提交、`scripts/verify.sh` / `verify-fast.sh` / 组件门禁命令与预期
+  数字、五个基线文件位置、改代码硬规则和已知残余。
+- **当前批次**：§19（第十三批，2026-11-05 第三轮复核收口）。当前权威数字见
+  §19.10；交付规则与健康快照结论见 [VERIFICATION.md 第十三批](../VERIFICATION.md)。
+- **历史批次**：§1–§18 是按时间追加的历史记录，保留原有证据与当时口径；
+  其中的数字和“当前”标记不代表今天的基线。§18.8 的旧表已被 §19.10 取代。
+- **测试约定**：新增测试位置、wire 契约三处同步、迁移期望、覆盖率/变异/腐化
+  棘轮和健康快照语义以 [TESTING.md](../TESTING.md) 为准。
 
 ## 1. 目标
 
@@ -1719,9 +1732,10 @@ overall 变为 DEGRADED，exit 1。修改代码后立即看快照会 STALE，这
   `V<ver>__` 转成点分版本并数值排序（`LC_ALL=C sort -t. -k1,1n -k2,2n -k3,3n`）；
   最终不变量断言：已应用成功版本集合 == 目录版本集合、成功版本行数 == 目录版本数、
   不存在 `success=false` 行。行数统计与集合断言使用同一过滤条件
-  （`success AND type='SQL' AND version IS NOT NULL`），因此 repeatable（`R__`，
-  version 为 NULL）和 V0 baseline 不会造成假失败，而漏应用、重复或失败版本仍失败。
-  新增 `V9` 自动纳入期望。
+  （`success AND type='SQL' AND version IS NOT NULL`）：实际只排除
+  `version IS NULL`（`R__` repeatable）；V0 baseline 不会被该谓词选中，但当前
+  `spring.flyway.baseline-on-migrate=false` 使 V0 在正常门禁中不可达。漏应用、
+  重复或失败版本仍失败。新增 `V9` 自动纳入版本集合期望。
 - 脚本开头新增推导自测：`V1/V10/V2_1/R__` 必须解析为 `1/2.1/10` 且忽略 repeatable。
 - 未解析 SQL 内容，只按版本文件存在性推导；repeatable 迁移不计入期望版本。
 
@@ -1760,7 +1774,9 @@ overall 变为 DEGRADED，exit 1。修改代码后立即看快照会 STALE，这
 - 组件 `test-http-e2e.sh` 仍有 `count=5` 断言，理由同上（独立组件版本线冻结在
   V1–V5）；不与根侧推导逻辑冲突。
 
-### 18.8 最终复跑与门禁数字
+### 18.8 最终复跑与门禁数字（已被 §19.10 取代）
+
+> 下表是第十二批当时的证据，保留用于追溯；当前基线以 §19.10 为准。
 
 | 检查 | 结果 |
 |------|------|
@@ -1801,13 +1817,15 @@ overall 变为 DEGRADED，exit 1。修改代码后立即看快照会 STALE，这
   比对类级字段；循环改为 `baseline["classes"].items()`。
 - 根自测 10 → 11 项，新增“删除整段 `classes` 必须失败”。
 
-### 19.3 Flyway 行数不变量排除 repeatable/baseline（已修）
+### 19.3 Flyway 行数不变量只排除 version IS NULL（已修）
 
 - `test-http-e2e.sh` 的成功行数统计改为
   `success AND type='SQL' AND version IS NOT NULL`，与“已应用版本集合 == 目录版本
-  集合”完全同源。`R__`（version 为 NULL）和 V0 baseline 不再造成假失败；漏应用、
-  重复版本或失败行仍然失败。失败行检查保持全表 `NOT success`，repeatable 失败也会
-  被捕获。文档口径同步到 TESTING/TEST_MAP/VERIFICATION。
+  集合”完全同源。该谓词实际只排除 `version IS NULL`（`R__` repeatable）；
+  V0 baseline 也不会被选中，但 `spring.flyway.baseline-on-migrate=false` 使 V0
+  在当前门禁中不可达，不能把“排除 V0”写成代码主动过滤。漏应用、重复版本或失败
+  行仍然失败；失败行检查保持全表 `NOT success`，repeatable 失败也会被捕获。
+  文档口径同步到 TESTING/TEST_MAP/VERIFICATION。
 
 ### 19.4 组件 mtime 与指纹文件集对齐（已修）
 
@@ -1855,10 +1873,10 @@ overall 变为 DEGRADED，exit 1。修改代码后立即看快照会 STALE，这
 
 | 检查 | 结果 |
 |------|------|
-| `scripts/verify.sh` | 15/15，`VERIFY_EXIT=0`；`last-verify.json` 记录 `2026-11-05T08:48:21Z`（runId `20261105T082846Z-4365`） |
+| `scripts/verify.sh` | 15/15，`VERIFY_EXIT=0`；`last-verify.json` 记录 `2026-11-05T13:53:02Z`（runId `20261105T133639Z-52775`） |
 | `mvn test`（根） | 422/422，0 failures/errors/skips |
 | 健康快照自测 / 根变异自测 / 组件变异自测 | 20/20 / 11/11 / 11/11 |
-| 组件门禁（根内 + 独立） | 154 tests，0 failures/errors/skips；独立 `EMAIL_VERIFY_EXIT=0`；记录 `email-20261105T083755Z-27855` @ `2026-11-05T08:41:23Z`，指纹 `8071af0b…` |
+| 组件门禁（根内 + 独立） | 154 tests，0 failures/errors/skips；独立 `EMAIL_VERIFY_EXIT=0`；记录 `email-20261105T134253Z-75681` @ `2026-11-05T13:45:45Z`，指纹 `8071af0b…` |
 | Flyway 推导 | 目录 V1–V8，期望与应用集合一致；行数按 versioned SQL 过滤 |
 | 覆盖率 | 后端 line 86.0% / branch 68.66%（基线 86.00%/68.66%）；前端 31.9%/30.66%（基线 31.90%/30.66%） |
 | 变异基线 | 143/150（95.33%）、3 no-coverage；本次无 live PIT CSV，快照为 N/A（周度探针） |

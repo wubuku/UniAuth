@@ -2,7 +2,7 @@
 
 > 状态：Live
 > 最近基线：2026-11-05（测试底座第十三批：组件变异守卫顶层对齐、Flyway 行数
-> 过滤 repeatable/baseline、组件 mtime 与指纹同文件集、组件记录缺失失败关闭、
+> 只过滤 `version IS NULL`、组件 mtime 与指纹同文件集、组件记录缺失失败关闭、
 > 302 五头同构与 Chrome 预检噪声；根门禁 15/15、组件门禁通过，后端 422、
 > 前端运行时 29+31+2、组件 154）；
 > 上一基线：2026-11-05（测试底座第十二批：组件记录新鲜度、变异类级字段失败关闭、
@@ -291,7 +291,7 @@ Playwright 覆盖（见 `docs/TEST_MAP.md`）。
 
 | 检查 | 结果 | 证据 |
 |------|------|------|
-| `scripts/verify.sh` | 通过 | 15/15，`VERIFY_EXIT=0`；`last-verify.json` 记录 `2026-11-05T08:48:21Z`（runId `20261105T082846Z-4365`） |
+| `scripts/verify.sh` | 通过 | 15/15，`VERIFY_EXIT=0`；`last-verify.json` 记录 `2026-11-05T13:53:02Z`（runId `20261105T133639Z-52775`） |
 | `mvn clean compile test-compile` + `mvn test` | 通过 | 422/422；0 failures/errors/skips |
 | 根变异基线自测 | 通过 | 11/11；新增删除整个 `classes` 段必须失败 |
 | 组件变异基线自测 | 通过 | 11/11；删除顶层字段、整个 `classes` 段、`generated` 下降、类级字段均失败；已接入组件门禁阶段 1 |
@@ -304,7 +304,7 @@ Playwright 覆盖（见 `docs/TEST_MAP.md`）。
 | 变异基线 | 通过 | 143/150 killed（95.33%）、3 no-coverage；本次无 live PIT CSV，快照为 N/A（周度探针） |
 | 腐化守卫 | 通过 | 11 条人工复核基线，0 new |
 | 健康快照 | 通过 | `Overall: HEALTHY`；`component-tests OK 154 tests` |
-| 组件门禁（根内 + 独立） | 通过 | 154 tests，0 failures/errors/skips；独立 `EMAIL_VERIFY_EXIT=0`；记录 `email-20261105T083755Z-27855` @ `2026-11-05T08:41:23Z` |
+| 组件门禁（根内 + 独立） | 通过 | 154 tests，0 failures/errors/skips；独立 `EMAIL_VERIFY_EXIT=0`；记录 `email-20261105T134253Z-75681` @ `2026-11-05T13:45:45Z` |
 | Chrome 预检 | 通过 | 全部 PATH 候选失败后只打印一次合并错误；macOS 分支不变 |
 | 敏感扫描 / Markdown | 通过 | 754 文件、4 处例外；64 个 Markdown 相对链接全部可解析 |
 
@@ -312,8 +312,9 @@ Playwright 覆盖（见 `docs/TEST_MAP.md`）。
 
 - 组件与根变异守卫不再有任何 `get(..., default)`：顶层指标和 `classes` 段缺失即
   失败，`generated` 下降也失败。任何“删字段弱化守卫”的改动都会先被自测拦住。
-- Flyway 行数过滤与版本集合使用同一谓词；`R__` 与 V0 baseline 被有意排除，
-  失败行检查仍覆盖全表（含 repeatable 失败）。
+- Flyway 行数过滤与版本集合使用同一谓词，实际只排除 `version IS NULL`（`R__`）；
+  V0 baseline 同样不会被选中，但 `spring.flyway.baseline-on-migrate=false` 使其
+  在当前门禁不可达。失败行检查仍覆盖全表（含 repeatable 失败）。
 - 组件 mtime 不再扫描整个目录（含被忽略的 `.env`/`target`），与指纹共用同一
   `git ls-files` 清单；git 不可用时两侧都退回年龄规则。
 - 缺少组件记录不再视为“可选层”：没有当前树证据就不能输出 HEALTHY；记录写入

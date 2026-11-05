@@ -2372,8 +2372,9 @@ applied_flyway_versions="$(db_value "
 [ "$applied_flyway_versions" = "$expected_flyway_versions" ] \
     || fail "applied Flyway versions do not match $MIGRATION_DIR (applied [$applied_flyway_versions], expected [$expected_flyway_versions])"
 # Count only the same versioned SQL rows the set assertion above compares.
-# Repeatables (version IS NULL) and the V0 baseline must not trip this check,
-# while a duplicated or missing versioned migration still fails.
+# The predicate excludes version IS NULL (R__ repeatables); V0 is also not
+# selected, though baseline-on-migrate=false makes it unreachable in this gate.
+# A duplicated or missing versioned migration still fails.
 [ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history WHERE success AND type = 'SQL' AND version IS NOT NULL;")" = "$expected_flyway_count" ] \
     || fail "Flyway versioned history row count does not match the migration directory"
 [ "$(db_value "SELECT count(*) FROM uniauth_flyway_schema_history WHERE NOT success;")" = "0" ] \

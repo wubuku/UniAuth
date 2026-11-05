@@ -8,8 +8,7 @@
 
 | 文档 | 状态 | 适用场景 |
 |------|------|----------|
-| [项目 README](../README.md) | Needs verification | 顶部为当前概览；长篇正文仍保留历史描述 |
-| [Agent Guide](../AGENTS.md) | Live | 编程代理的安全边界、模块入口和高风险事实 |
+| [Agent 当前状态入口](../AGENTS.md) | Live | **先读**：当前基线提交、门禁命令与预期数字、基线文件、改代码硬规则、已知残余；文档地图后面的章节仍是完整长期约束 |
 | [当前架构](ARCHITECTURE.md) | Live | 模块、认证链、数据流和跨模块影响 |
 | [配置基线](CONFIGURATION.md) | Live | 端口、profile、数据库、外部服务和密钥 |
 | [开发指南](DEVELOPMENT.md) | Live | 安全构建、启动前检查和日常改动流程 |

@@ -25,8 +25,10 @@
   `src/main/resources/db/migration/postgresql` 的 `V*__*.sql` 推导（`R__` repeatable
   不计入），最终断言“已应用成功集合 == 目录集合、**版本化 SQL** 行数一致、无失败
   行”。行数与集合使用同一过滤条件
-  `success AND type='SQL' AND version IS NOT NULL`，所以 `R__` 和 V0 baseline 不会
-  假失败，漏应用或重复版本仍失败；新增 V9 无需修改脚本。脚本开头附推导自测
+  `success AND type='SQL' AND version IS NOT NULL`，实际只排除 `version IS NULL`
+  （`R__`）；V0 同样不被该谓词选中，但 `baseline-on-migrate=false` 使其在当前
+  门禁不可达，因此不能写成主动排除 V0。漏应用或重复版本仍失败；新增 V9 无需
+  修改脚本。脚本开头附推导自测
   （`V1/V10/V2_1/R__` → `1/2.1/10`）。
 - 使用 Playwright `channel: 'chrome'` 的门禁要求真实 Google Chrome。根门禁预检对
   PATH 候选校验 `--version` 品牌输出；Chromium（如 Debian 的 `chrome`）不会被放行，
